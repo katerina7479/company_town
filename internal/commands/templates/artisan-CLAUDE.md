@@ -81,3 +81,4 @@ gt status
 - Commit and push after EVERY change
 - Do not skip quality gates
 - Log to `.company_town/logs/artisan-{{SPECIALTY}}.log`
+

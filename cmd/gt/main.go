@@ -44,7 +44,7 @@ func main() {
 
 func handleTicket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|assign|status|close> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|assign|status|close|delete> ...")
 		os.Exit(1)
 	}
 
@@ -69,6 +69,8 @@ func handleTicket(args []string) error {
 		return ticketStatus(issues, args[1:])
 	case "close":
 		return ticketClose(issues, args[1:])
+	case "delete":
+		return ticketDelete(issues, args[1:])
 	default:
 		return fmt.Errorf("unknown ticket command: %s", args[0])
 	}
@@ -259,6 +261,24 @@ func ticketClose(issues *repo.IssueRepo, args []string) error {
 	}
 
 	fmt.Printf("Ticket %d closed.\n", id)
+	return nil
+}
+
+func ticketDelete(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket delete <id>")
+	}
+
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid ticket ID: %s", args[0])
+	}
+
+	if err := issues.Delete(id); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d deleted.\n", id)
 	return nil
 }
 

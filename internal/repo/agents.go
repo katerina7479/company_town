@@ -72,7 +72,7 @@ func (r *AgentRepo) UpdateStatus(name, status string) error {
 		timeEnded = time.Now()
 	}
 
-	result, err := r.db.Exec(
+	_, err := r.db.Exec(
 		`UPDATE agents SET status = ?, time_ended = ? WHERE name = ?`,
 		status, timeEnded, name,
 	)
@@ -80,8 +80,10 @@ func (r *AgentRepo) UpdateStatus(name, status string) error {
 		return fmt.Errorf("updating agent status: %w", err)
 	}
 
-	n, _ := result.RowsAffected()
-	if n == 0 {
+	// Verify the agent exists (RowsAffected can be 0 if value unchanged)
+	var count int
+	r.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE name = ?`, name).Scan(&count)
+	if count == 0 {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	return nil

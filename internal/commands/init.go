@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
@@ -167,12 +168,27 @@ func writeClaudeMD(dir, agentType string, force bool) {
 	fmt.Printf("  created: agents/%s/CLAUDE.md\n", agentType)
 }
 
-// loadTemplate reads a template file from the embedded filesystem.
+// loadTemplate reads a template file from the embedded filesystem
+// and appends the shared commands reference.
 func loadTemplate(agentType string) (string, error) {
 	filename := fmt.Sprintf("templates/%s-CLAUDE.md", agentType)
 	data, err := templateFS.ReadFile(filename)
 	if err != nil {
 		return "", fmt.Errorf("reading template %s: %w", filename, err)
 	}
-	return string(data), nil
+
+	content := string(data)
+
+	// Artisan specialty files inherit from base — don't append commands ref
+	if strings.HasPrefix(agentType, "artisan-") {
+		return content, nil
+	}
+
+	// Append shared commands reference
+	ref, err := templateFS.ReadFile("templates/commands-reference.md")
+	if err != nil {
+		return content, nil // non-fatal if missing
+	}
+
+	return content + "\n" + string(ref), nil
 }

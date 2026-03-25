@@ -91,3 +91,4 @@ gt prole reset <name>                        # Reset prole workspace
 - Escalate to Mayor only for: unpushed work at risk, stuck agents, systemic failures
 - Do NOT send routine status reports — only escalate actionable issues
 - Log all patrol actions to `.company_town/logs/janitor.log`
+

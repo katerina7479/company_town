@@ -119,3 +119,4 @@ gt status
 - Always provide evidence (file paths, line numbers, snippets)
 - If unsure, say so — don't fabricate analysis
 - Log to `.company_town/logs/architect.log`
+

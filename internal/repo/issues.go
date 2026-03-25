@@ -154,6 +154,23 @@ func (r *IssueRepo) Assign(id int, assignee, branch string) error {
 	return nil
 }
 
+// Delete removes an issue by ID.
+func (r *IssueRepo) Delete(id int) error {
+	// Remove dependencies first
+	r.db.Exec(`DELETE FROM issue_dependencies WHERE issue_id = ? OR depends_on_id = ?`, id, id)
+
+	result, err := r.db.Exec(`DELETE FROM issues WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting issue: %w", err)
+	}
+
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
 // SetPR sets the PR number on an issue.
 func (r *IssueRepo) SetPR(id, prNumber int) error {
 	_, err := r.db.Exec(
