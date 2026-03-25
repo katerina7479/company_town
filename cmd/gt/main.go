@@ -3,6 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
+
+	"github.com/katerina7479/company_town/internal/db"
+	"github.com/katerina7479/company_town/internal/repo"
 )
 
 func main() {
@@ -14,72 +18,381 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
+	var err error
 	switch cmd {
 	case "ticket":
-		handleTicket(args)
+		err = handleTicket(args)
 	case "prole":
-		handleProle(args)
+		err = handleProle(args)
 	case "agent":
-		handleAgent(args)
+		err = handleAgent(args)
 	case "pr":
-		handlePR(args)
+		err = handlePR(args)
 	case "status":
-		handleStatus()
+		err = handleStatus()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
 		os.Exit(1)
 	}
-}
 
-func handleTicket(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|assign|status|close> ...")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "gt ticket %s: not yet implemented\n", args[0])
-	os.Exit(1)
 }
 
-func handleProle(args []string) {
+func handleTicket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt prole <create|reset> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|assign|status|close> ...")
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "gt prole %s: not yet implemented\n", args[0])
-	os.Exit(1)
+
+	conn, cfg, err := db.OpenFromWorkingDir()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	issues := repo.NewIssueRepo(conn)
+
+	switch args[0] {
+	case "create":
+		return ticketCreate(issues, cfg.TicketPrefix, args[1:])
+	case "show":
+		return ticketShow(issues, cfg.TicketPrefix, args[1:])
+	case "list":
+		return ticketList(issues, cfg.TicketPrefix, args[1:])
+	case "assign":
+		return ticketAssign(issues, args[1:])
+	case "status":
+		return ticketStatus(issues, args[1:])
+	case "close":
+		return ticketClose(issues, args[1:])
+	default:
+		return fmt.Errorf("unknown ticket command: %s", args[0])
+	}
 }
 
-func handleAgent(args []string) {
+func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>]")
+	}
+
+	title := args[0]
+	var parentID *int
+	var specialty *string
+	issueType := "task"
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--parent":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--parent requires a value")
+			}
+			i++
+			v, err := strconv.Atoi(args[i])
+			if err != nil {
+				return fmt.Errorf("invalid parent ID: %s", args[i])
+			}
+			parentID = &v
+		case "--specialty":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--specialty requires a value")
+			}
+			i++
+			s := args[i]
+			specialty = &s
+		case "--type":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--type requires a value")
+			}
+			i++
+			issueType = args[i]
+		}
+	}
+
+	id, err := issues.Create(title, issueType, parentID, specialty)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Created %s-%d: %s\n", prefix, id, title)
+	return nil
+}
+
+func ticketShow(issues *repo.IssueRepo, prefix string, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket show <id>")
+	}
+
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid ticket ID: %s", args[0])
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("%s-%d  [%s]  %s\n", prefix, issue.ID, issue.Status, issue.Title)
+	fmt.Printf("  type:      %s\n", issue.IssueType)
+	if issue.Assignee.Valid {
+		fmt.Printf("  assignee:  %s\n", issue.Assignee.String)
+	}
+	if issue.Branch.Valid {
+		fmt.Printf("  branch:    %s\n", issue.Branch.String)
+	}
+	if issue.PRNumber.Valid {
+		fmt.Printf("  pr:        #%d\n", issue.PRNumber.Int64)
+	}
+	if issue.Specialty.Valid {
+		fmt.Printf("  specialty: %s\n", issue.Specialty.String)
+	}
+	if issue.ParentID.Valid {
+		fmt.Printf("  parent:    %s-%d\n", prefix, issue.ParentID.Int64)
+	}
+	if issue.Description.Valid && issue.Description.String != "" {
+		fmt.Printf("  ---\n  %s\n", issue.Description.String)
+	}
+
+	return nil
+}
+
+func ticketList(issues *repo.IssueRepo, prefix string, args []string) error {
+	var status string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--status":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--status requires a value")
+			}
+			i++
+			status = args[i]
+		}
+	}
+
+	list, err := issues.List(status)
+	if err != nil {
+		return err
+	}
+
+	if len(list) == 0 {
+		fmt.Println("No tickets found.")
+		return nil
+	}
+
+	for _, issue := range list {
+		assignee := ""
+		if issue.Assignee.Valid {
+			assignee = fmt.Sprintf("  (%s)", issue.Assignee.String)
+		}
+		fmt.Printf("%-8s %-14s %s%s\n",
+			fmt.Sprintf("%s-%d", prefix, issue.ID),
+			"["+issue.Status+"]",
+			issue.Title,
+			assignee,
+		)
+	}
+	return nil
+}
+
+func ticketAssign(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket assign <ticket_id> <agent_name>")
+	}
+
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid ticket ID: %s", args[0])
+	}
+
+	agentName := args[1]
+
+	// Get the issue to verify it exists
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+
+	branch := fmt.Sprintf("prole/%s/%d", agentName, issue.ID)
+	if err := issues.Assign(id, agentName, branch); err != nil {
+		return err
+	}
+
+	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
+	return nil
+}
+
+func ticketStatus(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket status <id> <status>")
+	}
+
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid ticket ID: %s", args[0])
+	}
+
+	status := args[1]
+	if err := issues.UpdateStatus(id, status); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d → %s\n", id, status)
+	return nil
+}
+
+func ticketClose(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket close <id>")
+	}
+
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid ticket ID: %s", args[0])
+	}
+
+	if err := issues.Close(id); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d closed.\n", id)
+	return nil
+}
+
+func handleAgent(args []string) error {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: gt agent <register|status> ...")
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "gt agent %s: not yet implemented\n", args[0])
-	os.Exit(1)
+
+	conn, _, err := db.OpenFromWorkingDir()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	agents := repo.NewAgentRepo(conn)
+
+	switch args[0] {
+	case "register":
+		return agentRegister(agents, args[1:])
+	case "status":
+		return agentStatus(agents, args[1:])
+	default:
+		return fmt.Errorf("unknown agent command: %s", args[0])
+	}
 }
 
-func handlePR(args []string) {
+func agentRegister(agents *repo.AgentRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt agent register <name> <type> [--specialty <s>]")
+	}
+
+	name := args[0]
+	agentType := args[1]
+	var specialty *string
+
+	for i := 2; i < len(args); i++ {
+		if args[i] == "--specialty" && i+1 < len(args) {
+			i++
+			s := args[i]
+			specialty = &s
+		}
+	}
+
+	if err := agents.Register(name, agentType, specialty); err != nil {
+		return err
+	}
+
+	fmt.Printf("Registered agent %s (type=%s)\n", name, agentType)
+	return nil
+}
+
+func agentStatus(agents *repo.AgentRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt agent status <name> <idle|working|dead>")
+	}
+
+	name := args[0]
+	status := args[1]
+
+	if err := agents.UpdateStatus(name, status); err != nil {
+		return err
+	}
+
+	fmt.Printf("Agent %s → %s\n", name, status)
+	return nil
+}
+
+func handleProle(args []string) error {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: gt prole <create|reset> ...")
+		os.Exit(1)
+	}
+	return fmt.Errorf("gt prole %s: not yet implemented", args[0])
+}
+
+func handlePR(args []string) error {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: gt pr <create> ...")
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "gt pr %s: not yet implemented\n", args[0])
-	os.Exit(1)
+	return fmt.Errorf("gt pr %s: not yet implemented", args[0])
 }
 
-func handleStatus() {
-	fmt.Fprintf(os.Stderr, "gt status: not yet implemented\n")
-	os.Exit(1)
+func handleStatus() error {
+	conn, cfg, err := db.OpenFromWorkingDir()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	agents := repo.NewAgentRepo(conn)
+	issues := repo.NewIssueRepo(conn)
+
+	// Agents summary
+	allAgents, err := agents.ListAll()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("=== Agents ===")
+	if len(allAgents) == 0 {
+		fmt.Println("  (none registered)")
+	}
+	for _, a := range allAgents {
+		issue := ""
+		if a.CurrentIssue.Valid {
+			issue = fmt.Sprintf("  → %s-%d", cfg.TicketPrefix, a.CurrentIssue.Int64)
+		}
+		fmt.Printf("  %-20s %-10s %s%s\n", a.Name, a.Type, a.Status, issue)
+	}
+
+	// Ticket summary by status
+	fmt.Println("\n=== Tickets ===")
+	for _, status := range []string{"draft", "open", "in_progress", "in_review", "reviewed", "repairing"} {
+		list, err := issues.List(status)
+		if err != nil {
+			return err
+		}
+		if len(list) > 0 {
+			fmt.Printf("  %s: %d\n", status, len(list))
+		}
+	}
+
+	return nil
 }
 
 func printUsage() {
 	fmt.Println(`Usage: gt <command>
 
 Commands:
-  ticket <create|assign|status|close>   Manage tickets
-  prole <create|reset>                  Manage proles
-  agent <register|status>               Manage agents
-  pr <create>                           File PRs
-  status                                Print system status`)
+  ticket <create|show|list|assign|status|close>   Manage tickets
+  prole <create|reset>                             Manage proles
+  agent <register|status>                          Manage agents
+  pr <create>                                      File PRs
+  status                                           Print system status`)
 }
