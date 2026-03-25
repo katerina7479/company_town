@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -50,13 +51,24 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 	return session.Attach(sessionName)
 }
 
-// Start implements `ct start` — starts the Mayor and attaches to its tmux session.
+// Start implements `ct start` — starts the Daemon and Mayor, attaches to Mayor's tmux session.
 func Start() error {
 	conn, cfg, err := db.OpenFromWorkingDir()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+
+	// Start daemon if not already running
+	daemonSession := session.SessionName("daemon")
+	if !session.Exists(daemonSession) {
+		fmt.Println("Starting daemon...")
+		if err := startDaemon(cfg); err != nil {
+			return fmt.Errorf("starting daemon: %w", err)
+		}
+	} else {
+		fmt.Println("Daemon already running.")
+	}
 
 	agents := repo.NewAgentRepo(conn)
 	prompt := fmt.Sprintf(
@@ -66,6 +78,22 @@ func Start() error {
 	)
 
 	return startAgent("mayor", "mayor", cfg.Agents.Mayor.Model, cfg, agents, prompt)
+}
+
+// startDaemon launches the daemon in a detached tmux session.
+func startDaemon(cfg *config.Config) error {
+	name := session.SessionName("daemon")
+
+	cmd := exec.Command("tmux", "new-session",
+		"-d",
+		"-s", name,
+		"-c", cfg.ProjectRoot,
+		"ct daemon",
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
 }
 
 // Architect implements `ct architect` — starts the Architect agent.
