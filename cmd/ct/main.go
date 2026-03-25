@@ -38,6 +38,8 @@ func main() {
 		} else {
 			err = commands.Architect()
 		}
+	case "daemon":
+		err = runDaemon()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -59,5 +61,6 @@ Commands:
   stop                Graceful shutdown with handoffs
   nuke                Immediate shutdown, no handoffs
   architect           Start the Architect
-  architect stop      Stop the Architect gracefully`)
+  architect stop      Stop the Architect gracefully
+  daemon              Run the daemon (internal — started by ct start)`)
 }
