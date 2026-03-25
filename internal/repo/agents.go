@@ -89,6 +89,24 @@ func (r *AgentRepo) UpdateStatus(name, status string) error {
 	return nil
 }
 
+// SetWorktree sets the worktree path for an agent.
+func (r *AgentRepo) SetWorktree(name, path string) error {
+	_, err := r.db.Exec(
+		`UPDATE agents SET worktree_path = ? WHERE name = ?`,
+		path, name,
+	)
+	return err
+}
+
+// SetTmuxSession sets the tmux session name for an agent.
+func (r *AgentRepo) SetTmuxSession(name, sessionName string) error {
+	_, err := r.db.Exec(
+		`UPDATE agents SET tmux_session = ? WHERE name = ?`,
+		sessionName, name,
+	)
+	return err
+}
+
 // SetCurrentIssue assigns an issue to an agent.
 func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
 	var val interface{}
