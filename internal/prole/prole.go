@@ -12,6 +12,11 @@ import (
 	"github.com/katerina7479/company_town/internal/session"
 )
 
+// BareRepoPath returns the path to the bare clone used for prole worktrees.
+func BareRepoPath(cfg *config.Config) string {
+	return filepath.Join(config.CompanyTownDir(cfg.ProjectRoot), "repo.git")
+}
+
 // ProlesDir returns the path to the proles directory.
 func ProlesDir(cfg *config.Config) string {
 	return filepath.Join(config.CompanyTownDir(cfg.ProjectRoot), "proles")
@@ -22,13 +27,55 @@ func WorktreePath(cfg *config.Config, name string) string {
 	return filepath.Join(ProlesDir(cfg), name)
 }
 
-// Create sets up a new prole: git worktree, DB registration, tmux session.
+// EnsureBareRepo creates the bare clone if it doesn't exist, or fetches if it does.
+func EnsureBareRepo(cfg *config.Config) error {
+	barePath := BareRepoPath(cfg)
+
+	if _, err := os.Stat(barePath); err == nil {
+		// Already exists — fetch latest
+		cmd := exec.Command("git", "fetch", "origin")
+		cmd.Dir = barePath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	// Get the real remote URL from the project repo
+	originURL, err := getOriginURL(cfg.ProjectRoot)
+	if err != nil || originURL == "" {
+		return fmt.Errorf("could not determine origin URL: %w", err)
+	}
+
+	// Clone bare directly from the remote, then set up fetch refspec
+	// so `git fetch origin` updates remote tracking refs
+	cmd := exec.Command("git", "clone", "--bare", originURL, barePath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("creating bare clone: %w", err)
+	}
+
+	// Configure fetch refspec (bare clones don't set this by default)
+	gitCfg := exec.Command("git", "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+	gitCfg.Dir = barePath
+	gitCfg.Run()
+
+	// Fetch to populate remote tracking refs
+	fetchCmd := exec.Command("git", "fetch", "origin")
+	fetchCmd.Dir = barePath
+	fetchCmd.Stdout = os.Stdout
+	fetchCmd.Stderr = os.Stderr
+	fetchCmd.Run()
+
+	return nil
+}
+
+// Create sets up a new prole: bare repo worktree, DB registration, tmux session.
 func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 	wtPath := WorktreePath(cfg, name)
 
-	// Create worktree directory
-	prolesDir := ProlesDir(cfg)
-	if err := os.MkdirAll(prolesDir, 0755); err != nil {
+	// Ensure proles directory exists
+	if err := os.MkdirAll(ProlesDir(cfg), 0755); err != nil {
 		return fmt.Errorf("creating proles dir: %w", err)
 	}
 
@@ -37,14 +84,26 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		return fmt.Errorf("worktree already exists: %s", wtPath)
 	}
 
-	// Create git worktree from main
-	cmd := exec.Command("git", "worktree", "add", wtPath, "main")
-	cmd.Dir = cfg.ProjectRoot
+	// Ensure bare repo is set up and current
+	if err := EnsureBareRepo(cfg); err != nil {
+		return fmt.Errorf("setting up bare repo: %w", err)
+	}
+
+	// Create worktree on a new branch from origin/main
+	branch := fmt.Sprintf("prole/%s/standby", name)
+	cmd := exec.Command("git", "worktree", "add", "-b", branch, wtPath, "origin/main")
+	cmd.Dir = BareRepoPath(cfg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("creating worktree: %w", err)
 	}
+
+	// Set push remote to origin so proles push to GitHub
+	pushCmd := exec.Command("git", "remote", "set-url", "--push", "origin",
+		mustGetOriginURL(cfg))
+	pushCmd.Dir = wtPath
+	pushCmd.Run()
 
 	// Register agent in DB
 	if _, err := agents.Get(name); err != nil {
@@ -94,7 +153,7 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 	return nil
 }
 
-// Reset resets an idle prole's worktree to fresh main.
+// Reset resets an idle prole's worktree to latest origin/main.
 func Reset(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 	agent, err := agents.Get(name)
 	if err != nil {
@@ -107,10 +166,18 @@ func Reset(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 
 	wtPath := WorktreePath(cfg, name)
 
-	// Checkout main and pull
+	// Fetch latest in the bare repo
+	fetchCmd := exec.Command("git", "fetch", "origin")
+	fetchCmd.Dir = BareRepoPath(cfg)
+	fetchCmd.Stdout = os.Stdout
+	fetchCmd.Stderr = os.Stderr
+	fetchCmd.Run()
+
+	// Reset worktree to latest main
+	branch := fmt.Sprintf("prole/%s/standby", name)
 	cmds := [][]string{
-		{"git", "checkout", "main"},
-		{"git", "pull", "origin", "main"},
+		{"git", "checkout", branch},
+		{"git", "reset", "--hard", "origin/main"},
 		{"git", "clean", "-fd"},
 	}
 
@@ -149,7 +216,7 @@ func List(agents *repo.AgentRepo, cfg *config.Config) ([]*repo.Agent, error) {
 	return proles, nil
 }
 
-// deployProleCLAUDEMD writes a CLAUDE.md to the prole's worktree directory
+// deployProleCLAUDEMD writes a CLAUDE.md to the prole's agent directory
 // with template variables filled in.
 func deployProleCLAUDEMD(name, wtPath string, cfg *config.Config) error {
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
@@ -173,4 +240,22 @@ func deployProleCLAUDEMD(name, wtPath string, cfg *config.Config) error {
 	}
 
 	return os.WriteFile(filepath.Join(proleDir, "CLAUDE.md"), []byte(content), 0644)
+}
+
+func getOriginURL(projectRoot string) (string, error) {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = projectRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func mustGetOriginURL(cfg *config.Config) string {
+	url, err := getOriginURL(cfg.ProjectRoot)
+	if err != nil {
+		return cfg.GithubRepo
+	}
+	return url
 }
