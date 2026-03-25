@@ -2,18 +2,32 @@ package db
 
 import (
 	"database/sql"
+	"embed"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+
+	"github.com/katerina7479/company_town/internal/config"
 )
 
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+// ServerState is runtime-only state for the Dolt server process (not in config).
+type ServerState struct {
+	PID int `json:"pid"`
+}
+
 // InitDolt initializes a Dolt database directory if it doesn't exist.
-func InitDolt(doltDir string, dbName string) error {
+func InitDolt(doltDir string) error {
 	if _, err := os.Stat(filepath.Join(doltDir, ".dolt")); err == nil {
 		return nil // already initialized
 	}
@@ -33,40 +47,122 @@ func InitDolt(doltDir string, dbName string) error {
 	return nil
 }
 
-// StartServer starts a Dolt SQL server in the background.
-// Returns the process so the caller can stop it later.
-func StartServer(doltDir string, port int) (*exec.Cmd, error) {
-	cmd := exec.Command("dolt", "sql-server",
-		"--host", "127.0.0.1",
-		"--port", fmt.Sprintf("%d", port),
-		"--no-auto-commit",
-	)
-	cmd.Dir = doltDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting dolt server: %w", err)
+// StartServer starts a Dolt SQL server using host/port/database from config.
+// Writes PID to server.json (runtime state only — connection info is in config.json).
+func StartServer(doltDir, ctDir string, cfg *config.DoltConfig) error {
+	// Check if already running
+	if state, err := loadServerState(ctDir); err == nil {
+		if isProcessRunning(state.PID) {
+			fmt.Printf("  Dolt server already running (pid=%d, port=%d)\n", state.PID, cfg.Port)
+			return nil
+		}
+		cleanServerState(ctDir)
 	}
 
-	return cmd, nil
+	if !isPortAvailable(cfg.Host, cfg.Port) {
+		return fmt.Errorf("port %d is in use on %s", cfg.Port, cfg.Host)
+	}
+
+	logFile, err := os.OpenFile(filepath.Join(ctDir, "logs", "dolt-server.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("opening dolt log: %w", err)
+	}
+
+	cmd := exec.Command("dolt", "sql-server",
+		"--host", cfg.Host,
+		"--port", fmt.Sprintf("%d", cfg.Port),
+	)
+	cmd.Dir = doltDir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("starting dolt server: %w", err)
+	}
+
+	if err := saveServerState(ctDir, ServerState{PID: cmd.Process.Pid}); err != nil {
+		return fmt.Errorf("saving server state: %w", err)
+	}
+
+	if err := waitForServer(cfg.Host, cfg.Port, 10*time.Second); err != nil {
+		return fmt.Errorf("dolt server failed to start: %w", err)
+	}
+
+	fmt.Printf("  Dolt server started (pid=%d, port=%d)\n", cmd.Process.Pid, cfg.Port)
+
+	cmd.Process.Release()
+	logFile.Close()
+
+	return nil
 }
 
-// Connect returns a database connection to the Dolt SQL server.
-func Connect(dbName string, port int) (*sql.DB, error) {
-	dsn := fmt.Sprintf("root@tcp(127.0.0.1:%d)/%s", port, dbName)
-	db, err := sql.Open("mysql", dsn)
+// StopServer stops the running Dolt server.
+func StopServer(ctDir string) error {
+	state, err := loadServerState(ctDir)
+	if err != nil {
+		return fmt.Errorf("no server state found: %w", err)
+	}
+
+	proc, err := os.FindProcess(state.PID)
+	if err != nil {
+		cleanServerState(ctDir)
+		return nil
+	}
+
+	if err := proc.Signal(os.Interrupt); err != nil {
+		cleanServerState(ctDir)
+		return nil
+	}
+
+	cleanServerState(ctDir)
+	fmt.Printf("  Dolt server stopped (pid=%d)\n", state.PID)
+	return nil
+}
+
+// Connect returns a database connection using host/port/database from config.
+// Creates the database if it doesn't exist.
+func Connect(cfg *config.DoltConfig) (*sql.DB, error) {
+	// First connect without a database to ensure the DB exists
+	rootDSN := fmt.Sprintf("root@tcp(%s:%d)/", cfg.Host, cfg.Port)
+	rootConn, err := sql.Open("mysql", rootDSN)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to dolt: %w", err)
 	}
-	return db, nil
+
+	if err := rootConn.Ping(); err != nil {
+		rootConn.Close()
+		return nil, fmt.Errorf("dolt server not responding: %w", err)
+	}
+
+	// Create database if it doesn't exist
+	_, err = rootConn.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database))
+	rootConn.Close()
+	if err != nil {
+		return nil, fmt.Errorf("creating database %s: %w", cfg.Database, err)
+	}
+
+	// Now connect to the actual database
+	dsn := fmt.Sprintf("root@tcp(%s:%d)/%s?parseTime=true", cfg.Host, cfg.Port, cfg.Database)
+	conn, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to dolt database: %w", err)
+	}
+
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("dolt database not responding: %w", err)
+	}
+
+	return conn, nil
 }
 
-// RunMigrations executes all .sql files in the migrations directory in order.
-func RunMigrations(db *sql.DB, migrationsDir string) error {
-	entries, err := os.ReadDir(migrationsDir)
+// RunMigrations executes all embedded .sql migration files in order.
+func RunMigrations(db *sql.DB) error {
+	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
-		return fmt.Errorf("reading migrations dir: %w", err)
+		return fmt.Errorf("reading embedded migrations: %w", err)
 	}
 
 	var files []string
@@ -78,8 +174,7 @@ func RunMigrations(db *sql.DB, migrationsDir string) error {
 	sort.Strings(files)
 
 	for _, f := range files {
-		path := filepath.Join(migrationsDir, f)
-		data, err := os.ReadFile(path)
+		data, err := migrationsFS.ReadFile("migrations/" + f)
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", f, err)
 		}
@@ -92,4 +187,58 @@ func RunMigrations(db *sql.DB, migrationsDir string) error {
 	}
 
 	return nil
+}
+
+func loadServerState(ctDir string) (*ServerState, error) {
+	data, err := os.ReadFile(filepath.Join(ctDir, "server.json"))
+	if err != nil {
+		return nil, err
+	}
+	var state ServerState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func saveServerState(ctDir string, state ServerState) error {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(ctDir, "server.json"), data, 0644)
+}
+
+func cleanServerState(ctDir string) {
+	os.Remove(filepath.Join(ctDir, "server.json"))
+}
+
+func isProcessRunning(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(nil) == nil
+}
+
+func isPortAvailable(host string, port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+func waitForServer(host string, port int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 500*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("server not ready after %s", timeout)
 }

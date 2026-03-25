@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,9 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 )
+
+//go:embed templates/*
+var templateFS embed.FS
 
 // agentTypes defines the folder structure under .company_town/agents/
 var agentTypes = []string{
@@ -81,7 +85,7 @@ func Init(force bool) error {
 	// 4. Write config.json if missing
 	cfgPath := config.ConfigPath(projectRoot)
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		cfg := config.DefaultConfig(projectRoot, "", "company_town")
+		cfg := config.DefaultConfig(projectRoot, "")
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
@@ -90,14 +94,37 @@ func Init(force bool) error {
 		fmt.Println("  exists:  config.json")
 	}
 
-	// 5. Initialize Dolt database
-	doltDir := filepath.Join(ctDir, "db")
-	fmt.Println("Initializing Dolt database...")
-	if err := db.InitDolt(doltDir, "company_town"); err != nil {
-		return fmt.Errorf("dolt init: %w", err)
+	// 5. Load config for Dolt settings
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// 6. Write .gitignore for .company_town
+	// 6. Connect to Dolt server (start it if not running)
+	fmt.Println("Connecting to Dolt server...")
+	conn, err := db.Connect(&cfg.Dolt)
+	if err != nil {
+		fmt.Println("  Dolt server not responding, starting it...")
+		doltDir := filepath.Join(ctDir, "db")
+		if err := db.InitDolt(doltDir); err != nil {
+			return fmt.Errorf("dolt init: %w", err)
+		}
+		if err := db.StartServer(doltDir, ctDir, &cfg.Dolt); err != nil {
+			return fmt.Errorf("starting dolt server: %w", err)
+		}
+		conn, err = db.Connect(&cfg.Dolt)
+		if err != nil {
+			return fmt.Errorf("connecting to dolt after start: %w", err)
+		}
+	}
+	defer conn.Close()
+
+	fmt.Println("Running migrations...")
+	if err := db.RunMigrations(conn); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	// 7. Write .gitignore for .company_town
 	gitignorePath := filepath.Join(ctDir, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
 		content := "# Everything in .company_town is local runtime state\n*\n"
@@ -111,17 +138,21 @@ func Init(force bool) error {
 	return nil
 }
 
-// writeClaudeMD writes a default CLAUDE.md for an agent type.
+// writeClaudeMD writes a CLAUDE.md for an agent type from the embedded templates.
 // If force is false and the file exists, it warns but does not overwrite.
 func writeClaudeMD(dir, agentType string, force bool) {
 	path := filepath.Join(dir, "CLAUDE.md")
 
+	content, err := loadTemplate(agentType)
+	if err != nil {
+		fmt.Printf("  error: no template for %s: %v\n", agentType, err)
+		return
+	}
+
 	if !force {
 		if _, err := os.Stat(path); err == nil {
-			// File exists — check if it differs from default
 			existing, _ := os.ReadFile(path)
-			defaultContent := defaultClaudeMD(agentType)
-			if string(existing) != defaultContent {
+			if string(existing) != content {
 				fmt.Printf("  warning: %s differs from default (use --force to overwrite)\n",
 					filepath.Join(".company_town", "agents", filepath.Base(dir), "CLAUDE.md"))
 			}
@@ -129,7 +160,6 @@ func writeClaudeMD(dir, agentType string, force bool) {
 		}
 	}
 
-	content := defaultClaudeMD(agentType)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		fmt.Printf("  error writing %s: %v\n", path, err)
 		return
@@ -137,135 +167,12 @@ func writeClaudeMD(dir, agentType string, force bool) {
 	fmt.Printf("  created: agents/%s/CLAUDE.md\n", agentType)
 }
 
-func defaultClaudeMD(agentType string) string {
-	switch agentType {
-	case "mayor":
-		return `# Mayor
-
-You are the Mayor — the human-facing agent of Company Town.
-
-## Responsibilities
-- Manage the system: start/stop agents, create tickets, handle escalations
-- Receive merge notifications and pull main
-- Escalation target when PRs are closed without merge
-
-## Rules
-- Never push to main
-- All work happens through tickets and other agents
-- Log to .company_town/logs/mayor.log
-
-## On Start
-- Read memory files in this directory
-- Check system status with ` + "`gt status`" + `
-`
-	case "architect":
-		return `# Architect
-
-You are the Architect — the design and specification agent.
-
-## Responsibilities
-- Monitor for draft tickets
-- Investigate codebase, check test coverage
-- Write design documents to .company_town/ticket_specs/
-- Break tickets into fully specified subtasks
-- File tests-first PRs with breaking tests for new behavior
-- Keep documentation current in .company_town/docs/
-
-## Workflow
-1. Pick up a draft ticket
-2. Investigate the codebase
-3. Write a design spec
-4. Create sub-tasks with full specifications
-5. File breaking tests PR, wait for "go for build"
-6. Move sub-tickets to open
-
-## Handoff
-- When context exceeds threshold, write handoff.md and exit
-- Read handoff.md on start to resume
-
-## Rules
-- Never push to main
-- Log to .company_town/logs/architect.log
-`
-	case "conductor":
-		return `# Conductor
-
-You are the Conductor — the ticket assignment agent.
-
-## Responsibilities
-- Poll for open tickets ordered by priority
-- Assign tickets to idle proles or artisans matching specialty
-- Spin up new proles if needed (respecting max_proles)
-- Do NOT do implementation work
-
-## Rules
-- Never push to main
-- Respect max_proles from config.json
-- Log to .company_town/logs/conductor.log
-`
-	case "prole":
-		return `# Prole
-
-You are a Prole — an ephemeral implementation agent.
-
-## Lifecycle
-1. Receive ticket assignment
-2. Move ticket to in_progress
-3. Create branch: prole/<your-name>/<TICKET_PREFIX>-<id>
-4. Implement the work
-5. Push frequently
-6. File a PR: [PREFIX-123] Ticket title
-7. Move to idle
-
-## Rules
-- Never push to main
-- Work only on your assigned ticket
-- Log to .company_town/logs/prole-<name>.log
-`
-	case "qa":
-		return `# QA
-
-You are QA — the code review agent.
-
-## Responsibilities
-- Review PRs for tickets entering in_review
-- File GitHub review comments
-- Your comments are advisory — only human comments trigger repair
-
-## Rules
-- Never push to main
-- Log to .company_town/logs/qa.log
-`
-	case "janitor":
-		return `# Janitor
-
-You are the Janitor — the maintenance and cleanup agent.
-
-## Patrol Tasks
-- Detect dead proles — clean up worktrees, update issues
-- Detect stale worktrees — prune if prole is inactive
-- Monitor context levels for long-lived agents — trigger handoff when threshold exceeded
-- Log all actions to .company_town/logs/janitor.log
-`
-	case "artisan":
-		return `# Artisan
-
-You are an Artisan — a specialty coder agent.
-
-## Responsibilities
-- Write code, fix escalated issues, specify tickets, update docs
-- Long-lived with handoff support
-- Specialty subtypes: frontend, backend, qa_coder
-
-## Handoff
-- When context exceeds threshold, write handoff.md and exit
-- Read handoff.md on start to resume
-
-## Rules
-- Never push to main
-- Work within your specialty
-`
-	default:
-		return fmt.Sprintf("# %s\n\nAgent CLAUDE.md — customize for this role.\n", agentType)
+// loadTemplate reads a template file from the embedded filesystem.
+func loadTemplate(agentType string) (string, error) {
+	filename := fmt.Sprintf("templates/%s-CLAUDE.md", agentType)
+	data, err := templateFS.ReadFile(filename)
+	if err != nil {
+		return "", fmt.Errorf("reading template %s: %w", filename, err)
 	}
+	return string(data), nil
 }

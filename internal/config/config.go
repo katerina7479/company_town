@@ -31,12 +31,18 @@ type AgentsConfig struct {
 	Janitor   AgentConfig   `json:"janitor"`
 }
 
+type DoltConfig struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Database string `json:"database"`
+}
+
 type Config struct {
 	Version                 string       `json:"version"`
 	TicketPrefix            string       `json:"ticket_prefix"`
 	ProjectRoot             string       `json:"project_root"`
 	GithubRepo              string       `json:"github_repo"`
-	DoltDatabase            string       `json:"dolt_database"`
+	Dolt                    DoltConfig   `json:"dolt"`
 	LogDir                  string       `json:"log_dir"`
 	MaxProles               int          `json:"max_proles"`
 	Agents                  AgentsConfig `json:"agents"`
@@ -74,15 +80,19 @@ func Load(projectRoot string) (*Config, error) {
 }
 
 // DefaultConfig returns a config with sensible defaults.
-func DefaultConfig(projectRoot, githubRepo, doltDatabase string) *Config {
+func DefaultConfig(projectRoot, githubRepo string) *Config {
 	return &Config{
 		Version:      "1.0.0",
 		TicketPrefix: "ct",
 		ProjectRoot:  projectRoot,
 		GithubRepo:   githubRepo,
-		DoltDatabase: doltDatabase,
-		LogDir:       filepath.Join(DirName, "logs"),
-		MaxProles:    2,
+		Dolt: DoltConfig{
+			Host:     "127.0.0.1",
+			Port:     3307,
+			Database: "company_town",
+		},
+		LogDir:    filepath.Join(DirName, "logs"),
+		MaxProles: 2,
 		Agents: AgentsConfig{
 			Mayor:     AgentConfig{Model: "claude-opus-4-5"},
 			Architect: AgentConfig{Model: "claude-opus-4-5"},
