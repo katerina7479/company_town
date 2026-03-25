@@ -151,3 +151,4 @@ or tests fail in ways you can't diagnose, escalate. Don't spin.
 - Commit and push after EVERY change
 - Do not skip quality gates
 - Do not create your own tickets to work on — file them and move on
+

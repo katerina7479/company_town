@@ -6,3 +6,8 @@ bin/
 
 # OS
 .DS_Store
+
+# Claude Code runtime
+.events.jsonl
+.events.jsonl.lock
+.runtime/

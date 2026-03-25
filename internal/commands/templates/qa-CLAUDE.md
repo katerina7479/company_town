@@ -77,3 +77,4 @@ gt status                            # System overview
 - Your reviews are advisory — only human comments trigger repair
 - Be specific and actionable in every comment
 - Log to `.company_town/logs/qa.log`
+

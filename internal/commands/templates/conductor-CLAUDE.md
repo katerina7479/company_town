@@ -70,3 +70,4 @@ gt status                                   # System overview
 - Never merge PRs — human does that
 - Escalate ambiguity to Mayor rather than guessing
 - Log all assignments and decisions to `.company_town/logs/conductor.log`
+

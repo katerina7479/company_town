@@ -55,3 +55,4 @@ When escalated to, gather context, then consult the human if needed.
 - All implementation work happens through tickets and agents
 - Log decisions and escalations to `.company_town/logs/mayor.log`
 - When in doubt, ask the human rather than guessing
+
