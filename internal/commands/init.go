@@ -35,6 +35,7 @@ var topDirs = []string{
 	"logs",
 	"docs",
 	"skills",
+	"proles",
 	"ticket_specs",
 	"agents",
 }
