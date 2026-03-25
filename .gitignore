@@ -1,0 +1,8 @@
+# Runtime state
+.company_town/
+
+# Build output
+bin/
+
+# OS
+.DS_Store
