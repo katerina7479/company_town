@@ -429,17 +429,46 @@ func agentRegister(agents *repo.AgentRepo, args []string) error {
 
 func agentStatus(agents *repo.AgentRepo, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: gt agent status <name> <idle|working|dead>")
+		return fmt.Errorf("usage: gt agent status <name> <idle|working|dead> [--issue <id>]")
 	}
 
 	name := args[0]
 	status := args[1]
+	var issueID *int
 
-	if err := agents.UpdateStatus(name, status); err != nil {
-		return err
+	for i := 2; i < len(args); i++ {
+		if args[i] == "--issue" && i+1 < len(args) {
+			i++
+			v, err := strconv.Atoi(args[i])
+			if err != nil {
+				return fmt.Errorf("invalid issue ID: %s", args[i])
+			}
+			issueID = &v
+		}
 	}
 
-	fmt.Printf("Agent %s → %s\n", name, status)
+	switch {
+	case issueID != nil:
+		if status != "working" {
+			return fmt.Errorf("--issue requires status \"working\", got %q", status)
+		}
+		if err := agents.SetCurrentIssue(name, issueID); err != nil {
+			return err
+		}
+		fmt.Printf("Agent %s → working (issue %d)\n", name, *issueID)
+	case status == "idle":
+		// Clear current issue and set idle
+		if err := agents.ClearCurrentIssue(name); err != nil {
+			return err
+		}
+		fmt.Printf("Agent %s → idle\n", name)
+	default:
+		if err := agents.UpdateStatus(name, status); err != nil {
+			return err
+		}
+		fmt.Printf("Agent %s → %s\n", name, status)
+	}
+
 	return nil
 }
 
