@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
@@ -239,13 +240,18 @@ func Stop() error {
 	for _, s := range sessions {
 		agentName := s[len(session.SessionPrefix):]
 
-		switch agentName {
-		case "architect":
+		switch {
+		case agentName == "architect":
 			signalPath := filepath.Join(ctDir, "agents", "architect", "memory", "handoff_requested")
 			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
 			session.SendKeys(s, "System is shutting down. Write handoff.md and exit cleanly.")
-		case "mayor":
+		case agentName == "mayor":
 			session.SendKeys(s, "System is shutting down. Save any state and exit cleanly.")
+		case strings.HasPrefix(agentName, "artisan-"):
+			specialty := strings.TrimPrefix(agentName, "artisan-")
+			signalPath := filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
+			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
+			session.SendKeys(s, "System is shutting down. Write handoff.md and exit cleanly.")
 		default:
 			session.SendKeys(s, "System is shutting down. Commit and push any work, then exit.")
 		}
