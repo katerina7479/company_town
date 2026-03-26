@@ -77,11 +77,38 @@ func (d *Daemon) Stop() {
 }
 
 func (d *Daemon) poll() {
+	d.handleDeadSessions()
 	d.handleDraftTickets()
 	d.handleOpenTickets()
 	d.handleInReviewTickets()
 	d.handleRepairingTickets()
 	d.handlePREvents()
+}
+
+// handleDeadSessions marks agents as dead when their tmux session no longer exists.
+func (d *Daemon) handleDeadSessions() {
+	agents, err := d.agents.ListAll()
+	if err != nil {
+		d.logger.Printf("error listing agents: %v", err)
+		return
+	}
+
+	for _, agent := range agents {
+		if agent.Status == "dead" {
+			continue
+		}
+		if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
+			continue
+		}
+		if d.sessionExists(agent.TmuxSession.String) {
+			continue
+		}
+		d.logger.Printf("session %s for agent %s not found — marking dead",
+			agent.TmuxSession.String, agent.Name)
+		if err := d.agents.UpdateStatus(agent.Name, "dead"); err != nil {
+			d.logger.Printf("error marking agent %s dead: %v", agent.Name, err)
+		}
+	}
 }
 
 // handleOpenTickets nudges the Conductor when ready tickets are waiting for assignment.
