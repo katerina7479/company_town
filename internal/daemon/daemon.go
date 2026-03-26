@@ -80,6 +80,7 @@ func (d *Daemon) poll() {
 	d.handleDraftTickets()
 	d.handleOpenTickets()
 	d.handleInReviewTickets()
+	d.handleRepairingTickets()
 	d.handlePREvents()
 }
 
@@ -188,6 +189,40 @@ func (d *Daemon) handleInReviewTickets() {
 		} else {
 			d.logger.Printf("nudged Reviewer for in_review ticket %s-%d (PR #%d)",
 				d.cfg.TicketPrefix, issue.ID, issue.PRNumber.Int64)
+		}
+	}
+}
+
+// handleRepairingTickets prompts the Conductor to assign a prole to fix review comments.
+func (d *Daemon) handleRepairingTickets() {
+	tickets, err := d.issues.List("repairing")
+	if err != nil {
+		d.logger.Printf("error listing repairing tickets: %v", err)
+		return
+	}
+
+	if len(tickets) == 0 {
+		return
+	}
+
+	conductorSession := session.SessionName("conductor")
+	if !d.sessionExists(conductorSession) {
+		return // Conductor not running
+	}
+
+	for _, issue := range tickets {
+		pr := ""
+		if issue.PRNumber.Valid {
+			pr = fmt.Sprintf(" (PR #%d)", issue.PRNumber.Int64)
+		}
+		msg := fmt.Sprintf("Ticket %s-%d%s needs repair: %s. "+
+			"Assign an available prole to address the review comments.",
+			d.cfg.TicketPrefix, issue.ID, pr, issue.Title)
+
+		if err := d.sendKeys(conductorSession, msg); err != nil {
+			d.logger.Printf("error nudging Conductor for repairing ticket %d: %v", issue.ID, err)
+		} else {
+			d.logger.Printf("nudged Conductor for repairing ticket %s-%d", d.cfg.TicketPrefix, issue.ID)
 		}
 	}
 }
