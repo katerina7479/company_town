@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/katerina7479/company_town/internal/config"
+	"github.com/katerina7479/company_town/internal/prole"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
 )
@@ -26,6 +27,7 @@ type Daemon struct {
 	stop          chan struct{}
 	sendKeys      func(session, msg string) error
 	sessionExists func(session string) bool
+	resetWorktree func(name string) error
 	lastNudged    map[string]time.Time
 	nudgeCooldown time.Duration
 	nowFn         func() time.Time
@@ -49,6 +51,9 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
 		sessionExists: session.Exists,
+		resetWorktree: func(name string) error {
+			return prole.Reset(name, cfg, repo.NewAgentRepo(db))
+		},
 		lastNudged:    make(map[string]time.Time),
 		nudgeCooldown: time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
 		nowFn:         time.Now,
@@ -360,12 +365,22 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 
 	// Free the assignee agent so it can pick up new work
 	if issue.Assignee.Valid {
-		if err := d.agents.ClearCurrentIssue(issue.Assignee.String); err != nil {
-			d.logger.Printf("error clearing current issue for agent %s: %v",
-				issue.Assignee.String, err)
+		assignee := issue.Assignee.String
+		if err := d.agents.ClearCurrentIssue(assignee); err != nil {
+			d.logger.Printf("error clearing current issue for agent %s: %v", assignee, err)
 		} else {
-			d.logger.Printf("freed agent %s after PR #%d merged",
-				issue.Assignee.String, issue.PRNumber.Int64)
+			d.logger.Printf("freed agent %s after PR #%d merged", assignee, issue.PRNumber.Int64)
+
+			// Reset prole worktree so it is clean for the next ticket
+			agent, err := d.agents.Get(assignee)
+			if err == nil && agent.Type == "prole" {
+				if err := d.resetWorktree(assignee); err != nil {
+					d.logger.Printf("error resetting worktree for prole %s: %v", assignee, err)
+				} else {
+					d.logger.Printf("reset worktree for prole %s after PR #%d merged",
+						assignee, issue.PRNumber.Int64)
+				}
+			}
 		}
 	}
 

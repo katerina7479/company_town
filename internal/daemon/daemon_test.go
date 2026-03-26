@@ -61,12 +61,24 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
+		resetWorktree: func(string) error { return nil },
 		lastNudged:    make(map[string]time.Time),
 		nudgeCooldown: 0, // disabled by default in tests
 		nowFn:         time.Now,
 	}
 
 	return d, issues, agents, &sent
+}
+
+// withResetCapture replaces d.resetWorktree with one that records calls.
+// Returns a pointer to the slice of agent names that were reset.
+func withResetCapture(d *Daemon) *[]string {
+	var resets []string
+	d.resetWorktree = func(name string) error {
+		resets = append(resets, name)
+		return nil
+	}
+	return &resets
 }
 
 func TestHandlePRMerged_closesTicket(t *testing.T) {
@@ -160,6 +172,64 @@ func TestHandlePRMerged_noAssigneeIsOk(t *testing.T) {
 	updated, _ := issues.Get(id)
 	if updated.Status != "closed" {
 		t.Errorf("expected status=closed, got %q", updated.Status)
+	}
+}
+
+func TestHandlePRMerged_resetsProleWorktree(t *testing.T) {
+	d, issues, agents := newTestDaemon(t)
+	resets := withResetCapture(d)
+
+	if err := agents.Register("quartz", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	id, _ := issues.Create("Add feature", "task", nil, nil)
+	issues.Assign(id, "quartz", "prole/quartz/NC-42")
+	issues.SetPR(id, 42)
+	agents.SetCurrentIssue("quartz", &id)
+
+	issue, _ := issues.Get(id)
+	d.handlePRMerged(issue)
+
+	if len(*resets) != 1 || (*resets)[0] != "quartz" {
+		t.Errorf("expected worktree reset for quartz, got %v", *resets)
+	}
+}
+
+func TestHandlePRMerged_doesNotResetNonProle(t *testing.T) {
+	d, issues, agents := newTestDaemon(t)
+	resets := withResetCapture(d)
+
+	if err := agents.Register("conductor", "conductor", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	id, _ := issues.Create("Route tickets", "task", nil, nil)
+	issues.Assign(id, "conductor", "conductor/branch")
+	issues.SetPR(id, 99)
+	agents.SetCurrentIssue("conductor", &id)
+
+	issue, _ := issues.Get(id)
+	d.handlePRMerged(issue)
+
+	if len(*resets) != 0 {
+		t.Errorf("expected no worktree reset for conductor, got %v", *resets)
+	}
+}
+
+func TestHandlePRMerged_noResetWhenNoAssignee(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+	resets := withResetCapture(d)
+
+	id, _ := issues.Create("Unassigned", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 7)
+
+	issue, _ := issues.Get(id)
+	d.handlePRMerged(issue)
+
+	if len(*resets) != 0 {
+		t.Errorf("expected no reset when no assignee, got %v", *resets)
 	}
 }
 
