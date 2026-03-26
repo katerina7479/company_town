@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"testing"
@@ -10,7 +11,21 @@ import (
 	"github.com/katerina7479/company_town/internal/repo"
 )
 
+type sentMessage struct {
+	session string
+	msg     string
+}
+
+// newTestDaemon creates a daemon with no active sessions and a discarding sendKeys.
 func newTestDaemon(t *testing.T) (*Daemon, *repo.IssueRepo, *repo.AgentRepo) {
+	t.Helper()
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	return d, issues, agents
+}
+
+// newTestDaemonWithSessions creates a daemon where the given sessions appear active.
+// Returned *[]sentMessage accumulates all sendKeys calls made during the test.
+func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, *repo.IssueRepo, *repo.AgentRepo, *[]sentMessage) {
 	t.Helper()
 	conn, err := db.NewTestDB()
 	if err != nil {
@@ -26,15 +41,27 @@ func newTestDaemon(t *testing.T) (*Daemon, *repo.IssueRepo, *repo.AgentRepo) {
 	issues := repo.NewIssueRepo(conn)
 	agents := repo.NewAgentRepo(conn)
 
-	d := &Daemon{
-		cfg:    cfg,
-		issues: issues,
-		agents: agents,
-		logger: log.New(io.Discard, "", 0),
-		stop:   make(chan struct{}),
+	sessions := make(map[string]bool, len(activeSessions))
+	for _, s := range activeSessions {
+		sessions[s] = true
 	}
 
-	return d, issues, agents
+	var sent []sentMessage
+
+	d := &Daemon{
+		cfg:           cfg,
+		issues:        issues,
+		agents:        agents,
+		logger:        log.New(io.Discard, "", 0),
+		stop:          make(chan struct{}),
+		sessionExists: func(s string) bool { return sessions[s] },
+		sendKeys: func(s, msg string) error {
+			sent = append(sent, sentMessage{session: s, msg: msg})
+			return nil
+		},
+	}
+
+	return d, issues, agents, &sent
 }
 
 func TestHandlePRMerged_closesTicket(t *testing.T) {
@@ -158,6 +185,138 @@ func TestHandlePRClosed_noopIfAlreadyClosed(t *testing.T) {
 	issue, _ := issues.Get(id)
 	// Should return early without error
 	d.handlePRClosed(issue)
+}
+
+// --- Reviewer nudge tests ---
+
+func TestHandleInReviewTickets_nudgesReviewerPerTicket(t *testing.T) {
+	reviewerSession := "ct-reviewer"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{reviewerSession})
+
+	id, _ := issues.Create("Add auth", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge, got %d", len(*sent))
+	}
+	if (*sent)[0].session != reviewerSession {
+		t.Errorf("expected message to %q, got %q", reviewerSession, (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "PR #42", "NC-"+itoa(id)) {
+		t.Errorf("nudge message missing ticket/PR info: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleInReviewTickets_nudgesOncePerTicket(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	// Two in_review tickets with PRs
+	id1, _ := issues.Create("Ticket A", "task", nil, nil)
+	issues.UpdateStatus(id1, "in_review")
+	issues.SetPR(id1, 10)
+
+	id2, _ := issues.Create("Ticket B", "task", nil, nil)
+	issues.UpdateStatus(id2, "in_review")
+	issues.SetPR(id2, 11)
+
+	d.handleInReviewTickets()
+
+	if len(*sent) != 2 {
+		t.Errorf("expected 2 nudges (one per ticket), got %d", len(*sent))
+	}
+}
+
+func TestHandleInReviewTickets_noNudgeWhenEmpty(t *testing.T) {
+	d, _, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	d.handleInReviewTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (no tickets), got %d", len(*sent))
+	}
+}
+
+func TestHandleInReviewTickets_noNudgeWhenReviewerNotRunning(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	id, _ := issues.Create("Add auth", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (reviewer not running), got %d", len(*sent))
+	}
+}
+
+func TestHandleInReviewTickets_skipsTicketsWithoutPR(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	id, _ := issues.Create("No PR yet", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	// No SetPR — ticket has no PR number
+
+	d.handleInReviewTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (no PR number), got %d: %v", len(*sent), *sent)
+	}
+}
+
+func TestHandleInReviewTickets_mixedTickets(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	// in_review with PR — should nudge
+	id1, _ := issues.Create("Ready for review", "task", nil, nil)
+	issues.UpdateStatus(id1, "in_review")
+	issues.SetPR(id1, 7)
+
+	// in_review without PR — should NOT nudge
+	id2, _ := issues.Create("No PR", "task", nil, nil)
+	issues.UpdateStatus(id2, "in_review")
+
+	// open ticket — should NOT nudge
+	id3, _ := issues.Create("Open ticket", "task", nil, nil)
+	issues.UpdateStatus(id3, "open")
+	issues.SetPR(id3, 8)
+
+	d.handleInReviewTickets()
+
+	if len(*sent) != 1 {
+		t.Errorf("expected 1 nudge, got %d", len(*sent))
+	}
+}
+
+// helpers
+
+func containsAll(s string, substrings ...string) bool {
+	for _, sub := range substrings {
+		if !containsStr(s, sub) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsStr(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && findStr(s, sub))
+}
+
+func findStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+func itoa(n int) string {
+	return fmt.Sprintf("%d", n)
 }
 
 func TestListWithPRs_onlyReturnsNonClosed(t *testing.T) {

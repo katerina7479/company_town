@@ -19,11 +19,13 @@ import (
 
 // Daemon polls for state changes and routes work to agents.
 type Daemon struct {
-	cfg    *config.Config
-	issues *repo.IssueRepo
-	agents *repo.AgentRepo
-	logger *log.Logger
-	stop   chan struct{}
+	cfg           *config.Config
+	issues        *repo.IssueRepo
+	agents        *repo.AgentRepo
+	logger        *log.Logger
+	stop          chan struct{}
+	sendKeys      func(session, msg string) error
+	sessionExists func(session string) bool
 }
 
 // New creates a new Daemon.
@@ -37,11 +39,13 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	}
 
 	return &Daemon{
-		cfg:    cfg,
-		issues: repo.NewIssueRepo(db),
-		agents: repo.NewAgentRepo(db),
-		logger: log.New(f, "[DAEMON] ", log.LstdFlags),
-		stop:   make(chan struct{}),
+		cfg:           cfg,
+		issues:        repo.NewIssueRepo(db),
+		agents:        repo.NewAgentRepo(db),
+		logger:        log.New(f, "[DAEMON] ", log.LstdFlags),
+		stop:          make(chan struct{}),
+		sendKeys:      session.SendKeys,
+		sessionExists: session.Exists,
 	}, nil
 }
 
@@ -136,7 +140,7 @@ func (d *Daemon) handleDraftTickets() {
 	}
 
 	architectSession := session.SessionName("architect")
-	if !session.Exists(architectSession) {
+	if !d.sessionExists(architectSession) {
 		return // Architect not running, nothing to do
 	}
 
@@ -145,7 +149,7 @@ func (d *Daemon) handleDraftTickets() {
 			"Run `gt ticket show %d` and begin specification.",
 			d.cfg.TicketPrefix, issue.ID, issue.Title, issue.ID)
 
-		if err := session.SendKeys(architectSession, msg); err != nil {
+		if err := d.sendKeys(architectSession, msg); err != nil {
 			d.logger.Printf("error nudging architect for ticket %d: %v", issue.ID, err)
 		} else {
 			d.logger.Printf("nudged architect for draft ticket %s-%d", d.cfg.TicketPrefix, issue.ID)
@@ -166,7 +170,7 @@ func (d *Daemon) handleInReviewTickets() {
 	}
 
 	reviewerSession := session.SessionName("reviewer")
-	if !session.Exists(reviewerSession) {
+	if !d.sessionExists(reviewerSession) {
 		return // Reviewer not running
 	}
 
@@ -179,7 +183,7 @@ func (d *Daemon) handleInReviewTickets() {
 			"Review the PR and file comments.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
 
-		if err := session.SendKeys(reviewerSession, msg); err != nil {
+		if err := d.sendKeys(reviewerSession, msg); err != nil {
 			d.logger.Printf("error nudging Reviewer for ticket %d: %v", issue.ID, err)
 		} else {
 			d.logger.Printf("nudged Reviewer for in_review ticket %s-%d (PR #%d)",
@@ -246,10 +250,10 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 
 	// Notify Mayor
 	mayorSession := session.SessionName("mayor")
-	if session.Exists(mayorSession) {
+	if d.sessionExists(mayorSession) {
 		msg := fmt.Sprintf("PR #%d merged. Ticket %s-%d (%s) is now closed.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
-		session.SendKeys(mayorSession, msg)
+		d.sendKeys(mayorSession, msg)
 	}
 }
 
@@ -263,11 +267,11 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 
 	// Escalate to Mayor
 	mayorSession := session.SessionName("mayor")
-	if session.Exists(mayorSession) {
+	if d.sessionExists(mayorSession) {
 		msg := fmt.Sprintf("ESCALATION: PR #%d for ticket %s-%d (%s) was closed without merging. "+
 			"Please decide next action.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
-		session.SendKeys(mayorSession, msg)
+		d.sendKeys(mayorSession, msg)
 	}
 }
 
@@ -298,11 +302,11 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 
 		// Notify Mayor about the repair need
 		mayorSession := session.SessionName("mayor")
-		if session.Exists(mayorSession) {
+		if d.sessionExists(mayorSession) {
 			msg := fmt.Sprintf("PR #%d for ticket %s-%d has human review comments from %s. "+
 				"Ticket moved to repairing. Conductor should assign to an available agent.",
 				prNum, d.cfg.TicketPrefix, issue.ID, c.Author)
-			session.SendKeys(mayorSession, msg)
+			d.sendKeys(mayorSession, msg)
 		}
 
 		return // only need one human comment to trigger repair
