@@ -305,7 +305,7 @@ type prComment struct {
 }
 
 func (d *Daemon) getPRState(prNum int) (state string, merged bool, err error) {
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,merged")
+	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt")
 	cmd.Dir = d.cfg.ProjectRoot
 	out, err := cmd.Output()
 	if err != nil {
@@ -313,14 +313,14 @@ func (d *Daemon) getPRState(prNum int) (state string, merged bool, err error) {
 	}
 
 	var result struct {
-		State  string `json:"state"`
-		Merged bool   `json:"merged"`
+		State    string  `json:"state"`
+		MergedAt *string `json:"mergedAt"`
 	}
 	if err := json.Unmarshal(out, &result); err != nil {
 		return "", false, fmt.Errorf("parsing PR state: %w", err)
 	}
 
-	return result.State, result.Merged, nil
+	return result.State, result.MergedAt != nil, nil
 }
 
 func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
