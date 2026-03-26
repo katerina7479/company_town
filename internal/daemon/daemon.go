@@ -335,15 +335,7 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 			return
 		}
 
-		// Notify Mayor about the repair need
-		mayorSession := session.SessionName("mayor")
-		if d.sessionExists(mayorSession) {
-			msg := fmt.Sprintf("PR #%d for ticket %s-%d has human review comments from %s. "+
-				"Ticket moved to repairing. Conductor should assign to an available agent.",
-				prNum, d.cfg.TicketPrefix, issue.ID, c.Author)
-			d.sendKeys(mayorSession, msg)
-		}
-
+		// Conductor handles repairing tickets via handleRepairingTickets
 		return // only need one human comment to trigger repair
 	}
 }
