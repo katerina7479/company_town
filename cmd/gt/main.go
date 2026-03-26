@@ -770,7 +770,7 @@ func handleStart(args []string) error {
 		return fmt.Errorf("unknown agent: %s", name)
 	}
 
-	sessionName := "ct-" + name
+	sessionName := session.SessionName(name)
 
 	// If already running, just report
 	if tmuxExists(sessionName) {
@@ -812,7 +812,7 @@ func handleStop(args []string) error {
 	}
 
 	name := args[0]
-	sessionName := "ct-" + name
+	sessionName := session.SessionName(name)
 
 	if !tmuxExists(sessionName) {
 		fmt.Printf("%s is not running.\n", name)
