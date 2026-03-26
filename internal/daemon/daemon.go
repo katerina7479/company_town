@@ -233,6 +233,17 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 		return
 	}
 
+	// Free the assignee agent so it can pick up new work
+	if issue.Assignee.Valid {
+		if err := d.agents.ClearCurrentIssue(issue.Assignee.String); err != nil {
+			d.logger.Printf("error clearing current issue for agent %s: %v",
+				issue.Assignee.String, err)
+		} else {
+			d.logger.Printf("freed agent %s after PR #%d merged",
+				issue.Assignee.String, issue.PRNumber.Int64)
+		}
+	}
+
 	// Notify Mayor
 	mayorSession := session.SessionName("mayor")
 	if session.Exists(mayorSession) {
