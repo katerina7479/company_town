@@ -109,6 +109,68 @@ func TestIssueRepo_Ready(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_ListHierarchy(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// Create a parent (epic) and two children (tasks), plus an orphan root
+	parentID, _ := repo.Create("Epic 1", "epic", nil, nil)
+	child1ID, _ := repo.Create("Task 1", "task", &parentID, nil)
+	child2ID, _ := repo.Create("Task 2", "task", &parentID, nil)
+	rootID, _ := repo.Create("Root Task", "task", nil, nil)
+
+	roots, err := repo.ListHierarchy()
+	if err != nil {
+		t.Fatalf("ListHierarchy: %v", err)
+	}
+
+	// Should have two roots: the epic and the root task
+	if len(roots) != 2 {
+		t.Fatalf("expected 2 root nodes, got %d", len(roots))
+	}
+
+	// First root is the epic (created first, id=parentID)
+	epicNode := roots[0]
+	if epicNode.ID != parentID {
+		t.Errorf("expected first root id=%d, got %d", parentID, epicNode.ID)
+	}
+	if len(epicNode.Children) != 2 {
+		t.Fatalf("expected 2 children on epic, got %d", len(epicNode.Children))
+	}
+
+	childIDs := []int{epicNode.Children[0].ID, epicNode.Children[1].ID}
+	if childIDs[0] != child1ID || childIDs[1] != child2ID {
+		t.Errorf("unexpected child ids: %v, want [%d %d]", childIDs, child1ID, child2ID)
+	}
+
+	// Second root is the standalone task
+	if roots[1].ID != rootID {
+		t.Errorf("expected second root id=%d, got %d", rootID, roots[1].ID)
+	}
+	if len(roots[1].Children) != 0 {
+		t.Errorf("expected 0 children on root task, got %d", len(roots[1].Children))
+	}
+}
+
+func TestIssueRepo_ListHierarchy_DanglingParent(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// Create a ticket with a parent_id that references a non-existent issue
+	// by manually inserting via the db (simulate orphan)
+	id, _ := repo.Create("Orphan", "task", nil, nil)
+	// Set parent_id to a non-existent id by updating directly
+	repo.db.Exec(`UPDATE issues SET parent_id = 9999 WHERE id = ?`, id)
+
+	roots, err := repo.ListHierarchy()
+	if err != nil {
+		t.Fatalf("ListHierarchy: %v", err)
+	}
+
+	// Orphan should be treated as a root
+	if len(roots) != 1 || roots[0].ID != id {
+		t.Errorf("expected orphan to be root, got %+v", roots)
+	}
+}
+
 func TestIssueRepo_List(t *testing.T) {
 	repo := setupTestRepo(t)
 
