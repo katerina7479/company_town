@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS agents (
   name          VARCHAR(100) NOT NULL UNIQUE,
   type          VARCHAR(50)  NOT NULL,
                              -- mayor | architect | conductor
-                             -- prole | qa | janitor | artisan
+                             -- prole | reviewer | janitor | artisan
   specialty     VARCHAR(50),
   status        VARCHAR(20)  NOT NULL DEFAULT 'idle',
                              -- working | idle | dead

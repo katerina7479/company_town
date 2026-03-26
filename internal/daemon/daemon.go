@@ -108,7 +108,7 @@ func (d *Daemon) handleDraftTickets() {
 	}
 }
 
-// handleInReviewTickets prompts QA to review tickets in in_review status.
+// handleInReviewTickets prompts Reviewer to review tickets in in_review status.
 func (d *Daemon) handleInReviewTickets() {
 	reviews, err := d.issues.List("in_review")
 	if err != nil {
@@ -120,9 +120,9 @@ func (d *Daemon) handleInReviewTickets() {
 		return
 	}
 
-	qaSession := session.SessionName("qa")
-	if !session.Exists(qaSession) {
-		return // QA not running
+	reviewerSession := session.SessionName("reviewer")
+	if !session.Exists(reviewerSession) {
+		return // Reviewer not running
 	}
 
 	for _, issue := range reviews {
@@ -134,10 +134,10 @@ func (d *Daemon) handleInReviewTickets() {
 			"Review the PR and file comments.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
 
-		if err := session.SendKeys(qaSession, msg); err != nil {
-			d.logger.Printf("error nudging QA for ticket %d: %v", issue.ID, err)
+		if err := session.SendKeys(reviewerSession, msg); err != nil {
+			d.logger.Printf("error nudging Reviewer for ticket %d: %v", issue.ID, err)
 		} else {
-			d.logger.Printf("nudged QA for in_review ticket %s-%d (PR #%d)",
+			d.logger.Printf("nudged Reviewer for in_review ticket %s-%d (PR #%d)",
 				d.cfg.TicketPrefix, issue.ID, issue.PRNumber.Int64)
 		}
 	}
@@ -226,9 +226,9 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		return
 	}
 
-	// Look for human comments (not from bots or QA agent)
+	// Look for human comments (not from bots or Reviewer agent)
 	for _, c := range comments {
-		if c.IsBot || c.Author == "qa" {
+		if c.IsBot || c.Author == "reviewer" {
 			continue
 		}
 

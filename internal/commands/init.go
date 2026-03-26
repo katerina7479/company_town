@@ -19,7 +19,7 @@ var agentTypes = []string{
 	"mayor",
 	"architect",
 	"conductor",
-	"qa",
+	"reviewer",
 	"janitor",
 	"prole",
 }

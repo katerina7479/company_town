@@ -14,7 +14,7 @@ Your domain includes:
 - Coverage tooling
 - Test data management
 
-Note: You are distinct from the QA agent (which reviews PRs). You write and
+Note: You are distinct from the Reviewer agent (which reviews PRs). You write and
 maintain the test infrastructure and test code itself.
 
 ## Quality Gates
