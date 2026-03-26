@@ -291,6 +291,126 @@ func TestHandleInReviewTickets_mixedTickets(t *testing.T) {
 	}
 }
 
+// --- Repairing ticket tests ---
+
+func TestHandleRepairingTickets_nudgesConductor(t *testing.T) {
+	conductorSession := "ct-conductor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{conductorSession})
+
+	id, _ := issues.Create("Fix auth bug", "task", nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.SetPR(id, 55)
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge, got %d", len(*sent))
+	}
+	if (*sent)[0].session != conductorSession {
+		t.Errorf("expected message to %q, got %q", conductorSession, (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "NC-"+itoa(id), "PR #55") {
+		t.Errorf("nudge message missing ticket/PR info: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleRepairingTickets_includesPRNumberWhenPresent(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+
+	id, _ := issues.Create("Fix lint", "task", nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.SetPR(id, 99)
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge, got %d", len(*sent))
+	}
+	if !containsAll((*sent)[0].msg, "PR #99") {
+		t.Errorf("expected PR number in nudge: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleRepairingTickets_worksWithoutPRNumber(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+
+	id, _ := issues.Create("Fix something", "task", nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	// No SetPR — ticket has no PR
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge even without PR, got %d", len(*sent))
+	}
+	if !containsAll((*sent)[0].msg, "NC-"+itoa(id)) {
+		t.Errorf("nudge message missing ticket info: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleRepairingTickets_noNudgeWhenEmpty(t *testing.T) {
+	d, _, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (no repairing tickets), got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairingTickets_noNudgeWhenConductorNotRunning(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	id, _ := issues.Create("Fix auth bug", "task", nil, nil)
+	issues.UpdateStatus(id, "repairing")
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (conductor not running), got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairingTickets_nudgesOncePerRepairingTicket(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+
+	id1, _ := issues.Create("Fix A", "task", nil, nil)
+	issues.UpdateStatus(id1, "repairing")
+
+	id2, _ := issues.Create("Fix B", "task", nil, nil)
+	issues.UpdateStatus(id2, "repairing")
+	issues.SetPR(id2, 12)
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 2 {
+		t.Errorf("expected 2 nudges (one per repairing ticket), got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairingTickets_ignoresNonRepairingTickets(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+
+	// repairing — should nudge
+	id1, _ := issues.Create("Needs fix", "task", nil, nil)
+	issues.UpdateStatus(id1, "repairing")
+
+	// in_review — should NOT nudge conductor
+	id2, _ := issues.Create("In review", "task", nil, nil)
+	issues.UpdateStatus(id2, "in_review")
+	issues.SetPR(id2, 20)
+
+	// open — should NOT nudge
+	id3, _ := issues.Create("Open ticket", "task", nil, nil)
+	issues.UpdateStatus(id3, "open")
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 1 {
+		t.Errorf("expected 1 nudge, got %d", len(*sent))
+	}
+}
+
 // helpers
 
 func containsAll(s string, substrings ...string) bool {
