@@ -32,6 +32,12 @@ func main() {
 		err = commands.Stop()
 	case "nuke":
 		err = commands.Nuke()
+	case "janitor":
+		if len(args) > 0 && args[0] == "stop" {
+			err = commands.JanitorStop()
+		} else {
+			err = commands.Janitor()
+		}
 	case "attach":
 		if len(args) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: ct attach <session-name>")
@@ -60,6 +66,8 @@ Commands:
   start               Start the Mayor and attach to tmux session
   stop                Graceful shutdown with handoffs
   nuke                Immediate shutdown, no handoffs
+  janitor             Start the Janitor agent
+  janitor stop        Signal Janitor to write handoff and exit
   attach <name>       Attach to a running agent session
   daemon              Run the daemon (internal — started by ct start)`)
 }
