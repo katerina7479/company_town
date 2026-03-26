@@ -95,6 +95,9 @@ func TestHandlePRMerged_freesAssigneeAgent(t *testing.T) {
 		t.Fatalf("Assign: %v", err)
 	}
 	issues.SetPR(id, 42)
+	if err := agents.SetCurrentIssue("obsidian", &id); err != nil {
+		t.Fatalf("SetCurrentIssue: %v", err)
+	}
 
 	issue, _ := issues.Get(id)
 	d.handlePRMerged(issue)
