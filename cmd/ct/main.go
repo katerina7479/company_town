@@ -32,18 +32,12 @@ func main() {
 		err = commands.Stop()
 	case "nuke":
 		err = commands.Nuke()
-	case "architect":
-		if len(args) > 0 && args[0] == "stop" {
-			err = commands.ArchitectStop()
-		} else {
-			err = commands.Architect()
-		}
-	case "artisan":
+	case "attach":
 		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty>")
+			fmt.Fprintln(os.Stderr, "usage: ct attach <session-name>")
 			os.Exit(1)
 		}
-		err = commands.Artisan(args[0])
+		err = commands.Attach(args[0])
 	case "daemon":
 		err = runDaemon()
 	default:
@@ -62,12 +56,10 @@ func printUsage() {
 	fmt.Println(`Usage: ct <command>
 
 Commands:
-  init [--force]        Set up .company_town/ in project root
-  start                 Start the Mayor and attach to tmux session
-  stop                  Graceful shutdown with handoffs
-  nuke                  Immediate shutdown, no handoffs
-  architect             Start the Architect
-  architect stop        Stop the Architect gracefully
-  artisan <specialty>   Start an Artisan (specialty from config.json)
-  daemon                Run the daemon (internal — started by ct start)`)
+  init [--force]      Set up .company_town/ in project root
+  start               Start the Mayor and attach to tmux session
+  stop                Graceful shutdown with handoffs
+  nuke                Immediate shutdown, no handoffs
+  attach <name>       Attach to a running agent session
+  daemon              Run the daemon (internal — started by ct start)`)
 }
