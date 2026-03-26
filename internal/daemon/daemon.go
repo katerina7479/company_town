@@ -74,8 +74,53 @@ func (d *Daemon) Stop() {
 
 func (d *Daemon) poll() {
 	d.handleDraftTickets()
+	d.handleOpenTickets()
 	d.handleInReviewTickets()
 	d.handlePREvents()
+}
+
+// handleOpenTickets nudges the Conductor when ready tickets are waiting for assignment.
+func (d *Daemon) handleOpenTickets() {
+	ready, err := d.issues.Ready()
+	if err != nil {
+		d.logger.Printf("error listing ready tickets: %v", err)
+		return
+	}
+
+	// Filter to unassigned tickets only.
+	var unassigned []*repo.Issue
+	for _, issue := range ready {
+		if !issue.Assignee.Valid || issue.Assignee.String == "" {
+			unassigned = append(unassigned, issue)
+		}
+	}
+
+	if len(unassigned) == 0 {
+		return
+	}
+
+	conductorSession := session.SessionName("conductor")
+	if !session.Exists(conductorSession) {
+		return // Conductor not running, nothing to do
+	}
+
+	ids := make([]string, len(unassigned))
+	for i, issue := range unassigned {
+		ids[i] = fmt.Sprintf("%s-%d", d.cfg.TicketPrefix, issue.ID)
+	}
+
+	msg := fmt.Sprintf(
+		"%d unassigned ticket(s) ready for assignment: %s. "+
+			"Run `gt ticket list --status open` and assign them to idle agents.",
+		len(unassigned), strings.Join(ids, ", "),
+	)
+
+	if err := session.SendKeys(conductorSession, msg); err != nil {
+		d.logger.Printf("error nudging conductor: %v", err)
+	} else {
+		d.logger.Printf("nudged conductor: %d ready ticket(s) unassigned (%s)",
+			len(unassigned), strings.Join(ids, ", "))
+	}
 }
 
 // handleDraftTickets prompts the Architect to pick up draft tickets.
