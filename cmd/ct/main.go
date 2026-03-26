@@ -38,6 +38,8 @@ func main() {
 			os.Exit(1)
 		}
 		err = commands.Attach(args[0])
+	case "dashboard":
+		err = commands.Dashboard()
 	case "daemon":
 		err = runDaemon()
 	default:
@@ -61,5 +63,6 @@ Commands:
   stop                Graceful shutdown with handoffs
   nuke                Immediate shutdown, no handoffs
   attach <name>       Attach to a running agent session
+  dashboard           Open the live agents + tickets TUI
   daemon              Run the daemon (internal — started by ct start)`)
 }
