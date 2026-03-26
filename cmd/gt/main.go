@@ -449,7 +449,9 @@ func agentStatus(agents *repo.AgentRepo, args []string) error {
 
 	switch {
 	case issueID != nil:
-		// Set current issue (also sets status → working)
+		if status != "working" {
+			return fmt.Errorf("--issue requires status \"working\", got %q", status)
+		}
 		if err := agents.SetCurrentIssue(name, issueID); err != nil {
 			return err
 		}
