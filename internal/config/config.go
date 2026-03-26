@@ -16,11 +16,9 @@ type AgentConfig struct {
 	Model string `json:"model"`
 }
 
-type ArtisanConfig struct {
-	Backend  AgentConfig `json:"backend"`
-	Frontend AgentConfig `json:"frontend"`
-	QA       AgentConfig `json:"qa"`
-}
+// ArtisanConfig maps specialty names to their configs.
+// Specialties are user-defined (e.g., "qa", "backend", "embedded", "designer").
+type ArtisanConfig map[string]AgentConfig
 
 type AgentsConfig struct {
 	Mayor     AgentConfig   `json:"mayor"`
@@ -96,11 +94,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		Agents: AgentsConfig{
 			Mayor:     AgentConfig{Model: "claude-opus-4-5"},
 			Architect: AgentConfig{Model: "claude-opus-4-5"},
-			Artisan: ArtisanConfig{
-				Backend:  AgentConfig{Model: "claude-opus-4-5"},
-				Frontend: AgentConfig{Model: "claude-opus-4-5"},
-				QA:       AgentConfig{Model: "claude-opus-4-5"},
-			},
+			Artisan: ArtisanConfig{}, // User-defined in config.json
 			Conductor: AgentConfig{Model: "claude-sonnet-4-5"},
 			Prole:     AgentConfig{Model: "claude-sonnet-4-5"},
 			Janitor:   AgentConfig{Model: "claude-sonnet-4-5"},

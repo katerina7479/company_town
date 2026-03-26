@@ -116,6 +116,80 @@ func Architect() error {
 	return startAgent("architect", "architect", cfg.Agents.Architect.Model, cfg, agents, prompt)
 }
 
+// Artisan implements `ct artisan <specialty>` — starts an Artisan agent.
+// Specialties are user-defined in config.json under agents.artisan.<specialty>.
+func Artisan(specialty string) error {
+	conn, cfg, err := db.OpenFromWorkingDir()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Look up specialty in config
+	artisanCfg, ok := cfg.Agents.Artisan[specialty]
+	if !ok {
+		// List available specialties for error message
+		var available []string
+		for k := range cfg.Agents.Artisan {
+			available = append(available, k)
+		}
+		return fmt.Errorf("unknown specialty %q (available in config: %v)", specialty, available)
+	}
+
+	agents := repo.NewAgentRepo(conn)
+	name := fmt.Sprintf("artisan-%s", specialty)
+
+	prompt := fmt.Sprintf(
+		"You are a %s Artisan. Ticket prefix: %s. "+
+			"Read your CLAUDE.md for instructions. "+
+			"Check memory/handoff.md to resume previous work. "+
+			"Then check for assigned tickets with `gt ticket list --status in_progress`.",
+		specialty, cfg.TicketPrefix,
+	)
+
+	// Register with specialty
+	if _, err := agents.Get(name); err != nil {
+		spec := specialty
+		if regErr := agents.Register(name, "artisan", &spec); regErr != nil {
+			return fmt.Errorf("registering %s: %w", name, regErr)
+		}
+	}
+
+	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
+	agentDir := filepath.Join(ctDir, "agents", "artisan", specialty)
+
+	// Ensure the artisan directory exists
+	if err := os.MkdirAll(filepath.Join(agentDir, "memory"), 0755); err != nil {
+		return fmt.Errorf("creating artisan directory: %w", err)
+	}
+
+	sessionName := session.SessionName(name)
+
+	if session.Exists(sessionName) {
+		fmt.Printf("%s is already running, attaching...\n", name)
+		return session.Attach(sessionName)
+	}
+
+	if err := agents.UpdateStatus(name, "working"); err != nil {
+		return fmt.Errorf("updating %s status: %w", name, err)
+	}
+
+	fmt.Printf("Starting %s...\n", name)
+	err = session.CreateInteractive(session.AgentSessionConfig{
+		Name:     sessionName,
+		WorkDir:  cfg.ProjectRoot,
+		Model:    artisanCfg.Model,
+		AgentDir: agentDir,
+		Prompt:   prompt,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("%s started. Attaching...\n", name)
+	return session.Attach(sessionName)
+}
+
 // ArchitectStop implements `ct architect stop` — graceful Architect shutdown.
 func ArchitectStop() error {
 	sessionName := session.SessionName("architect")
