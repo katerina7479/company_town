@@ -76,6 +76,63 @@ func TestAgentRepo_ListByStatus(t *testing.T) {
 	}
 }
 
+func TestAgentRepo_SetCurrentIssue(t *testing.T) {
+	repo := setupAgentRepo(t)
+
+	repo.Register("worker", "prole", nil)
+
+	issueID := 42
+	if err := repo.SetCurrentIssue("worker", &issueID); err != nil {
+		t.Fatalf("SetCurrentIssue: %v", err)
+	}
+
+	agent, _ := repo.Get("worker")
+	if agent.Status != "working" {
+		t.Errorf("expected status='working', got %q", agent.Status)
+	}
+	if !agent.CurrentIssue.Valid || int(agent.CurrentIssue.Int64) != issueID {
+		t.Errorf("expected current_issue=%d, got %v", issueID, agent.CurrentIssue)
+	}
+}
+
+func TestAgentRepo_SetCurrentIssue_nil(t *testing.T) {
+	repo := setupAgentRepo(t)
+
+	repo.Register("worker", "prole", nil)
+	issueID := 7
+	repo.SetCurrentIssue("worker", &issueID)
+
+	// Passing nil clears current_issue
+	if err := repo.SetCurrentIssue("worker", nil); err != nil {
+		t.Fatalf("SetCurrentIssue(nil): %v", err)
+	}
+
+	agent, _ := repo.Get("worker")
+	if agent.CurrentIssue.Valid {
+		t.Errorf("expected current_issue=NULL after nil set, got %d", agent.CurrentIssue.Int64)
+	}
+}
+
+func TestAgentRepo_ClearCurrentIssue(t *testing.T) {
+	repo := setupAgentRepo(t)
+
+	repo.Register("worker", "prole", nil)
+	issueID := 5
+	repo.SetCurrentIssue("worker", &issueID)
+
+	if err := repo.ClearCurrentIssue("worker"); err != nil {
+		t.Fatalf("ClearCurrentIssue: %v", err)
+	}
+
+	agent, _ := repo.Get("worker")
+	if agent.Status != "idle" {
+		t.Errorf("expected status='idle', got %q", agent.Status)
+	}
+	if agent.CurrentIssue.Valid {
+		t.Errorf("expected current_issue=NULL, got %d", agent.CurrentIssue.Int64)
+	}
+}
+
 func TestAgentRepo_FindIdle(t *testing.T) {
 	repo := setupAgentRepo(t)
 
