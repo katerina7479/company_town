@@ -45,6 +45,7 @@ type Config struct {
 	MaxProles               int          `json:"max_proles"`
 	Agents                  AgentsConfig `json:"agents"`
 	PollingIntervalSeconds  int          `json:"polling_interval_seconds"`
+	NudgeCooldownSeconds    int          `json:"nudge_cooldown_seconds"`
 	ContextHandoffThreshold float64      `json:"context_handoff_threshold"`
 }
 
@@ -100,6 +101,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 			Janitor:   AgentConfig{Model: "claude-sonnet-4-5"},
 		},
 		PollingIntervalSeconds:  30,
+		NudgeCooldownSeconds:    300,
 		ContextHandoffThreshold: 0.80,
 	}
 }

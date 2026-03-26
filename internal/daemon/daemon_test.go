@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
@@ -60,6 +61,9 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
+		lastNudged:    make(map[string]time.Time),
+		nudgeCooldown: 0, // disabled by default in tests
+		nowFn:         time.Now,
 	}
 
 	return d, issues, agents, &sent
@@ -211,10 +215,10 @@ func TestHandleInReviewTickets_nudgesReviewerPerTicket(t *testing.T) {
 	}
 }
 
-func TestHandleInReviewTickets_nudgesOncePerTicket(t *testing.T) {
+func TestHandleInReviewTickets_batchesMultipleTickets(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
 
-	// Two in_review tickets with PRs
+	// Two in_review tickets with PRs — should produce ONE batched message
 	id1, _ := issues.Create("Ticket A", "task", nil, nil)
 	issues.UpdateStatus(id1, "in_review")
 	issues.SetPR(id1, 10)
@@ -225,8 +229,11 @@ func TestHandleInReviewTickets_nudgesOncePerTicket(t *testing.T) {
 
 	d.handleInReviewTickets()
 
-	if len(*sent) != 2 {
-		t.Errorf("expected 2 nudges (one per ticket), got %d", len(*sent))
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 batched nudge, got %d", len(*sent))
+	}
+	if !containsAll((*sent)[0].msg, "NC-"+itoa(id1), "PR #10", "NC-"+itoa(id2), "PR #11") {
+		t.Errorf("batched nudge missing ticket info: %q", (*sent)[0].msg)
 	}
 }
 
@@ -372,7 +379,7 @@ func TestHandleRepairingTickets_noNudgeWhenConductorNotRunning(t *testing.T) {
 	}
 }
 
-func TestHandleRepairingTickets_nudgesOncePerRepairingTicket(t *testing.T) {
+func TestHandleRepairingTickets_batchesMultipleTickets(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
 
 	id1, _ := issues.Create("Fix A", "task", nil, nil)
@@ -384,8 +391,11 @@ func TestHandleRepairingTickets_nudgesOncePerRepairingTicket(t *testing.T) {
 
 	d.handleRepairingTickets()
 
-	if len(*sent) != 2 {
-		t.Errorf("expected 2 nudges (one per repairing ticket), got %d", len(*sent))
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 batched nudge, got %d", len(*sent))
+	}
+	if !containsAll((*sent)[0].msg, "NC-"+itoa(id1), "NC-"+itoa(id2)) {
+		t.Errorf("batched nudge missing ticket info: %q", (*sent)[0].msg)
 	}
 }
 
@@ -538,5 +548,111 @@ func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
 	dead, _ := agents.Get("dead-agent")
 	if dead.Status != "dead" {
 		t.Errorf("dead-agent: expected 'dead', got %q", dead.Status)
+	}
+}
+
+// --- Cooldown tests ---
+
+// withCooldown returns a copy of d with the given cooldown duration and a fixed now function.
+func withCooldown(d *Daemon, cooldown time.Duration, fixedNow time.Time) {
+	d.nudgeCooldown = cooldown
+	d.nowFn = func() time.Time { return fixedNow }
+}
+
+func TestCooldown_suppressesRepeatNudge(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	id, _ := issues.Create("Add feature", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 5)
+
+	now := time.Now()
+	withCooldown(d, 5*time.Minute, now)
+
+	// First call: should send nudge
+	d.handleInReviewTickets()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge on first call, got %d", len(*sent))
+	}
+
+	// Second call at same time: still within cooldown — no nudge
+	d.handleInReviewTickets()
+	if len(*sent) != 1 {
+		t.Errorf("expected no nudge within cooldown, got %d total", len(*sent))
+	}
+}
+
+func TestCooldown_allowsNudgeAfterExpiry(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	id, _ := issues.Create("Add feature", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 5)
+
+	base := time.Now()
+	withCooldown(d, 5*time.Minute, base)
+
+	// First nudge
+	d.handleInReviewTickets()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge on first call, got %d", len(*sent))
+	}
+
+	// Advance clock past cooldown
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+
+	// Should nudge again
+	d.handleInReviewTickets()
+	if len(*sent) != 2 {
+		t.Errorf("expected 2 nudges after cooldown expiry, got %d", len(*sent))
+	}
+}
+
+func TestCooldown_independentPerHandler(t *testing.T) {
+	conductorSession := "ct-conductor"
+	reviewerSession := "ct-reviewer"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{conductorSession, reviewerSession})
+
+	// Repairing ticket for conductor
+	id1, _ := issues.Create("Fix bug", "task", nil, nil)
+	issues.UpdateStatus(id1, "repairing")
+
+	// In-review ticket for reviewer
+	id2, _ := issues.Create("Review feature", "task", nil, nil)
+	issues.UpdateStatus(id2, "in_review")
+	issues.SetPR(id2, 9)
+
+	now := time.Now()
+	withCooldown(d, 5*time.Minute, now)
+
+	// Both fire on first call
+	d.handleInReviewTickets()
+	d.handleRepairingTickets()
+	if len(*sent) != 2 {
+		t.Fatalf("expected 2 nudges on first call, got %d", len(*sent))
+	}
+
+	// Second call — both suppressed independently
+	d.handleInReviewTickets()
+	d.handleRepairingTickets()
+	if len(*sent) != 2 {
+		t.Errorf("expected no additional nudges within cooldown, got %d total", len(*sent))
+	}
+}
+
+func TestCooldown_disabledWhenZero(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	// nudgeCooldown is 0 (default in test helper) — should always nudge
+
+	id, _ := issues.Create("Add feature", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 5)
+
+	d.handleInReviewTickets()
+	d.handleInReviewTickets()
+	d.handleInReviewTickets()
+
+	if len(*sent) != 3 {
+		t.Errorf("expected 3 nudges with cooldown disabled, got %d", len(*sent))
 	}
 }
