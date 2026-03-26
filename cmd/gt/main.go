@@ -48,7 +48,7 @@ func main() {
 
 func handleTicket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|assign|status|close|delete|depend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|status|close|delete|depend> ...")
 		os.Exit(1)
 	}
 
@@ -67,6 +67,8 @@ func handleTicket(args []string) error {
 		return ticketShow(issues, cfg.TicketPrefix, args[1:])
 	case "list":
 		return ticketList(issues, cfg.TicketPrefix, args[1:])
+	case "ready":
+		return ticketReady(issues, cfg.TicketPrefix)
 	case "assign":
 		return ticketAssign(issues, args[1:])
 	case "status":
@@ -212,6 +214,26 @@ func ticketList(issues *repo.IssueRepo, prefix string, args []string) error {
 			"["+issue.Status+"]",
 			issue.Title,
 			assignee,
+		)
+	}
+	return nil
+}
+
+func ticketReady(issues *repo.IssueRepo, prefix string) error {
+	list, err := issues.Ready()
+	if err != nil {
+		return err
+	}
+
+	if len(list) == 0 {
+		fmt.Println("No ready tickets.")
+		return nil
+	}
+
+	for _, issue := range list {
+		fmt.Printf("%-8s %s\n",
+			fmt.Sprintf("%s-%d", prefix, issue.ID),
+			issue.Title,
 		)
 	}
 	return nil
@@ -593,9 +615,9 @@ func printUsage() {
 	fmt.Println(`Usage: gt <command>
 
 Commands:
-  ticket <create|show|list|assign|status|close|depend>   Manage tickets
-  prole <create|reset>                                    Manage proles
-  agent <register|status>                                 Manage agents
-  pr <create>                                             File PRs
-  status                                                  Print system status`)
+  ticket <create|show|list|ready|assign|status|close|depend>   Manage tickets
+  prole <create|reset>                                          Manage proles
+  agent <register|status>                                        Manage agents
+  pr <create>                                                    File PRs
+  status                                                         Print system status`)
 }
