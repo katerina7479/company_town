@@ -175,9 +175,13 @@ func (m dashboardModel) renderAgents(width, height int) string {
 		sb.WriteString(footerStyle.Render("(none registered)"))
 	} else {
 		for _, a := range m.data.agents {
-			name := boldStyle.Render(fmt.Sprintf("%-18s", a.Name))
+			name := boldStyle.Render(fmt.Sprintf("%-14s", a.Name))
 			status := colorStatus(a.Status)
-			sb.WriteString(fmt.Sprintf("%s %s\n", name, status))
+			issue := ""
+			if a.CurrentIssue.Valid {
+				issue = fmt.Sprintf(" → nc-%d", a.CurrentIssue.Int64)
+			}
+			sb.WriteString(fmt.Sprintf("%s %s%s\n", name, status, issue))
 		}
 	}
 

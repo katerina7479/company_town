@@ -65,6 +65,7 @@ func handleTicket(args []string) error {
 	defer conn.Close()
 
 	issues := repo.NewIssueRepo(conn)
+	agents := repo.NewAgentRepo(conn)
 
 	switch args[0] {
 	case "create":
@@ -76,11 +77,11 @@ func handleTicket(args []string) error {
 	case "ready":
 		return ticketReady(issues, cfg.TicketPrefix)
 	case "assign":
-		return ticketAssign(issues, args[1:])
+		return ticketAssign(issues, agents, args[1:])
 	case "status":
 		return ticketStatus(issues, args[1:])
 	case "close":
-		return ticketClose(issues, args[1:])
+		return ticketClose(issues, agents, args[1:])
 	case "delete":
 		return ticketDelete(issues, args[1:])
 	case "depend":
@@ -245,7 +246,7 @@ func ticketReady(issues *repo.IssueRepo, prefix string) error {
 	return nil
 }
 
-func ticketAssign(issues *repo.IssueRepo, args []string) error {
+func ticketAssign(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: gt ticket assign <ticket_id> <agent_name>")
 	}
@@ -266,6 +267,11 @@ func ticketAssign(issues *repo.IssueRepo, args []string) error {
 	branch := fmt.Sprintf("prole/%s/%d", agentName, issue.ID)
 	if err := issues.Assign(id, agentName, branch); err != nil {
 		return err
+	}
+
+	// Update agent's current issue
+	if err := agents.SetCurrentIssue(agentName, &id); err != nil {
+		return fmt.Errorf("setting agent current issue: %w", err)
 	}
 
 	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
@@ -291,7 +297,7 @@ func ticketStatus(issues *repo.IssueRepo, args []string) error {
 	return nil
 }
 
-func ticketClose(issues *repo.IssueRepo, args []string) error {
+func ticketClose(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt ticket close <id>")
 	}
@@ -301,8 +307,22 @@ func ticketClose(issues *repo.IssueRepo, args []string) error {
 		return fmt.Errorf("invalid ticket ID: %s", args[0])
 	}
 
+	// Get the issue to find assignee before closing
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+
 	if err := issues.Close(id); err != nil {
 		return err
+	}
+
+	// Clear agent's current issue if there was an assignee
+	if issue.Assignee.Valid && issue.Assignee.String != "" {
+		if err := agents.ClearCurrentIssue(issue.Assignee.String); err != nil {
+			// Log but don't fail — ticket is already closed
+			fmt.Printf("Warning: could not clear agent current issue: %v\n", err)
+		}
 	}
 
 	fmt.Printf("Ticket %d closed.\n", id)
