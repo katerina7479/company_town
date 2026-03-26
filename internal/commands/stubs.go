@@ -191,6 +191,52 @@ func Artisan(specialty string) error {
 	return session.Attach(sessionName)
 }
 
+// Janitor implements `ct janitor` — starts the Janitor agent.
+func Janitor() error {
+	conn, cfg, err := db.OpenFromWorkingDir()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	agents := repo.NewAgentRepo(conn)
+	prompt := fmt.Sprintf(
+		"You are the Janitor. Ticket prefix: %s. "+
+			"Read your CLAUDE.md for instructions. "+
+			"Check memory/handoff.md to resume previous work. "+
+			"Begin patrol: clean up stale worktrees, prune dead sessions.",
+		cfg.TicketPrefix,
+	)
+
+	return startAgent("janitor", "janitor", cfg.Agents.Janitor.Model, cfg, agents, prompt)
+}
+
+// JanitorStop implements `ct janitor stop` — graceful Janitor shutdown.
+func JanitorStop() error {
+	sessionName := session.SessionName("janitor")
+
+	if !session.Exists(sessionName) {
+		fmt.Println("Janitor is not running.")
+		return nil
+	}
+
+	projectRoot, err := db.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+	ctDir := config.CompanyTownDir(projectRoot)
+
+	signalPath := filepath.Join(ctDir, "agents", "janitor", "memory", "handoff_requested")
+	if err := os.WriteFile(signalPath, []byte("handoff requested\n"), 0644); err != nil {
+		return fmt.Errorf("writing handoff signal: %w", err)
+	}
+
+	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.")
+
+	fmt.Println("Handoff signal sent. Janitor will exit after writing handoff.md.")
+	return nil
+}
+
 // ArchitectStop implements `ct architect stop` — graceful Architect shutdown.
 func ArchitectStop() error {
 	sessionName := session.SessionName("architect")
