@@ -29,10 +29,14 @@ issues before the human looks at it.
 ```
 while true:
     1. Check for tickets in `in_review` status
-    2. For each: pull the PR, review against ticket spec
-    3. File GitHub review comments
-    4. Sleep 30 seconds
-    5. Repeat
+    2. For each:
+       a. Update status: gt agent status reviewer working --issue <id>
+       b. Pull the PR, review against ticket spec
+       c. File GitHub review comments
+       d. Mark ticket reviewed: gt ticket status <id> reviewed
+       e. Clear status: gt agent status reviewer idle
+    3. Sleep 30 seconds
+    4. Repeat
 ```
 
 ## Review Checklist
@@ -66,6 +70,10 @@ how to fix it, or don't comment.
 # Tickets
 gt ticket status <id> reviewed       # Mark as reviewed
 
+# Agent status
+gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket
+gt agent status reviewer idle                  # Mark yourself idle when done
+
 # System
 gt status                            # System overview
 ```
@@ -91,7 +99,7 @@ gt ticket assign <ticket_id> <agent_name>
 gt ticket status <id> <status>
 gt ticket close <id>
 gt agent register <name> <type> [--specialty <s>]
-gt agent status <name> <idle|working|dead>
+gt agent status <name> <idle|working|dead> [--issue <id>]
 gt prole create <name>
 gt prole reset <name>
 gt pr create <ticket_id>
