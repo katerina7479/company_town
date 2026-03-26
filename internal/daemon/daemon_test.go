@@ -1,9 +1,10 @@
 package daemon
 
 import (
-	"fmt"
 	"io"
 	"log"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -295,28 +296,15 @@ func TestHandleInReviewTickets_mixedTickets(t *testing.T) {
 
 func containsAll(s string, substrings ...string) bool {
 	for _, sub := range substrings {
-		if !containsStr(s, sub) {
+		if !strings.Contains(s, sub) {
 			return false
 		}
 	}
 	return true
 }
 
-func containsStr(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && findStr(s, sub))
-}
-
-func findStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
 func itoa(n int) string {
-	return fmt.Sprintf("%d", n)
+	return strconv.Itoa(n)
 }
 
 // --- Repairing ticket tests ---
