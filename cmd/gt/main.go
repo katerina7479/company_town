@@ -843,6 +843,18 @@ func handleStop(args []string) error {
 	cmd := exec.Command("tmux", "send-keys", "-t", sessionName, "System is shutting down. Write handoff.md and exit cleanly.", "Enter")
 	cmd.Run()
 
+	// Mark agent idle in the database
+	conn, _, err := db.OpenFromWorkingDir()
+	if err != nil {
+		fmt.Printf("warning: could not open db to update agent status: %v\n", err)
+	} else {
+		defer conn.Close()
+		agents := repo.NewAgentRepo(conn)
+		if err := agents.UpdateStatus(name, "idle"); err != nil {
+			fmt.Printf("warning: could not update agent status: %v\n", err)
+		}
+	}
+
 	fmt.Printf("Signaled %s to shutdown. Check session %s for handoff.\n", name, sessionName)
 	return nil
 }
