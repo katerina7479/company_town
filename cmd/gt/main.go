@@ -48,7 +48,7 @@ func main() {
 
 func handleTicket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|assign|status|close|delete> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|assign|status|close|delete|depend> ...")
 		os.Exit(1)
 	}
 
@@ -75,6 +75,8 @@ func handleTicket(args []string) error {
 		return ticketClose(issues, args[1:])
 	case "delete":
 		return ticketDelete(issues, args[1:])
+	case "depend":
+		return ticketDepend(issues, cfg.TicketPrefix, args[1:])
 	default:
 		return fmt.Errorf("unknown ticket command: %s", args[0])
 	}
@@ -158,6 +160,17 @@ func ticketShow(issues *repo.IssueRepo, prefix string, args []string) error {
 	}
 	if issue.ParentID.Valid {
 		fmt.Printf("  parent:    %s-%d\n", prefix, issue.ParentID.Int64)
+	}
+	deps, err := issues.GetDependencies(id)
+	if err != nil {
+		return err
+	}
+	if len(deps) > 0 {
+		depStrs := make([]string, len(deps))
+		for i, d := range deps {
+			depStrs[i] = fmt.Sprintf("%s-%d", prefix, d)
+		}
+		fmt.Printf("  depends:   %s\n", strings.Join(depStrs, ", "))
 	}
 	if issue.Description.Valid && issue.Description.String != "" {
 		fmt.Printf("  ---\n  %s\n", issue.Description.String)
@@ -283,6 +296,37 @@ func ticketDelete(issues *repo.IssueRepo, args []string) error {
 	}
 
 	fmt.Printf("Ticket %d deleted.\n", id)
+	return nil
+}
+
+func ticketDepend(issues *repo.IssueRepo, prefix string, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket depend <id> <depends-on-id>")
+	}
+
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid ticket ID: %s", args[0])
+	}
+
+	dependsOnID, err := strconv.Atoi(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid depends-on ID: %s", args[1])
+	}
+
+	// Verify both tickets exist
+	if _, err := issues.Get(id); err != nil {
+		return fmt.Errorf("ticket %d: %w", id, err)
+	}
+	if _, err := issues.Get(dependsOnID); err != nil {
+		return fmt.Errorf("ticket %d: %w", dependsOnID, err)
+	}
+
+	if err := issues.AddDependency(id, dependsOnID); err != nil {
+		return err
+	}
+
+	fmt.Printf("%s-%d now depends on %s-%d\n", prefix, id, prefix, dependsOnID)
 	return nil
 }
 
@@ -549,9 +593,9 @@ func printUsage() {
 	fmt.Println(`Usage: gt <command>
 
 Commands:
-  ticket <create|show|list|assign|status|close>   Manage tickets
-  prole <create|reset>                             Manage proles
-  agent <register|status>                          Manage agents
-  pr <create>                                      File PRs
-  status                                           Print system status`)
+  ticket <create|show|list|assign|status|close|depend>   Manage tickets
+  prole <create|reset>                                    Manage proles
+  agent <register|status>                                 Manage agents
+  pr <create>                                             File PRs
+  status                                                  Print system status`)
 }

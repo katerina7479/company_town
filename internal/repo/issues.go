@@ -221,6 +221,28 @@ func (r *IssueRepo) AddDependency(issueID, dependsOnID int) error {
 	return nil
 }
 
+// GetDependencies returns the IDs of issues that issueID depends on.
+func (r *IssueRepo) GetDependencies(issueID int) ([]int, error) {
+	rows, err := r.db.Query(
+		`SELECT depends_on_id FROM issue_dependencies WHERE issue_id = ?`,
+		issueID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("getting dependencies: %w", err)
+	}
+	defer rows.Close()
+
+	var deps []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning dependency: %w", err)
+		}
+		deps = append(deps, id)
+	}
+	return deps, rows.Err()
+}
+
 // Ready returns open issues with no unresolved dependencies.
 func (r *IssueRepo) Ready() ([]*Issue, error) {
 	rows, err := r.db.Query(
