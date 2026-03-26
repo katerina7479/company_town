@@ -274,6 +274,44 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 	return issues, rows.Err()
 }
 
+// IssueNode wraps an Issue with its children for hierarchical display.
+type IssueNode struct {
+	*Issue
+	Children []*IssueNode
+}
+
+// ListHierarchy returns all issues organized as a forest (slice of root nodes).
+// Issues without a parent_id are roots; others are nested under their parent.
+// Issues whose parent is not found in the result set are treated as roots.
+func (r *IssueRepo) ListHierarchy() ([]*IssueNode, error) {
+	issues, err := r.List("")
+	if err != nil {
+		return nil, fmt.Errorf("listing issues for hierarchy: %w", err)
+	}
+
+	nodes := make(map[int]*IssueNode, len(issues))
+	for _, issue := range issues {
+		nodes[issue.ID] = &IssueNode{Issue: issue}
+	}
+
+	var roots []*IssueNode
+	for _, issue := range issues {
+		node := nodes[issue.ID]
+		if !issue.ParentID.Valid {
+			roots = append(roots, node)
+		} else {
+			parentID := int(issue.ParentID.Int64)
+			if parent, ok := nodes[parentID]; ok {
+				parent.Children = append(parent.Children, node)
+			} else {
+				roots = append(roots, node)
+			}
+		}
+	}
+
+	return roots, nil
+}
+
 func scanIssue(row *sql.Row) (*Issue, error) {
 	var i Issue
 	err := row.Scan(
