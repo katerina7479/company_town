@@ -12,6 +12,7 @@ import (
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/prole"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
 )
 
 func main() {
@@ -741,17 +742,15 @@ func handleStart(args []string) error {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
 
-	// Create detached tmux session with claude
-	cmd := exec.Command("tmux", "new-session",
-		"-d",
-		"-s", sessionName,
-		"-c", cfg.ProjectRoot,
-		fmt.Sprintf("claude --model %s --agent-dir %s %q", model, agentDir, prompt),
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("creating tmux session: %w", err)
+	// Create detached tmux session with claude using session.CreateInteractive
+	if err := session.CreateInteractive(session.AgentSessionConfig{
+		Name:     sessionName,
+		WorkDir:  cfg.ProjectRoot,
+		Model:    model,
+		AgentDir: agentDir,
+		Prompt:   prompt,
+	}); err != nil {
+		return fmt.Errorf("creating session: %w", err)
 	}
 
 	fmt.Printf("Started %s (session: %s)\n", name, sessionName)
