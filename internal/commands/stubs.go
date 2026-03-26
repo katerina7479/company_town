@@ -264,6 +264,17 @@ func Stop() error {
 	return nil
 }
 
+// Attach implements `ct attach <name>` — attach to an existing agent session.
+func Attach(name string) error {
+	sessionName := session.SessionName(name)
+
+	if !session.Exists(sessionName) {
+		return fmt.Errorf("session %q is not running", name)
+	}
+
+	return session.Attach(sessionName)
+}
+
 // Nuke implements `ct nuke` — immediate shutdown, no handoffs.
 func Nuke() error {
 	sessions, err := session.ListCompanyTown()
