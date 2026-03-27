@@ -35,7 +35,8 @@ The review pipeline has three stages:
 ```
 while true:
     1. Check for tickets in `in_review` status
-    2. For each:
+    2. If none: sleep 30 seconds, repeat
+    3. Take the FIRST ticket only:
        a. Claim: gt ticket status <id> under_review
        b. Update agent: gt agent status reviewer working --issue <id>
        c. Get PR number: gt ticket show <id>  (look for pr_number)
@@ -47,8 +48,8 @@ while true:
           If changes needed:    gh pr review <pr_number> --comment -b "<summary of issues>"
                                 gt ticket status <id> repairing
        e. Clear status: gt agent status reviewer idle
-    3. Sleep 30 seconds
-    4. Repeat
+    4. Sleep 30 seconds
+    5. Repeat
 ```
 
 ## Review Checklist
