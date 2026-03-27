@@ -33,7 +33,8 @@ while true:
        a. Update status: gt agent status reviewer working --issue <id>
        b. Pull the PR, review against ticket spec
        c. File GitHub review comments
-       d. Mark ticket reviewed: gt ticket status <id> reviewed
+       d. If LGTM (no issues found): gt ticket status <id> reviewed
+          If changes requested: leave ticket in `in_review` (human/daemon handles repair)
        e. Clear status: gt agent status reviewer idle
     3. Sleep 30 seconds
     4. Repeat
