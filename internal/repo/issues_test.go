@@ -441,3 +441,60 @@ func TestIssueRepo_Delete_notFound(t *testing.T) {
 		t.Fatal("expected error for non-existent issue, got nil")
 	}
 }
+
+func TestIssueRepo_SetAssignee(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Claim ticket", "task", nil, nil)
+	repo.UpdateStatus(id, "in_review")
+
+	if err := repo.SetAssignee(id, "reviewer"); err != nil {
+		t.Fatalf("SetAssignee: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Status != "in_review" {
+		t.Errorf("SetAssignee must not change status: got %q", issue.Status)
+	}
+	if !issue.Assignee.Valid || issue.Assignee.String != "reviewer" {
+		t.Errorf("expected assignee='reviewer', got %v", issue.Assignee)
+	}
+}
+
+func TestIssueRepo_SetAssignee_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	err := repo.SetAssignee(9999, "reviewer")
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
+
+func TestIssueRepo_ClearAssignee(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Claimed ticket", "task", nil, nil)
+	repo.UpdateStatus(id, "under_review")
+	repo.SetAssignee(id, "reviewer")
+
+	if err := repo.ClearAssignee(id); err != nil {
+		t.Fatalf("ClearAssignee: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee to be NULL after ClearAssignee, got %q", issue.Assignee.String)
+	}
+	if issue.Status != "under_review" {
+		t.Errorf("ClearAssignee must not change status: got %q", issue.Status)
+	}
+}
+
+func TestIssueRepo_ClearAssignee_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	err := repo.ClearAssignee(9999)
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
