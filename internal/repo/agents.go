@@ -7,16 +7,17 @@ import (
 )
 
 type Agent struct {
-	ID           int
-	Name         string
-	Type         string
-	Specialty    sql.NullString
-	Status       string
-	CurrentIssue sql.NullInt64
-	TmuxSession  sql.NullString
-	WorktreePath sql.NullString
-	TimeCreated  time.Time
-	TimeEnded    sql.NullTime
+	ID               int
+	Name             string
+	Type             string
+	Specialty        sql.NullString
+	Status           string
+	CurrentIssue     sql.NullInt64
+	TmuxSession      sql.NullString
+	WorktreePath     sql.NullString
+	TimeCreated      time.Time
+	TimeEnded        sql.NullTime
+	StatusChangedAt  sql.NullTime
 }
 
 type AgentRepo struct {
@@ -48,13 +49,13 @@ func (r *AgentRepo) Register(name, agentType string, specialty *string) error {
 func (r *AgentRepo) Get(name string) (*Agent, error) {
 	row := r.db.QueryRow(
 		`SELECT id, name, type, specialty, status, current_issue,
-		        tmux_session, worktree_path, time_created, time_ended
+		        tmux_session, worktree_path, time_created, time_ended, status_changed_at
 		 FROM agents WHERE name = ?`, name,
 	)
 	var a Agent
 	err := row.Scan(
 		&a.ID, &a.Name, &a.Type, &a.Specialty, &a.Status, &a.CurrentIssue,
-		&a.TmuxSession, &a.WorktreePath, &a.TimeCreated, &a.TimeEnded,
+		&a.TmuxSession, &a.WorktreePath, &a.TimeCreated, &a.TimeEnded, &a.StatusChangedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("agent %s not found", name)
@@ -73,8 +74,8 @@ func (r *AgentRepo) UpdateStatus(name, status string) error {
 	}
 
 	_, err := r.db.Exec(
-		`UPDATE agents SET status = ?, time_ended = ? WHERE name = ?`,
-		status, timeEnded, name,
+		`UPDATE agents SET status = ?, time_ended = ?, status_changed_at = ? WHERE name = ?`,
+		status, timeEnded, time.Now(), name,
 	)
 	if err != nil {
 		return fmt.Errorf("updating agent status: %w", err)
@@ -115,8 +116,8 @@ func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
 	}
 
 	_, err := r.db.Exec(
-		`UPDATE agents SET current_issue = ?, status = 'working' WHERE name = ?`,
-		val, name,
+		`UPDATE agents SET current_issue = ?, status = 'working', status_changed_at = ? WHERE name = ?`,
+		val, time.Now(), name,
 	)
 	return err
 }
@@ -124,8 +125,8 @@ func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
 // ClearCurrentIssue marks agent as idle with no assigned issue.
 func (r *AgentRepo) ClearCurrentIssue(name string) error {
 	_, err := r.db.Exec(
-		`UPDATE agents SET current_issue = NULL, status = 'idle' WHERE name = ?`,
-		name,
+		`UPDATE agents SET current_issue = NULL, status = 'idle', status_changed_at = ? WHERE name = ?`,
+		time.Now(), name,
 	)
 	return err
 }
@@ -134,7 +135,7 @@ func (r *AgentRepo) ClearCurrentIssue(name string) error {
 func (r *AgentRepo) ListByStatus(status string) ([]*Agent, error) {
 	rows, err := r.db.Query(
 		`SELECT id, name, type, specialty, status, current_issue,
-		        tmux_session, worktree_path, time_created, time_ended
+		        tmux_session, worktree_path, time_created, time_ended, status_changed_at
 		 FROM agents WHERE status = ? ORDER BY name`, status,
 	)
 	if err != nil {
@@ -149,7 +150,7 @@ func (r *AgentRepo) ListByStatus(status string) ([]*Agent, error) {
 func (r *AgentRepo) ListAll() ([]*Agent, error) {
 	rows, err := r.db.Query(
 		`SELECT id, name, type, specialty, status, current_issue,
-		        tmux_session, worktree_path, time_created, time_ended
+		        tmux_session, worktree_path, time_created, time_ended, status_changed_at
 		 FROM agents ORDER BY name`,
 	)
 	if err != nil {
@@ -168,13 +169,13 @@ func (r *AgentRepo) FindIdle(specialty *string) ([]*Agent, error) {
 	if specialty != nil {
 		rows, err = r.db.Query(
 			`SELECT id, name, type, specialty, status, current_issue,
-			        tmux_session, worktree_path, time_created, time_ended
+			        tmux_session, worktree_path, time_created, time_ended, status_changed_at
 			 FROM agents WHERE status = 'idle' AND specialty = ? ORDER BY name`, *specialty,
 		)
 	} else {
 		rows, err = r.db.Query(
 			`SELECT id, name, type, specialty, status, current_issue,
-			        tmux_session, worktree_path, time_created, time_ended
+			        tmux_session, worktree_path, time_created, time_ended, status_changed_at
 			 FROM agents WHERE status = 'idle' ORDER BY name`,
 		)
 	}
@@ -201,7 +202,7 @@ func scanAgentRows(rows *sql.Rows) ([]*Agent, error) {
 		var a Agent
 		err := rows.Scan(
 			&a.ID, &a.Name, &a.Type, &a.Specialty, &a.Status, &a.CurrentIssue,
-			&a.TmuxSession, &a.WorktreePath, &a.TimeCreated, &a.TimeEnded,
+			&a.TmuxSession, &a.WorktreePath, &a.TimeCreated, &a.TimeEnded, &a.StatusChangedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning agent row: %w", err)
