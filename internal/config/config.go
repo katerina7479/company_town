@@ -46,8 +46,9 @@ type QualityCheckConfig struct {
 
 // QualityConfig holds all project-level quality check settings.
 type QualityConfig struct {
-	Enabled bool                 `json:"enabled"`
-	Checks  []QualityCheckConfig `json:"checks"`
+	Enabled                 bool                 `json:"enabled"`
+	BaselineIntervalSeconds int                  `json:"baseline_interval_seconds"`
+	Checks                  []QualityCheckConfig `json:"checks"`
 }
 
 type Config struct {
@@ -120,8 +121,9 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		NudgeCooldownSeconds:    300,
 		ContextHandoffThreshold: 0.80,
 		Quality: QualityConfig{
-			Enabled: true,
-			Checks:  []QualityCheckConfig{},
+			Enabled:                 true,
+			BaselineIntervalSeconds: 3600,
+			Checks:                  []QualityCheckConfig{},
 		},
 	}
 }

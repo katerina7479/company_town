@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"strconv"
@@ -61,10 +62,12 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
-		resetWorktree: func(string) error { return nil },
-		lastNudged:    make(map[string]time.Time),
-		nudgeCooldown: 0, // disabled by default in tests
-		nowFn:         time.Now,
+		resetWorktree:      func(string) error { return nil },
+		runQualityBaseline: func() error { return nil },
+		lastNudged:         make(map[string]time.Time),
+		nudgeCooldown:      0, // disabled by default in tests
+		qualityInterval:    0, // disabled by default in tests
+		nowFn:              time.Now,
 	}
 
 	return d, issues, agents, &sent
@@ -707,6 +710,118 @@ func TestCooldown_independentPerHandler(t *testing.T) {
 	d.handleRepairingTickets()
 	if len(*sent) != 2 {
 		t.Errorf("expected no additional nudges within cooldown, got %d total", len(*sent))
+	}
+}
+
+// --- Quality baseline tests ---
+
+func TestHandleQualityBaseline_runsWhenIntervalElapsed(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.runQualityBaseline = func() error { calls++; return nil }
+	d.qualityInterval = 5 * time.Minute
+
+	// lastQualityBaseline is zero — interval has definitely elapsed
+	d.handleQualityBaseline()
+
+	if calls != 1 {
+		t.Errorf("expected 1 baseline run, got %d", calls)
+	}
+}
+
+func TestHandleQualityBaseline_skipsWhenTooSoon(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.runQualityBaseline = func() error { calls++; return nil }
+	d.qualityInterval = 5 * time.Minute
+
+	now := time.Now()
+	d.nowFn = func() time.Time { return now }
+	d.lastQualityBaseline = now.Add(-1 * time.Minute) // ran 1 minute ago
+
+	d.handleQualityBaseline()
+
+	if calls != 0 {
+		t.Errorf("expected 0 baseline runs (interval not elapsed), got %d", calls)
+	}
+}
+
+func TestHandleQualityBaseline_disabledWhenIntervalZero(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.runQualityBaseline = func() error { calls++; return nil }
+	d.qualityInterval = 0 // disabled
+
+	d.handleQualityBaseline()
+
+	if calls != 0 {
+		t.Errorf("expected 0 baseline runs (interval=0 means disabled), got %d", calls)
+	}
+}
+
+func TestHandleQualityBaseline_updatesLastRunTime(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	d.runQualityBaseline = func() error { return nil }
+	d.qualityInterval = 5 * time.Minute
+
+	now := time.Now()
+	d.nowFn = func() time.Time { return now }
+
+	d.handleQualityBaseline()
+
+	if !d.lastQualityBaseline.Equal(now) {
+		t.Errorf("expected lastQualityBaseline=%v, got %v", now, d.lastQualityBaseline)
+	}
+}
+
+func TestHandleQualityBaseline_updatesLastRunOnError(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	d.runQualityBaseline = func() error { return fmt.Errorf("check failed") }
+	d.qualityInterval = 5 * time.Minute
+
+	now := time.Now()
+	d.nowFn = func() time.Time { return now }
+
+	d.handleQualityBaseline() // should not panic; should still update timestamp
+
+	if !d.lastQualityBaseline.Equal(now) {
+		t.Errorf("expected lastQualityBaseline updated even on error")
+	}
+}
+
+func TestHandleQualityBaseline_runsAgainAfterInterval(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.runQualityBaseline = func() error { calls++; return nil }
+	d.qualityInterval = 5 * time.Minute
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+
+	// First run
+	d.handleQualityBaseline()
+	if calls != 1 {
+		t.Fatalf("expected 1 call after first run, got %d", calls)
+	}
+
+	// Advance by less than interval — should not run
+	d.nowFn = func() time.Time { return base.Add(4 * time.Minute) }
+	d.handleQualityBaseline()
+	if calls != 1 {
+		t.Errorf("expected no call within interval, got %d total", calls)
+	}
+
+	// Advance past interval — should run again
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleQualityBaseline()
+	if calls != 2 {
+		t.Errorf("expected 2 calls after interval elapsed, got %d", calls)
 	}
 }
 
