@@ -93,7 +93,9 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	parts := strings.Split(prURL, "/")
 	if len(parts) > 0 {
 		if prNum, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
-			issues.SetPR(id, prNum)
+			if err := issues.SetPR(id, prNum); err != nil {
+				return fmt.Errorf("recording PR number on ticket: %w", err)
+			}
 		}
 	}
 
