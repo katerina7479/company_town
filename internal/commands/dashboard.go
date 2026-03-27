@@ -37,6 +37,7 @@ var (
 		"pr_open":      lipgloss.NewStyle().Foreground(lipgloss.Color("10")), // bright green
 		"reviewed":     lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // bright magenta
 		"repairing":   lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // red
+		"on_hold":     lipgloss.NewStyle().Foreground(lipgloss.Color("3")),  // yellow
 		"closed":      lipgloss.NewStyle().Foreground(lipgloss.Color("8")),  // dark gray
 	}
 

@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS issues (
                              -- task | epic | bug | refactor
   status        VARCHAR(30)  NOT NULL DEFAULT 'draft',
                              -- draft | open | in_progress | in_review
-                             -- reviewed | repairing | closed
+                             -- reviewed | repairing | on_hold | closed
   title         TEXT         NOT NULL,
   description   TEXT,
   specialty     VARCHAR(50),
