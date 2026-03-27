@@ -35,6 +35,11 @@ func PR(args []string) error {
 	}
 }
 
+// formatPRTitle returns the canonical PR title: [PREFIX-ID] Title.
+func formatPRTitle(prefix string, id int, title string) string {
+	return fmt.Sprintf("[%s-%d] %s", prefix, id, title)
+}
+
 func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt pr create <ticket_id>")
@@ -63,7 +68,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	// Build PR title and body
-	prTitle := fmt.Sprintf("[%s-%d] %s", cfg.TicketPrefix, issue.ID, issue.Title)
+	prTitle := formatPRTitle(cfg.TicketPrefix, issue.ID, issue.Title)
 
 	bodyParts := []string{"## Summary\n"}
 	if issue.Description.Valid && issue.Description.String != "" {
