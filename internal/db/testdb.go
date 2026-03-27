@@ -46,6 +46,16 @@ CREATE TABLE IF NOT EXISTS issue_dependencies (
   FOREIGN KEY (issue_id) REFERENCES issues(id),
   FOREIGN KEY (depends_on_id) REFERENCES issues(id)
 );
+
+CREATE TABLE IF NOT EXISTS quality_metrics (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_name TEXT     NOT NULL,
+  status     TEXT     NOT NULL,
+  output     TEXT,
+  value      REAL,
+  run_at     DATETIME NOT NULL,
+  error      TEXT
+);
 `
 
 // NewTestDB creates an in-memory SQLite database for testing.
