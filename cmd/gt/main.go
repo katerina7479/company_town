@@ -34,6 +34,8 @@ func main() {
 		err = gtcmd.Status()
 	case "check":
 		err = gtcmd.Check(args)
+	case "migrate":
+		err = gtcmd.Migrate()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -57,5 +59,6 @@ Commands:
   start <agent>                                                  Start an agent
   stop <agent>                                                   Stop an agent (graceful)
   status                                                         Print system status
-  check <run|list|history>                                       Run and view quality checks`)
+  check <run|list|history>                                       Run and view quality checks
+  migrate                                                        Apply pending database migrations`)
 }
