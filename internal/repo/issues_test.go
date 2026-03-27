@@ -197,3 +197,220 @@ func TestIssueRepo_List(t *testing.T) {
 		t.Errorf("expected 2 draft tickets, got %d", len(drafts))
 	}
 }
+
+func TestIssueRepo_Create_withParentAndSpecialty(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	parentID, _ := repo.Create("Epic", "epic", nil, nil)
+	spec := "backend"
+	childID, err := repo.Create("Child task", "task", &parentID, &spec)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	issue, err := repo.Get(childID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !issue.ParentID.Valid || int(issue.ParentID.Int64) != parentID {
+		t.Errorf("expected parent_id=%d, got %v", parentID, issue.ParentID)
+	}
+	if !issue.Specialty.Valid || issue.Specialty.String != "backend" {
+		t.Errorf("expected specialty='backend', got %v", issue.Specialty)
+	}
+}
+
+func TestIssueRepo_Get_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	_, err := repo.Get(9999)
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
+
+func TestIssueRepo_UpdateStatus_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	err := repo.UpdateStatus(9999, "open")
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
+
+func TestIssueRepo_UpdateStatus_closedSetsClosedAt(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("To close", "task", nil, nil)
+
+	if err := repo.UpdateStatus(id, "closed"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Status != "closed" {
+		t.Errorf("expected status='closed', got %q", issue.Status)
+	}
+	if !issue.ClosedAt.Valid {
+		t.Errorf("expected closed_at to be set after closing")
+	}
+}
+
+func TestIssueRepo_Assign(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Work item", "task", nil, nil)
+	repo.UpdateStatus(id, "open")
+
+	if err := repo.Assign(id, "obsidian", "prole/obsidian/NC-24"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Status != "in_progress" {
+		t.Errorf("expected status='in_progress', got %q", issue.Status)
+	}
+	if !issue.Assignee.Valid || issue.Assignee.String != "obsidian" {
+		t.Errorf("expected assignee='obsidian', got %v", issue.Assignee)
+	}
+	if !issue.Branch.Valid || issue.Branch.String != "prole/obsidian/NC-24" {
+		t.Errorf("expected branch='prole/obsidian/NC-24', got %v", issue.Branch)
+	}
+}
+
+func TestIssueRepo_Assign_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	err := repo.Assign(9999, "obsidian", "some-branch")
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
+
+func TestIssueRepo_SetPR(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("PR ticket", "task", nil, nil)
+
+	if err := repo.SetPR(id, 42); err != nil {
+		t.Fatalf("SetPR: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if !issue.PRNumber.Valid || issue.PRNumber.Int64 != 42 {
+		t.Errorf("expected pr_number=42, got %v", issue.PRNumber)
+	}
+}
+
+func TestIssueRepo_ListWithPRs(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// in_review with PR — should appear
+	id1, _ := repo.Create("In review", "task", nil, nil)
+	repo.UpdateStatus(id1, "in_review")
+	repo.SetPR(id1, 10)
+
+	// closed with PR — should NOT appear
+	id2, _ := repo.Create("Closed", "task", nil, nil)
+	repo.UpdateStatus(id2, "closed")
+	repo.SetPR(id2, 11)
+
+	// open without PR — should NOT appear
+	id3, _ := repo.Create("No PR", "task", nil, nil)
+	repo.UpdateStatus(id3, "open")
+
+	result, err := repo.ListWithPRs()
+	if err != nil {
+		t.Fatalf("ListWithPRs: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 ticket, got %d", len(result))
+	}
+	if result[0].ID != id1 {
+		t.Errorf("expected ticket id=%d, got %d", id1, result[0].ID)
+	}
+}
+
+func TestIssueRepo_ListWithPRs_multipleStatuses(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// Various non-closed statuses with PRs — all should appear
+	id1, _ := repo.Create("In review", "task", nil, nil)
+	repo.UpdateStatus(id1, "in_review")
+	repo.SetPR(id1, 1)
+
+	id2, _ := repo.Create("Repairing", "task", nil, nil)
+	repo.UpdateStatus(id2, "repairing")
+	repo.SetPR(id2, 2)
+
+	result, err := repo.ListWithPRs()
+	if err != nil {
+		t.Fatalf("ListWithPRs: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("expected 2 tickets, got %d", len(result))
+	}
+}
+
+func TestIssueRepo_Close(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("To close", "task", nil, nil)
+
+	if err := repo.Close(id); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Status != "closed" {
+		t.Errorf("expected status='closed', got %q", issue.Status)
+	}
+	if !issue.ClosedAt.Valid {
+		t.Errorf("expected closed_at to be set")
+	}
+}
+
+func TestIssueRepo_Delete(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("To delete", "task", nil, nil)
+
+	if err := repo.Delete(id); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	_, err := repo.Get(id)
+	if err == nil {
+		t.Error("expected error after delete, got nil")
+	}
+}
+
+func TestIssueRepo_Delete_cascadesDependencies(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id1, _ := repo.Create("Ticket 1", "task", nil, nil)
+	id2, _ := repo.Create("Ticket 2", "task", nil, nil)
+	repo.AddDependency(id2, id1)
+
+	// Delete id1 — dependency row should be removed
+	if err := repo.Delete(id1); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	deps, err := repo.GetDependencies(id2)
+	if err != nil {
+		t.Fatalf("GetDependencies after delete: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Errorf("expected 0 dependencies after deleting dep target, got %d", len(deps))
+	}
+}
+
+func TestIssueRepo_Delete_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	err := repo.Delete(9999)
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
