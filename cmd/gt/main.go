@@ -32,6 +32,8 @@ func main() {
 		err = gtcmd.Stop(args)
 	case "status":
 		err = gtcmd.Status()
+	case "check":
+		err = gtcmd.Check(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -54,5 +56,6 @@ Commands:
   pr <create>                                                    File PRs
   start <agent>                                                  Start an agent
   stop <agent>                                                   Stop an agent (graceful)
-  status                                                         Print system status`)
+  status                                                         Print system status
+  check <run|list|history>                                       Run and view quality checks`)
 }
