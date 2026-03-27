@@ -32,6 +32,12 @@ func main() {
 		err = commands.Stop()
 	case "nuke":
 		err = commands.Nuke()
+	case "architect":
+		if len(args) > 0 && args[0] == "stop" {
+			err = commands.ArchitectStop()
+		} else {
+			err = commands.Architect()
+		}
 	case "janitor":
 		if len(args) > 0 && args[0] == "stop" {
 			err = commands.JanitorStop()
@@ -68,6 +74,8 @@ Commands:
   start               Start the Mayor and attach to tmux session
   stop                Graceful shutdown with handoffs
   nuke                Immediate shutdown, no handoffs
+  architect           Start the Architect agent
+  architect stop      Signal Architect to write handoff and exit
   janitor             Start the Janitor agent
   janitor stop        Signal Janitor to write handoff and exit
   attach <name>       Attach to a running agent session
