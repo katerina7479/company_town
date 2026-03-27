@@ -14,6 +14,7 @@ import (
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/prole"
+	"github.com/katerina7479/company_town/internal/quality"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
 )
@@ -31,6 +32,11 @@ type Daemon struct {
 	lastNudged    map[string]time.Time
 	nudgeCooldown time.Duration
 	nowFn         func() time.Time
+
+	// Quality baseline
+	runQualityBaseline  func() error
+	lastQualityBaseline time.Time
+	qualityInterval     time.Duration
 }
 
 // New creates a new Daemon.
@@ -42,6 +48,9 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening daemon log: %w", err)
 	}
+
+	metrics := repo.NewQualityMetricRepo(db)
+	runner := quality.New(cfg.ProjectRoot)
 
 	return &Daemon{
 		cfg:           cfg,
@@ -57,7 +66,32 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		lastNudged:    make(map[string]time.Time),
 		nudgeCooldown: time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
 		nowFn:         time.Now,
+		runQualityBaseline: func() error {
+			return runAndPersistBaseline(runner, cfg.Quality.Checks, metrics)
+		},
+		qualityInterval: time.Duration(cfg.Quality.BaselineIntervalSeconds) * time.Second,
 	}, nil
+}
+
+// runAndPersistBaseline executes all quality checks and records each result.
+func runAndPersistBaseline(runner *quality.Runner, checks []config.QualityCheckConfig, metrics *repo.QualityMetricRepo) error {
+	baseline := runner.Run(checks)
+	for _, result := range baseline.Results {
+		m := &repo.QualityMetric{
+			CheckName: result.CheckName,
+			Status:    string(result.Status),
+			Output:    result.Output,
+			RunAt:     result.RunAt,
+			Error:     result.Err,
+		}
+		if result.Value != nil {
+			m.Value = sql.NullFloat64{Float64: *result.Value, Valid: true}
+		}
+		if err := metrics.Record(m); err != nil {
+			return fmt.Errorf("recording result for %q: %w", result.CheckName, err)
+		}
+	}
+	return nil
 }
 
 // Run starts the polling loop. Blocks until Stop() is called.
@@ -112,6 +146,25 @@ func (d *Daemon) poll() {
 	d.handleInReviewTickets()
 	d.handleRepairingTickets()
 	d.handlePREvents()
+	d.handleQualityBaseline()
+}
+
+// handleQualityBaseline runs quality checks and persists results when the interval has elapsed.
+func (d *Daemon) handleQualityBaseline() {
+	if d.qualityInterval == 0 {
+		return // disabled
+	}
+	if !d.nowFn().After(d.lastQualityBaseline.Add(d.qualityInterval)) {
+		return // not yet time
+	}
+
+	d.logger.Printf("running quality baseline")
+	if err := d.runQualityBaseline(); err != nil {
+		d.logger.Printf("quality baseline error: %v", err)
+	} else {
+		d.logger.Printf("quality baseline complete")
+	}
+	d.lastQualityBaseline = d.nowFn()
 }
 
 // handleDeadSessions marks agents as dead when their tmux session no longer exists.
