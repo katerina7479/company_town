@@ -51,12 +51,13 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 
 	metrics := repo.NewQualityMetricRepo(db)
 	runner := quality.New(cfg.ProjectRoot)
+	logger := log.New(f, "[DAEMON] ", log.LstdFlags)
 
 	return &Daemon{
 		cfg:           cfg,
 		issues:        repo.NewIssueRepo(db),
 		agents:        repo.NewAgentRepo(db),
-		logger:        log.New(f, "[DAEMON] ", log.LstdFlags),
+		logger:        logger,
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
 		sessionExists: session.Exists,
@@ -67,14 +68,15 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		nudgeCooldown: time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
 		nowFn:         time.Now,
 		runQualityBaseline: func() error {
-			return runAndPersistBaseline(runner, cfg.Quality.Checks, metrics)
+			return runAndPersistBaseline(runner, cfg.Quality.Checks, metrics, logger)
 		},
 		qualityInterval: time.Duration(cfg.Quality.BaselineIntervalSeconds) * time.Second,
 	}, nil
 }
 
 // runAndPersistBaseline executes all quality checks and records each result.
-func runAndPersistBaseline(runner *quality.Runner, checks []config.QualityCheckConfig, metrics *repo.QualityMetricRepo) error {
+// A Record error for one result is logged and skipped; all results are attempted.
+func runAndPersistBaseline(runner *quality.Runner, checks []config.QualityCheckConfig, metrics *repo.QualityMetricRepo, logger *log.Logger) error {
 	baseline := runner.Run(checks)
 	for _, result := range baseline.Results {
 		m := &repo.QualityMetric{
@@ -88,7 +90,7 @@ func runAndPersistBaseline(runner *quality.Runner, checks []config.QualityCheckC
 			m.Value = sql.NullFloat64{Float64: *result.Value, Valid: true}
 		}
 		if err := metrics.Record(m); err != nil {
-			return fmt.Errorf("recording result for %q: %w", result.CheckName, err)
+			logger.Printf("warning: could not persist result for %q: %v", result.CheckName, err)
 		}
 	}
 	return nil
