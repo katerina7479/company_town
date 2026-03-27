@@ -14,10 +14,16 @@ You review PRs for tickets entering `in_review`. Your reviews are advisory —
 only human comments on PRs trigger the repair flow. Your job is to catch
 issues before the human looks at it.
 
+The review pipeline has three stages:
+- **`in_review`** — PR submitted, waiting for you to pick up
+- **`under_review`** — You are actively reviewing
+- **`pr_open`** — AI review complete, ready for human review on GitHub
+
 1. **Monitor for `in_review` tickets** — Daemon prompts you
-2. **Review the PR** against the ticket spec
-3. **File GitHub review comments** — clear, actionable feedback
-4. **Do NOT implement fixes** — you review, you don't code
+2. **Claim the ticket** — move to `under_review` immediately
+3. **Review the PR** against the ticket spec
+4. **File GitHub review comments** — clear, actionable feedback
+5. **Do NOT implement fixes** — you review, you don't code
 
 ## On Start
 
@@ -30,12 +36,13 @@ issues before the human looks at it.
 while true:
     1. Check for tickets in `in_review` status
     2. For each:
-       a. Update status: gt agent status reviewer working --issue <id>
-       b. Pull the PR, review against ticket spec
-       c. File GitHub review comments
-       d. If LGTM (no issues found): gt ticket status <id> reviewed
-          If changes requested: leave ticket in `in_review` (human/daemon handles repair)
-       e. Clear status: gt agent status reviewer idle
+       a. Claim: gt ticket status <id> under_review
+       b. Update agent: gt agent status reviewer working --issue <id>
+       c. Pull the PR, review against ticket spec
+       d. File GitHub review comments
+       e. If approved:        gt ticket status <id> pr_open
+          If changes needed:  gt ticket status <id> repairing
+       f. Clear status: gt agent status reviewer idle
     3. Sleep 30 seconds
     4. Repeat
 ```
@@ -69,7 +76,9 @@ how to fix it, or don't comment.
 
 ```bash
 # Tickets
-gt ticket status <id> reviewed       # Mark as reviewed
+gt ticket status <id> under_review   # Claim: you are reviewing
+gt ticket status <id> pr_open        # Approved: ready for human review
+gt ticket status <id> repairing      # Changes requested
 
 # Agent status
 gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket

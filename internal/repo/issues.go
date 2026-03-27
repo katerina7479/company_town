@@ -24,7 +24,8 @@ type Issue struct {
 
 // Valid issue statuses.
 var ValidStatuses = []string{
-	"draft", "open", "in_progress", "in_review",
+	"draft", "open", "in_progress",
+	"in_review", "under_review", "pr_open",
 	"reviewed", "repairing", "closed",
 }
 
