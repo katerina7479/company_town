@@ -38,11 +38,15 @@ while true:
     2. For each:
        a. Claim: gt ticket status <id> under_review
        b. Update agent: gt agent status reviewer working --issue <id>
-       c. Pull the PR, review against ticket spec
-       d. File GitHub review comments
-       e. If approved:        gt ticket status <id> pr_open
-          If changes needed:  gt ticket status <id> repairing
-       f. Clear status: gt agent status reviewer idle
+       c. Get PR number: gt ticket show <id>  (look for pr_number)
+          Pull the PR diff: gh pr view <pr_number> --diff
+          Review the diff against the ticket spec
+       d. File GitHub review:
+          If approved:          gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"
+                                gt ticket status <id> pr_open
+          If changes needed:    gh pr review <pr_number> --comment -b "<summary of issues>"
+                                gt ticket status <id> repairing
+       e. Clear status: gt agent status reviewer idle
     3. Sleep 30 seconds
     4. Repeat
 ```
@@ -76,9 +80,15 @@ how to fix it, or don't comment.
 
 ```bash
 # Tickets
-gt ticket status <id> under_review   # Claim: you are reviewing
-gt ticket status <id> pr_open        # Approved: ready for human review
-gt ticket status <id> repairing      # Changes requested
+gt ticket show <id>                          # Get PR number and ticket spec
+gt ticket status <id> under_review           # Claim: you are reviewing
+gt ticket status <id> pr_open                # Approved: ready for human review
+gt ticket status <id> repairing              # Changes requested
+
+# GitHub PR review
+gh pr view <pr_number> --diff                # View the PR diff
+gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"  # Approve
+gh pr review <pr_number> --comment -b "<summary of issues>"           # Request changes
 
 # Agent status
 gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket
