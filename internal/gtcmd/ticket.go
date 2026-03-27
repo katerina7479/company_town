@@ -38,7 +38,7 @@ func Ticket(args []string) error {
 	case "assign":
 		return ticketAssign(issues, agents, args[1:])
 	case "status":
-		return ticketStatus(issues, args[1:])
+		return ticketStatus(issues, agents, args[1:])
 	case "close":
 		return ticketClose(issues, agents, args[1:])
 	case "delete":
@@ -239,9 +239,9 @@ func ticketAssign(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 	return nil
 }
 
-func ticketStatus(issues *repo.IssueRepo, args []string) error {
+func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: gt ticket status <id> <status>")
+		return fmt.Errorf("usage: gt ticket status <id> <status> [--agent <name>]")
 	}
 
 	id, err := strconv.Atoi(args[0])
@@ -250,8 +250,52 @@ func ticketStatus(issues *repo.IssueRepo, args []string) error {
 	}
 
 	status := args[1]
+
+	var agentName string
+	for i := 2; i < len(args); i++ {
+		if args[i] == "--agent" {
+			if i+1 >= len(args) {
+				return fmt.Errorf("--agent requires a value")
+			}
+			i++
+			agentName = args[i]
+		}
+	}
+
+	// For exit from under_review, capture the current assignee before updating status.
+	var prevAssignee string
+	if status == "pr_open" || status == "repairing" {
+		issue, err := issues.Get(id)
+		if err != nil {
+			return err
+		}
+		if issue.Status == "under_review" && issue.Assignee.Valid {
+			prevAssignee = issue.Assignee.String
+		}
+	}
+
 	if err := issues.UpdateStatus(id, status); err != nil {
 		return err
+	}
+
+	// Claiming for review: bind the agent to this ticket.
+	if status == "under_review" && agentName != "" {
+		if err := issues.SetAssignee(id, agentName); err != nil {
+			fmt.Printf("Warning: could not set issue assignee: %v\n", err)
+		}
+		if err := agents.SetCurrentIssue(agentName, &id); err != nil {
+			fmt.Printf("Warning: could not set agent current issue: %v\n", err)
+		}
+	}
+
+	// Releasing from review: free the agent.
+	if prevAssignee != "" {
+		if err := issues.ClearAssignee(id); err != nil {
+			fmt.Printf("Warning: could not clear issue assignee: %v\n", err)
+		}
+		if err := agents.ClearCurrentIssue(prevAssignee); err != nil {
+			fmt.Printf("Warning: could not clear agent current issue: %v\n", err)
+		}
 	}
 
 	fmt.Printf("Ticket %d → %s\n", id, status)

@@ -37,17 +37,17 @@ while true:
     1. Check for tickets in `in_review` status
     2. If none: sleep 30 seconds, repeat
     3. Take the FIRST ticket only:
-       a. Claim: gt ticket status <id> under_review
-       b. Update agent: gt agent status reviewer working --issue <id>
-       c. Get PR number: gt ticket show <id>  (look for pr_number)
+       a. Claim: gt ticket status <id> under_review --agent reviewer
+          (sets your agent status to working and assignee on the ticket)
+       b. Get PR number: gt ticket show <id>  (look for pr_number)
           Pull the PR diff: gh pr view <pr_number> --diff
           Review the diff against the ticket spec
-       d. File GitHub review:
+       c. File GitHub review:
           If approved:          gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"
                                 gt ticket status <id> pr_open
           If changes needed:    gh pr review <pr_number> --comment -b "<summary of issues>"
                                 gt ticket status <id> repairing
-       e. Clear status: gt agent status reviewer idle
+          (moving out of under_review automatically clears your assignee and sets you idle)
     4. Sleep 30 seconds
     5. Repeat
 ```
@@ -81,23 +81,20 @@ how to fix it, or don't comment.
 
 ```bash
 # Tickets
-gt ticket show <id>                          # Get PR number and ticket spec
-gt ticket status <id> under_review           # Claim: you are reviewing
-gt ticket status <id> pr_open                # Approved: ready for human review
-gt ticket status <id> repairing              # Changes requested
+gt ticket show <id>                                   # Get PR number and ticket spec
+gt ticket status <id> under_review --agent reviewer   # Claim: sets you working + assignee
+gt ticket status <id> pr_open                         # Approved: clears assignee, sets you idle
+gt ticket status <id> repairing                       # Changes needed: clears assignee, sets you idle
 
 # GitHub PR review
 gh pr view <pr_number> --diff                # View the PR diff
 gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"  # Approve
 gh pr review <pr_number> --comment -b "<summary of issues>"           # Request changes
 
-# Agent status
-gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket
-gt agent status reviewer idle                  # Mark yourself idle when done
-
 # Quality (use when reviewing to check project health)
 gt check list                        # Show latest result per check
 gt check history [<name>] [--limit]  # Show result history
+
 
 # System
 gt status                            # System overview

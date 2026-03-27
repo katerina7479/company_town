@@ -172,6 +172,38 @@ func (r *IssueRepo) Delete(id int) error {
 	return nil
 }
 
+// SetAssignee sets the assignee on an issue without changing its status.
+func (r *IssueRepo) SetAssignee(id int, assignee string) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET assignee = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		assignee, id,
+	)
+	if err != nil {
+		return fmt.Errorf("setting issue assignee: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
+// ClearAssignee removes the assignee from an issue.
+func (r *IssueRepo) ClearAssignee(id int) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET assignee = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("clearing issue assignee: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
 // SetPR sets the PR number on an issue.
 func (r *IssueRepo) SetPR(id, prNumber int) error {
 	_, err := r.db.Exec(
