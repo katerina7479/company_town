@@ -42,9 +42,9 @@ while true:
           Pull the PR diff: gh pr view <pr_number> --diff
           Review the diff against the ticket spec
        d. File GitHub review:
-          If approved:          gh pr review <pr_number> --approve -b "LGTM"
+          If approved:          gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"
                                 gt ticket status <id> pr_open
-          If changes needed:    gh pr review <pr_number> --request-changes -b "<summary>"
+          If changes needed:    gh pr review <pr_number> --comment -b "<summary of issues>"
                                 gt ticket status <id> repairing
        e. Clear status: gt agent status reviewer idle
     3. Sleep 30 seconds
@@ -87,8 +87,8 @@ gt ticket status <id> repairing              # Changes requested
 
 # GitHub PR review
 gh pr view <pr_number> --diff                # View the PR diff
-gh pr review <pr_number> --approve -b "..."  # Approve
-gh pr review <pr_number> --request-changes -b "..."  # Request changes
+gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"  # Approve
+gh pr review <pr_number> --comment -b "<summary of issues>"           # Request changes
 
 # Agent status
 gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket
