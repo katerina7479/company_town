@@ -455,3 +455,88 @@ func TestListWithPRs_onlyReturnsNonClosed(t *testing.T) {
 		t.Errorf("expected ticket %d, got %d", id1, result[0].ID)
 	}
 }
+
+// --- Dead session detection tests ---
+
+func TestHandleDeadSessions_marksAgentDeadWhenSessionGone(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	agents.Register("worker", "prole", nil)
+	agents.SetTmuxSession("worker", "ct-worker")
+
+	d.handleDeadSessions()
+
+	agent, err := agents.Get("worker")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if agent.Status != "dead" {
+		t.Errorf("expected status='dead', got %q", agent.Status)
+	}
+}
+
+func TestHandleDeadSessions_keepsAgentAliveWhenSessionExists(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-worker"})
+
+	agents.Register("worker", "prole", nil)
+	agents.SetTmuxSession("worker", "ct-worker")
+
+	d.handleDeadSessions()
+
+	agent, _ := agents.Get("worker")
+	if agent.Status != "idle" {
+		t.Errorf("expected status='idle' (session alive), got %q", agent.Status)
+	}
+}
+
+func TestHandleDeadSessions_skipsAgentWithNoSession(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	// No SetTmuxSession call — agent has no session recorded
+	agents.Register("worker", "prole", nil)
+
+	d.handleDeadSessions()
+
+	agent, _ := agents.Get("worker")
+	if agent.Status != "idle" {
+		t.Errorf("expected status='idle' (no session to check), got %q", agent.Status)
+	}
+}
+
+func TestHandleDeadSessions_skipsAlreadyDeadAgents(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	agents.Register("worker", "prole", nil)
+	agents.SetTmuxSession("worker", "ct-worker")
+	agents.UpdateStatus("worker", "dead")
+
+	// Should not error or double-process
+	d.handleDeadSessions()
+
+	agent, _ := agents.Get("worker")
+	if agent.Status != "dead" {
+		t.Errorf("expected status='dead', got %q", agent.Status)
+	}
+}
+
+func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-alive"})
+
+	agents.Register("alive-agent", "prole", nil)
+	agents.SetTmuxSession("alive-agent", "ct-alive")
+
+	agents.Register("dead-agent", "prole", nil)
+	agents.SetTmuxSession("dead-agent", "ct-dead")
+
+	d.handleDeadSessions()
+
+	alive, _ := agents.Get("alive-agent")
+	if alive.Status != "idle" {
+		t.Errorf("alive-agent: expected 'idle', got %q", alive.Status)
+	}
+
+	dead, _ := agents.Get("dead-agent")
+	if dead.Status != "dead" {
+		t.Errorf("dead-agent: expected 'dead', got %q", dead.Status)
+	}
+}
