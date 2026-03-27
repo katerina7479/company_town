@@ -26,6 +26,9 @@ type Daemon struct {
 	stop          chan struct{}
 	sendKeys      func(session, msg string) error
 	sessionExists func(session string) bool
+	lastNudged    map[string]time.Time
+	nudgeCooldown time.Duration
+	nowFn         func() time.Time
 }
 
 // New creates a new Daemon.
@@ -46,6 +49,9 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
 		sessionExists: session.Exists,
+		lastNudged:    make(map[string]time.Time),
+		nudgeCooldown: time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
+		nowFn:         time.Now,
 	}, nil
 }
 
@@ -74,6 +80,24 @@ func (d *Daemon) Run() {
 // Stop signals the daemon to stop.
 func (d *Daemon) Stop() {
 	close(d.stop)
+}
+
+// shouldNudge returns true if enough time has passed since the last nudge for key.
+// Always returns true if nudgeCooldown is zero (cooldown disabled).
+func (d *Daemon) shouldNudge(key string) bool {
+	if d.nudgeCooldown == 0 {
+		return true
+	}
+	last, ok := d.lastNudged[key]
+	if !ok {
+		return true
+	}
+	return d.nowFn().Sub(last) >= d.nudgeCooldown
+}
+
+// recordNudge records the current time as the last nudge for key.
+func (d *Daemon) recordNudge(key string) {
+	d.lastNudged[key] = d.nowFn()
 }
 
 func (d *Daemon) poll() {
@@ -132,8 +156,12 @@ func (d *Daemon) handleOpenTickets() {
 	}
 
 	conductorSession := session.SessionName("conductor")
-	if !session.Exists(conductorSession) {
+	if !d.sessionExists(conductorSession) {
 		return // Conductor not running, nothing to do
+	}
+
+	if !d.shouldNudge("open") {
+		return
 	}
 
 	ids := make([]string, len(unassigned))
@@ -147,11 +175,12 @@ func (d *Daemon) handleOpenTickets() {
 		len(unassigned), strings.Join(ids, ", "),
 	)
 
-	if err := session.SendKeys(conductorSession, msg); err != nil {
+	if err := d.sendKeys(conductorSession, msg); err != nil {
 		d.logger.Printf("error nudging conductor: %v", err)
 	} else {
 		d.logger.Printf("nudged conductor: %d ready ticket(s) unassigned (%s)",
 			len(unassigned), strings.Join(ids, ", "))
+		d.recordNudge("open")
 	}
 }
 
@@ -172,16 +201,24 @@ func (d *Daemon) handleDraftTickets() {
 		return // Architect not running, nothing to do
 	}
 
-	for _, issue := range drafts {
-		msg := fmt.Sprintf("Draft ticket %s-%d needs spec: %s. "+
-			"Run `gt ticket show %d` and begin specification.",
-			d.cfg.TicketPrefix, issue.ID, issue.Title, issue.ID)
+	if !d.shouldNudge("draft") {
+		return
+	}
 
-		if err := d.sendKeys(architectSession, msg); err != nil {
-			d.logger.Printf("error nudging architect for ticket %d: %v", issue.ID, err)
-		} else {
-			d.logger.Printf("nudged architect for draft ticket %s-%d", d.cfg.TicketPrefix, issue.ID)
-		}
+	ids := make([]string, len(drafts))
+	for i, issue := range drafts {
+		ids[i] = fmt.Sprintf("%s-%d (%s)", d.cfg.TicketPrefix, issue.ID, issue.Title)
+	}
+
+	msg := fmt.Sprintf("%d draft ticket(s) need spec: %s. "+
+		"Run `gt ticket show <id>` on each and begin specification.",
+		len(drafts), strings.Join(ids, "; "))
+
+	if err := d.sendKeys(architectSession, msg); err != nil {
+		d.logger.Printf("error nudging architect: %v", err)
+	} else {
+		d.logger.Printf("nudged architect: %d draft ticket(s)", len(drafts))
+		d.recordNudge("draft")
 	}
 }
 
@@ -202,21 +239,35 @@ func (d *Daemon) handleInReviewTickets() {
 		return // Reviewer not running
 	}
 
+	// Collect only tickets that have a PR number.
+	var withPR []*repo.Issue
 	for _, issue := range reviews {
-		if !issue.PRNumber.Valid {
-			continue
+		if issue.PRNumber.Valid {
+			withPR = append(withPR, issue)
 		}
+	}
+	if len(withPR) == 0 {
+		return
+	}
 
-		msg := fmt.Sprintf("PR #%d for ticket %s-%d is ready for review: %s. "+
-			"Review the PR and file comments.",
-			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
+	if !d.shouldNudge("in_review") {
+		return
+	}
 
-		if err := d.sendKeys(reviewerSession, msg); err != nil {
-			d.logger.Printf("error nudging Reviewer for ticket %d: %v", issue.ID, err)
-		} else {
-			d.logger.Printf("nudged Reviewer for in_review ticket %s-%d (PR #%d)",
-				d.cfg.TicketPrefix, issue.ID, issue.PRNumber.Int64)
-		}
+	parts := make([]string, len(withPR))
+	for i, issue := range withPR {
+		parts[i] = fmt.Sprintf("%s-%d (PR #%d)", d.cfg.TicketPrefix, issue.ID, issue.PRNumber.Int64)
+	}
+
+	msg := fmt.Sprintf("%d ticket(s) ready for review: %s. "+
+		"Review each PR and file comments.",
+		len(withPR), strings.Join(parts, ", "))
+
+	if err := d.sendKeys(reviewerSession, msg); err != nil {
+		d.logger.Printf("error nudging Reviewer: %v", err)
+	} else {
+		d.logger.Printf("nudged Reviewer: %d in_review ticket(s)", len(withPR))
+		d.recordNudge("in_review")
 	}
 }
 
@@ -237,20 +288,28 @@ func (d *Daemon) handleRepairingTickets() {
 		return // Conductor not running
 	}
 
-	for _, issue := range tickets {
-		pr := ""
-		if issue.PRNumber.Valid {
-			pr = fmt.Sprintf(" (PR #%d)", issue.PRNumber.Int64)
-		}
-		msg := fmt.Sprintf("Ticket %s-%d%s needs repair: %s. "+
-			"Assign an available prole to address the review comments.",
-			d.cfg.TicketPrefix, issue.ID, pr, issue.Title)
+	if !d.shouldNudge("repairing") {
+		return
+	}
 
-		if err := d.sendKeys(conductorSession, msg); err != nil {
-			d.logger.Printf("error nudging Conductor for repairing ticket %d: %v", issue.ID, err)
-		} else {
-			d.logger.Printf("nudged Conductor for repairing ticket %s-%d", d.cfg.TicketPrefix, issue.ID)
+	parts := make([]string, len(tickets))
+	for i, issue := range tickets {
+		entry := fmt.Sprintf("%s-%d (%s)", d.cfg.TicketPrefix, issue.ID, issue.Title)
+		if issue.PRNumber.Valid {
+			entry += fmt.Sprintf(" PR #%d", issue.PRNumber.Int64)
 		}
+		parts[i] = entry
+	}
+
+	msg := fmt.Sprintf("%d ticket(s) need repair: %s. "+
+		"Assign an available prole to address the review comments.",
+		len(tickets), strings.Join(parts, "; "))
+
+	if err := d.sendKeys(conductorSession, msg); err != nil {
+		d.logger.Printf("error nudging Conductor for repairing tickets: %v", err)
+	} else {
+		d.logger.Printf("nudged Conductor: %d repairing ticket(s)", len(tickets))
+		d.recordNudge("repairing")
 	}
 }
 
