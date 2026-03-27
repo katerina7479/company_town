@@ -231,6 +231,10 @@ func ticketAssign(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 		return fmt.Errorf("setting agent current issue: %w", err)
 	}
 
+	if err := agents.UpdateStatus(agentName, "working"); err != nil {
+		return fmt.Errorf("setting agent status to working: %w", err)
+	}
+
 	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
 	return nil
 }
