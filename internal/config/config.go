@@ -35,6 +35,22 @@ type DoltConfig struct {
 	Database string `json:"database"`
 }
 
+// CheckConfig describes a single health check.
+type CheckConfig struct {
+	Name     string            `json:"name"`
+	Type     string            `json:"type"`     // e.g. "command", "process", "file"
+	Params   map[string]string `json:"params"`   // type-specific parameters
+	Severity string            `json:"severity"` // "warning" or "critical"
+	Enabled  bool              `json:"enabled"`
+}
+
+// HealthCheckConfig holds the health-check subsystem configuration.
+type HealthCheckConfig struct {
+	Enabled         bool          `json:"enabled"`
+	IntervalSeconds int           `json:"interval_seconds"`
+	Checks          []CheckConfig `json:"checks"`
+}
+
 type Config struct {
 	Version                 string       `json:"version"`
 	TicketPrefix            string       `json:"ticket_prefix"`
@@ -44,9 +60,10 @@ type Config struct {
 	LogDir                  string       `json:"log_dir"`
 	MaxProles               int          `json:"max_proles"`
 	Agents                  AgentsConfig `json:"agents"`
-	PollingIntervalSeconds  int          `json:"polling_interval_seconds"`
-	NudgeCooldownSeconds    int          `json:"nudge_cooldown_seconds"`
-	ContextHandoffThreshold float64      `json:"context_handoff_threshold"`
+	PollingIntervalSeconds  int               `json:"polling_interval_seconds"`
+	NudgeCooldownSeconds    int               `json:"nudge_cooldown_seconds"`
+	ContextHandoffThreshold float64           `json:"context_handoff_threshold"`
+	HealthChecks            HealthCheckConfig `json:"health_checks"`
 }
 
 // CompanyTownDir returns the .company_town directory path for a project root.
@@ -103,6 +120,11 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		PollingIntervalSeconds:  30,
 		NudgeCooldownSeconds:    300,
 		ContextHandoffThreshold: 0.80,
+		HealthChecks: HealthCheckConfig{
+			Enabled:         true,
+			IntervalSeconds: 60,
+			Checks:          []CheckConfig{},
+		},
 	}
 }
 
