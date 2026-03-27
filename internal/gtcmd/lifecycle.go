@@ -135,6 +135,10 @@ func Start(args []string) error {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
 
+	if err := agents.SetTmuxSession(name, sessionName); err != nil {
+		return fmt.Errorf("recording tmux session for %s: %w", name, err)
+	}
+
 	if err := session.CreateInteractive(session.AgentSessionConfig{
 		Name:     sessionName,
 		WorkDir:  cfg.ProjectRoot,
