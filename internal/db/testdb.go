@@ -34,8 +34,9 @@ CREATE TABLE IF NOT EXISTS agents (
   current_issue INTEGER,
   tmux_session  TEXT,
   worktree_path TEXT,
-  time_created  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  time_ended    DATETIME,
+  time_created       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  time_ended         DATETIME,
+  status_changed_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (current_issue) REFERENCES issues(id)
 );
 
