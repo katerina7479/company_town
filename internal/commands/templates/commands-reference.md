@@ -15,5 +15,8 @@ gt agent status <name> <idle|working|dead>
 gt prole create <name>
 gt prole reset <name>
 gt pr create <ticket_id>
+gt check run
+gt check list
+gt check history [<check-name>] [--limit <n>]
 gt status
 ```

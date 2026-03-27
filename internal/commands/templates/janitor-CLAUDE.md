@@ -81,6 +81,11 @@ gt agent status <name> <status>              # Update agent status
 
 # Prole management
 gt prole reset <name>                        # Reset prole workspace
+
+# Quality health monitoring
+gt check run                                 # Run all configured checks
+gt check list                                # Show latest result per check
+gt check history [<name>] [--limit]          # Show result history
 ```
 
 ## Rules

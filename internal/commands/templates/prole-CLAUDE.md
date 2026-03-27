@@ -101,6 +101,11 @@ gt ticket status <id> <status>       # Update ticket status
 # PRs
 gt pr create <ticket_id>             # File PR: [PREFIX-ID] Title
 
+# Quality gates
+gt check run                         # Run all configured checks (exits non-zero on fail)
+gt check list                        # Show latest result per check
+gt check history [<name>] [--limit]  # Show result history
+
 # Agent
 gt agent status {{NAME}} <status>    # Update your status
 
@@ -117,7 +122,7 @@ When your work is done — step 4 is REQUIRED:
 ```
 [ ] 1. Run quality gates (ALL must pass):
        go test ./... && go vet ./...
-       (or project-specific gates from CLAUDE.md / AGENTS.md)
+       gt check run   (project-configured checks — exits non-zero if any fail)
 [ ] 2. Stage remaining changes: git add <files>
 [ ] 3. Commit and PUSH: git commit -m "msg (TICKET-ID)" && git push origin HEAD
 [ ] 4. File PR: gt pr create <ticket_id>
