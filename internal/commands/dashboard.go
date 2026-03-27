@@ -254,17 +254,22 @@ func renderIssueNode(sb *strings.Builder, node *repo.IssueNode, depth int, width
 	age := footerStyle.Render("(" + formatDuration(time.Since(node.UpdatedAt)) + ")")
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
 
+	prStr := "      " // 6 chars blank when no PR
+	if node.PRNumber.Valid {
+		prStr = fmt.Sprintf("%-6s", fmt.Sprintf("#%d", node.PRNumber.Int64))
+	}
+
 	// Truncate title so the row fits inside the panel.
-	// prefix + space + id + space + status + space + age + space + title
-	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + len(ageRaw) + 1
+	// prefix + space + id + space + status + space + pr + space + age + space + title
+	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + len(prStr) + 1 + len(ageRaw) + 1
 	titleMax := width - fixedLen - 2
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	sb.WriteString(fmt.Sprintf("%s %s %s %s %s\n",
-		prefix, idStr, coloredStatus, age, title,
+	sb.WriteString(fmt.Sprintf("%s %s %s %s %s %s\n",
+		prefix, idStr, coloredStatus, prStr, age, title,
 	))
 
 	for _, child := range node.Children {
