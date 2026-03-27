@@ -109,6 +109,33 @@ func TestIssueRepo_Ready(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_Ready_excludesEpics(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	taskID, _ := repo.Create("A task", "task", nil, nil)
+	epicID, _ := repo.Create("An epic", "epic", nil, nil)
+
+	repo.UpdateStatus(taskID, "open")
+	repo.UpdateStatus(epicID, "open")
+
+	ready, err := repo.Ready()
+	if err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+
+	if len(ready) != 1 {
+		t.Fatalf("expected 1 ready ticket (epic excluded), got %d", len(ready))
+	}
+	if ready[0].ID != taskID {
+		t.Errorf("expected task id=%d, got %d", taskID, ready[0].ID)
+	}
+	for _, r := range ready {
+		if r.IssueType == "epic" {
+			t.Errorf("Ready returned an epic (id=%d)", r.ID)
+		}
+	}
+}
+
 func TestIssueRepo_ListHierarchy(t *testing.T) {
 	repo := setupTestRepo(t)
 
