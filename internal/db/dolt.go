@@ -158,8 +158,18 @@ func Connect(cfg *config.DoltConfig) (*sql.DB, error) {
 	return conn, nil
 }
 
-// RunMigrations executes all embedded .sql migration files in order.
+// RunMigrations executes all embedded .sql migration files in order,
+// skipping any that have already been recorded in schema_migrations.
 func RunMigrations(db *sql.DB) error {
+	// Ensure tracking table exists.
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		name       VARCHAR(255) NOT NULL PRIMARY KEY,
+		applied_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		return fmt.Errorf("creating schema_migrations table: %w", err)
+	}
+
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("reading embedded migrations: %w", err)
@@ -174,6 +184,14 @@ func RunMigrations(db *sql.DB) error {
 	sort.Strings(files)
 
 	for _, f := range files {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, f).Scan(&count); err != nil {
+			return fmt.Errorf("checking migration %s: %w", f, err)
+		}
+		if count > 0 {
+			continue // already applied
+		}
+
 		data, err := migrationsFS.ReadFile("migrations/" + f)
 		if err != nil {
 			return fmt.Errorf("reading migration %s: %w", f, err)
@@ -181,6 +199,10 @@ func RunMigrations(db *sql.DB) error {
 
 		if _, err := db.Exec(string(data)); err != nil {
 			return fmt.Errorf("running migration %s: %w", f, err)
+		}
+
+		if _, err := db.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, f); err != nil {
+			return fmt.Errorf("recording migration %s: %w", f, err)
 		}
 
 		fmt.Printf("  applied: %s\n", f)

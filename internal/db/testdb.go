@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS quality_metrics (
   run_at     DATETIME NOT NULL,
   error      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name       TEXT     NOT NULL PRIMARY KEY,
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 // NewTestDB creates an in-memory SQLite database for testing.
