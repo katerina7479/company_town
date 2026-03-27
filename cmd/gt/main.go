@@ -770,7 +770,7 @@ func handleStart(args []string) error {
 		return fmt.Errorf("unknown agent: %s", name)
 	}
 
-	sessionName := "ct-" + name
+	sessionName := session.SessionName(name)
 
 	// If already running, just report
 	if tmuxExists(sessionName) {
@@ -812,7 +812,7 @@ func handleStop(args []string) error {
 	}
 
 	name := args[0]
-	sessionName := "ct-" + name
+	sessionName := session.SessionName(name)
 
 	if !tmuxExists(sessionName) {
 		fmt.Printf("%s is not running.\n", name)
@@ -842,6 +842,18 @@ func handleStop(args []string) error {
 	// Send shutdown message
 	cmd := exec.Command("tmux", "send-keys", "-t", sessionName, "System is shutting down. Write handoff.md and exit cleanly.", "Enter")
 	cmd.Run()
+
+	// Mark agent idle in the database
+	conn, _, err := db.OpenFromWorkingDir()
+	if err != nil {
+		fmt.Printf("warning: could not open db to update agent status: %v\n", err)
+	} else {
+		defer conn.Close()
+		agents := repo.NewAgentRepo(conn)
+		if err := agents.UpdateStatus(name, "idle"); err != nil {
+			fmt.Printf("warning: could not update agent status: %v\n", err)
+		}
+	}
 
 	fmt.Printf("Signaled %s to shutdown. Check session %s for handoff.\n", name, sessionName)
 	return nil
