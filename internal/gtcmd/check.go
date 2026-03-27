@@ -2,6 +2,7 @@ package gtcmd
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,6 +11,10 @@ import (
 	"github.com/katerina7479/company_town/internal/quality"
 	"github.com/katerina7479/company_town/internal/repo"
 )
+
+// errChecksFailed is returned by checkRun when one or more checks did not pass.
+// The caller is responsible for exiting non-zero after defers have run.
+var errChecksFailed = errors.New("checks failed")
 
 // Check dispatches gt check subcommands.
 func Check(args []string) error {
@@ -20,7 +25,11 @@ func Check(args []string) error {
 
 	switch args[0] {
 	case "run":
-		return checkRun()
+		err := checkRun()
+		if err == errChecksFailed {
+			os.Exit(1)
+		}
+		return err
 	case "list":
 		return checkList()
 	case "history":
@@ -95,7 +104,7 @@ func checkRun() error {
 	fmt.Println()
 
 	if anyFail {
-		os.Exit(1)
+		return errChecksFailed
 	}
 	return nil
 }
