@@ -31,10 +31,14 @@ while true:
     1. Check for tickets in `in_review` status
     2. For each:
        a. Update status: gt agent status reviewer working --issue <id>
-       b. Pull the PR, review against ticket spec
-       c. File GitHub review comments
-       d. If LGTM (no issues found): gt ticket status <id> reviewed
-          If changes requested: leave ticket in `in_review` (human/daemon handles repair)
+       b. Get PR number: gt ticket show <id>  (look for pr_number)
+       c. Pull the PR diff: gh pr view <pr_number> --diff
+          Review the diff against the ticket spec
+       d. File GitHub review:
+          If LGTM:              gh pr review <pr_number> --approve -b "LGTM"
+                                gt ticket status <id> reviewed
+          If changes needed:    gh pr review <pr_number> --request-changes -b "<summary>"
+                                gt ticket status <id> repairing
        e. Clear status: gt agent status reviewer idle
     3. Sleep 30 seconds
     4. Repeat
@@ -69,7 +73,14 @@ how to fix it, or don't comment.
 
 ```bash
 # Tickets
-gt ticket status <id> reviewed       # Mark as reviewed
+gt ticket show <id>                          # Get PR number and ticket spec
+gt ticket status <id> reviewed               # LGTM: mark as reviewed
+gt ticket status <id> repairing              # Changes needed: send to repair
+
+# GitHub PR review
+gh pr view <pr_number> --diff                # View the PR diff
+gh pr review <pr_number> --approve -b "..."  # Approve
+gh pr review <pr_number> --request-changes -b "..."  # Request changes
 
 # Agent status
 gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket
