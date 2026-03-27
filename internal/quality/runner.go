@@ -49,7 +49,7 @@ func (r *Runner) runCheck(cfg config.QualityCheckConfig) Result {
 	result.Output = string(out)
 
 	if cfg.Type == string(CheckTypeMetric) {
-		return r.evalMetric(result, cfg.Threshold, out, err)
+		return r.evalMetric(result, cfg.Threshold, cfg.WarnThreshold, out, err)
 	}
 	return r.evalPassFail(result, err)
 }
@@ -68,7 +68,7 @@ func (r *Runner) evalPassFail(result Result, err error) Result {
 	return result
 }
 
-func (r *Runner) evalMetric(result Result, threshold float64, out []byte, err error) Result {
+func (r *Runner) evalMetric(result Result, threshold, warnThreshold float64, out []byte, err error) Result {
 	if err != nil {
 		result.Status = StatusError
 		result.Err = fmt.Sprintf("could not run check: %v", err)
@@ -84,9 +84,12 @@ func (r *Runner) evalMetric(result Result, threshold float64, out []byte, err er
 	}
 
 	result.Value = &val
-	if val >= threshold {
+	switch {
+	case val >= threshold:
 		result.Status = StatusPass
-	} else {
+	case warnThreshold > 0 && val >= warnThreshold:
+		result.Status = StatusWarn
+	default:
 		result.Status = StatusFail
 	}
 	return result

@@ -95,3 +95,45 @@ func TestQualityCheckConfig_zeroThreshold(t *testing.T) {
 		t.Errorf("expected zero threshold, got %f", check.Threshold)
 	}
 }
+
+func TestQualityCheckConfig_warnThreshold_roundTrip(t *testing.T) {
+	check := QualityCheckConfig{
+		Name:          "coverage",
+		Command:       "cover.sh",
+		Type:          "metric",
+		Threshold:     80.0,
+		WarnThreshold: 70.0,
+		Enabled:       true,
+	}
+	data, err := json.Marshal(check)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got QualityCheckConfig
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.WarnThreshold != 70.0 {
+		t.Errorf("expected WarnThreshold=70.0 after round-trip, got %f", got.WarnThreshold)
+	}
+	if got.Threshold != 80.0 {
+		t.Errorf("expected Threshold=80.0 after round-trip, got %f", got.Threshold)
+	}
+}
+
+func TestQualityCheckConfig_warnThreshold_zeroDefault(t *testing.T) {
+	// WarnThreshold should default to zero when not specified.
+	check := QualityCheckConfig{
+		Name:      "coverage",
+		Command:   "cover.sh",
+		Type:      "metric",
+		Threshold: 80.0,
+		Enabled:   true,
+	}
+	data, _ := json.Marshal(check)
+	var got QualityCheckConfig
+	json.Unmarshal(data, &got)
+	if got.WarnThreshold != 0 {
+		t.Errorf("expected zero WarnThreshold, got %f", got.WarnThreshold)
+	}
+}

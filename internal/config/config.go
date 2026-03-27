@@ -37,11 +37,12 @@ type DoltConfig struct {
 
 // QualityCheckConfig defines a single quality gate command and how to evaluate it.
 type QualityCheckConfig struct {
-	Name      string  `json:"name"`
-	Command   string  `json:"command"`
-	Type      string  `json:"type"`      // "pass_fail" or "metric"
-	Threshold float64 `json:"threshold"` // minimum passing value for "metric" checks
-	Enabled   bool    `json:"enabled"`
+	Name          string  `json:"name"`
+	Command       string  `json:"command"`
+	Type          string  `json:"type"`           // "pass_fail" or "metric"
+	Threshold     float64 `json:"threshold"`      // minimum passing value for "metric" checks
+	WarnThreshold float64 `json:"warn_threshold"` // warn when value >= WarnThreshold but < Threshold; ignored when zero
+	Enabled       bool    `json:"enabled"`
 }
 
 // QualityConfig holds all project-level quality check settings.
