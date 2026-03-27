@@ -67,6 +67,11 @@ When context reaches the threshold (or you're instructed):
 gt ticket status <id> <status>
 gt pr create <ticket_id>
 
+# Quality gates
+gt check run                         # Run all configured checks (exits non-zero on fail)
+gt check list                        # Show latest result per check
+gt check history [<name>] [--limit]  # Show result history
+
 # Agent
 gt agent status <name> <status>
 

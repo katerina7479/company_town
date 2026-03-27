@@ -94,6 +94,10 @@ gh pr review <pr_number> --comment -b "<summary of issues>"           # Request 
 gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket
 gt agent status reviewer idle                  # Mark yourself idle when done
 
+# Quality (use when reviewing to check project health)
+gt check list                        # Show latest result per check
+gt check history [<name>] [--limit]  # Show result history
+
 # System
 gt status                            # System overview
 ```
@@ -123,5 +127,8 @@ gt agent status <name> <idle|working|dead> [--issue <id>]
 gt prole create <name>
 gt prole reset <name>
 gt pr create <ticket_id>
+gt check run
+gt check list
+gt check history [<check-name>] [--limit <n>]
 gt status
 ```
