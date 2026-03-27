@@ -32,8 +32,10 @@ var (
 		"draft":       lipgloss.NewStyle().Foreground(lipgloss.Color("8")),  // dark gray
 		"open":        lipgloss.NewStyle().Foreground(lipgloss.Color("4")),  // blue
 		"in_progress": lipgloss.NewStyle().Foreground(lipgloss.Color("6")),  // cyan
-		"in_review":   lipgloss.NewStyle().Foreground(lipgloss.Color("5")),  // magenta
-		"reviewed":    lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // bright magenta
+		"in_review":    lipgloss.NewStyle().Foreground(lipgloss.Color("5")),  // magenta
+		"under_review": lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // bright magenta
+		"pr_open":      lipgloss.NewStyle().Foreground(lipgloss.Color("10")), // bright green
+		"reviewed":     lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // bright magenta
 		"repairing":   lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // red
 		"closed":      lipgloss.NewStyle().Foreground(lipgloss.Color("8")),  // dark gray
 	}

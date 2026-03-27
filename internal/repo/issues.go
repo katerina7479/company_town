@@ -24,7 +24,8 @@ type Issue struct {
 
 // Valid issue statuses.
 var ValidStatuses = []string{
-	"draft", "open", "in_progress", "in_review",
+	"draft", "open", "in_progress",
+	"in_review", "under_review", "pr_open",
 	"reviewed", "repairing", "closed",
 }
 
@@ -251,6 +252,7 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 		        i.created_at, i.updated_at, i.closed_at
 		 FROM issues i
 		 WHERE i.status = 'open'
+		   AND i.issue_type != 'epic'
 		   AND NOT EXISTS (
 		     SELECT 1 FROM issue_dependencies d
 		     JOIN issues dep ON dep.id = d.depends_on_id

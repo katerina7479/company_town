@@ -35,6 +35,21 @@ type DoltConfig struct {
 	Database string `json:"database"`
 }
 
+// QualityCheckConfig defines a single quality gate command and how to evaluate it.
+type QualityCheckConfig struct {
+	Name      string  `json:"name"`
+	Command   string  `json:"command"`
+	Type      string  `json:"type"`      // "pass_fail" or "metric"
+	Threshold float64 `json:"threshold"` // minimum passing value for "metric" checks
+	Enabled   bool    `json:"enabled"`
+}
+
+// QualityConfig holds all project-level quality check settings.
+type QualityConfig struct {
+	Enabled bool                 `json:"enabled"`
+	Checks  []QualityCheckConfig `json:"checks"`
+}
+
 type Config struct {
 	Version                 string       `json:"version"`
 	TicketPrefix            string       `json:"ticket_prefix"`
@@ -44,9 +59,10 @@ type Config struct {
 	LogDir                  string       `json:"log_dir"`
 	MaxProles               int          `json:"max_proles"`
 	Agents                  AgentsConfig `json:"agents"`
-	PollingIntervalSeconds  int          `json:"polling_interval_seconds"`
-	NudgeCooldownSeconds    int          `json:"nudge_cooldown_seconds"`
-	ContextHandoffThreshold float64      `json:"context_handoff_threshold"`
+	PollingIntervalSeconds  int           `json:"polling_interval_seconds"`
+	NudgeCooldownSeconds    int           `json:"nudge_cooldown_seconds"`
+	ContextHandoffThreshold float64       `json:"context_handoff_threshold"`
+	Quality                 QualityConfig `json:"quality"`
 }
 
 // CompanyTownDir returns the .company_town directory path for a project root.
@@ -103,6 +119,10 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		PollingIntervalSeconds:  30,
 		NudgeCooldownSeconds:    300,
 		ContextHandoffThreshold: 0.80,
+		Quality: QualityConfig{
+			Enabled: true,
+			Checks:  []QualityCheckConfig{},
+		},
 	}
 }
 
