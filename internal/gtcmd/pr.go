@@ -75,12 +75,11 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 
 	prBody := strings.Join(bodyParts, "\n")
 
-	// Create PR with gh
+	// Create PR with gh — capture stdout to extract the URL, pipe stderr to terminal.
 	ghCmd := exec.Command("gh", "pr", "create",
 		"--title", prTitle,
 		"--body", prBody,
 	)
-	ghCmd.Stdout = os.Stdout
 	ghCmd.Stderr = os.Stderr
 	out, err := ghCmd.Output()
 	if err != nil {
@@ -88,7 +87,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	prURL := strings.TrimSpace(string(out))
-	fmt.Printf("PR created: %s\n", prURL)
+	fmt.Println(prURL)
 
 	// Extract PR number from URL (last path segment)
 	parts := strings.Split(prURL, "/")
