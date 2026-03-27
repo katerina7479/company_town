@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"strconv"
@@ -266,7 +267,8 @@ func TestHandlePRClosed_noopIfAlreadyClosed(t *testing.T) {
 
 func TestHandleInReviewTickets_nudgesReviewerPerTicket(t *testing.T) {
 	reviewerSession := "ct-reviewer"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{reviewerSession})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{reviewerSession})
+	agents.Register("reviewer", "reviewer", nil)
 
 	id, _ := issues.Create("Add auth", "task", nil, nil)
 	issues.UpdateStatus(id, "in_review")
@@ -286,9 +288,10 @@ func TestHandleInReviewTickets_nudgesReviewerPerTicket(t *testing.T) {
 }
 
 func TestHandleInReviewTickets_batchesMultipleTickets(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	agents.Register("reviewer", "reviewer", nil)
 
-	// Two in_review tickets with PRs — should produce ONE batched message
+	// Two in_review tickets with PRs — one reviewer → ONE batched message
 	id1, _ := issues.Create("Ticket A", "task", nil, nil)
 	issues.UpdateStatus(id1, "in_review")
 	issues.SetPR(id1, 10)
@@ -318,7 +321,8 @@ func TestHandleInReviewTickets_noNudgeWhenEmpty(t *testing.T) {
 }
 
 func TestHandleInReviewTickets_noNudgeWhenReviewerNotRunning(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+	d, issues, agents, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+	agents.Register("reviewer", "reviewer", nil)
 
 	id, _ := issues.Create("Add auth", "task", nil, nil)
 	issues.UpdateStatus(id, "in_review")
@@ -327,12 +331,13 @@ func TestHandleInReviewTickets_noNudgeWhenReviewerNotRunning(t *testing.T) {
 	d.handleInReviewTickets()
 
 	if len(*sent) != 0 {
-		t.Errorf("expected 0 nudges (reviewer not running), got %d", len(*sent))
+		t.Errorf("expected 0 nudges (reviewer session not active), got %d", len(*sent))
 	}
 }
 
 func TestHandleInReviewTickets_skipsTicketsWithoutPR(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	agents.Register("reviewer", "reviewer", nil)
 
 	id, _ := issues.Create("No PR yet", "task", nil, nil)
 	issues.UpdateStatus(id, "in_review")
@@ -346,7 +351,8 @@ func TestHandleInReviewTickets_skipsTicketsWithoutPR(t *testing.T) {
 }
 
 func TestHandleInReviewTickets_mixedTickets(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	agents.Register("reviewer", "reviewer", nil)
 
 	// in_review with PR — should nudge
 	id1, _ := issues.Create("Ready for review", "task", nil, nil)
@@ -366,6 +372,108 @@ func TestHandleInReviewTickets_mixedTickets(t *testing.T) {
 
 	if len(*sent) != 1 {
 		t.Errorf("expected 1 nudge, got %d", len(*sent))
+	}
+}
+
+// --- Multi-reviewer load balancing tests ---
+
+func TestHandleInReviewTickets_distributesTwoTicketsAcrossTwoReviewers(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t,
+		[]string{"ct-reviewer-1", "ct-reviewer-2"})
+	agents.Register("reviewer-1", "reviewer", nil)
+	agents.Register("reviewer-2", "reviewer", nil)
+
+	id1, _ := issues.Create("Ticket A", "task", nil, nil)
+	issues.UpdateStatus(id1, "in_review")
+	issues.SetPR(id1, 10)
+
+	id2, _ := issues.Create("Ticket B", "task", nil, nil)
+	issues.UpdateStatus(id2, "in_review")
+	issues.SetPR(id2, 11)
+
+	d.handleInReviewTickets()
+
+	// Two reviewers → two messages, one ticket each
+	if len(*sent) != 2 {
+		t.Fatalf("expected 2 nudges (one per reviewer), got %d", len(*sent))
+	}
+
+	// Each message should contain exactly one ticket
+	msgs := map[string]string{
+		(*sent)[0].session: (*sent)[0].msg,
+		(*sent)[1].session: (*sent)[1].msg,
+	}
+	r1msg := msgs["ct-reviewer-1"]
+	r2msg := msgs["ct-reviewer-2"]
+
+	if r1msg == "" || r2msg == "" {
+		t.Fatalf("expected messages to ct-reviewer-1 and ct-reviewer-2, got sessions: %s, %s",
+			(*sent)[0].session, (*sent)[1].session)
+	}
+
+	// First ticket (id1/PR#10) goes to reviewer-1, second (id2/PR#11) to reviewer-2
+	if !containsAll(r1msg, "NC-"+itoa(id1), "PR #10") {
+		t.Errorf("reviewer-1 expected ticket %d PR #10, got: %q", id1, r1msg)
+	}
+	if !containsAll(r2msg, "NC-"+itoa(id2), "PR #11") {
+		t.Errorf("reviewer-2 expected ticket %d PR #11, got: %q", id2, r2msg)
+	}
+}
+
+func TestHandleInReviewTickets_threeTicketsTwoReviewers(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t,
+		[]string{"ct-reviewer-1", "ct-reviewer-2"})
+	agents.Register("reviewer-1", "reviewer", nil)
+	agents.Register("reviewer-2", "reviewer", nil)
+
+	for i, pr := range []int{10, 11, 12} {
+		id, _ := issues.Create(fmt.Sprintf("Ticket %d", i), "task", nil, nil)
+		issues.UpdateStatus(id, "in_review")
+		issues.SetPR(id, pr)
+	}
+
+	d.handleInReviewTickets()
+
+	// reviewer-1 gets tickets 0,2 (indices 0%2=0, 2%2=0); reviewer-2 gets ticket 1
+	if len(*sent) != 2 {
+		t.Fatalf("expected 2 nudges (one per reviewer), got %d", len(*sent))
+	}
+}
+
+func TestHandleInReviewTickets_skipsDeadReviewer(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t,
+		[]string{"ct-reviewer-1", "ct-reviewer-2"})
+	agents.Register("reviewer-1", "reviewer", nil)
+	agents.Register("reviewer-2", "reviewer", nil)
+	agents.UpdateStatus("reviewer-2", "dead")
+
+	id, _ := issues.Create("Add feature", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 5)
+
+	d.handleInReviewTickets()
+
+	// Only reviewer-1 is active
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge (dead reviewer skipped), got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-reviewer-1" {
+		t.Errorf("expected nudge to ct-reviewer-1, got %q", (*sent)[0].session)
+	}
+}
+
+func TestHandleInReviewTickets_noNudgeWhenNoReviewersRegistered(t *testing.T) {
+	// No reviewer agents registered — even if a session named ct-reviewer exists
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	id, _ := issues.Create("Ticket", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 1)
+
+	d.handleInReviewTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (no reviewer agents registered), got %d", len(*sent))
 	}
 }
 
@@ -630,7 +738,8 @@ func withCooldown(d *Daemon, cooldown time.Duration, fixedNow time.Time) {
 }
 
 func TestCooldown_suppressesRepeatNudge(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	agents.Register("reviewer", "reviewer", nil)
 
 	id, _ := issues.Create("Add feature", "task", nil, nil)
 	issues.UpdateStatus(id, "in_review")
@@ -653,7 +762,8 @@ func TestCooldown_suppressesRepeatNudge(t *testing.T) {
 }
 
 func TestCooldown_allowsNudgeAfterExpiry(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	agents.Register("reviewer", "reviewer", nil)
 
 	id, _ := issues.Create("Add feature", "task", nil, nil)
 	issues.UpdateStatus(id, "in_review")
@@ -681,7 +791,8 @@ func TestCooldown_allowsNudgeAfterExpiry(t *testing.T) {
 func TestCooldown_independentPerHandler(t *testing.T) {
 	conductorSession := "ct-conductor"
 	reviewerSession := "ct-reviewer"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{conductorSession, reviewerSession})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{conductorSession, reviewerSession})
+	agents.Register("reviewer", "reviewer", nil)
 
 	// Repairing ticket for conductor
 	id1, _ := issues.Create("Fix bug", "task", nil, nil)
@@ -711,7 +822,8 @@ func TestCooldown_independentPerHandler(t *testing.T) {
 }
 
 func TestCooldown_disabledWhenZero(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	agents.Register("reviewer", "reviewer", nil)
 	// nudgeCooldown is 0 (default in test helper) — should always nudge
 
 	id, _ := issues.Create("Add feature", "task", nil, nil)

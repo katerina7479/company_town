@@ -227,7 +227,7 @@ func (d *Daemon) handleDraftTickets() {
 	}
 }
 
-// handleInReviewTickets prompts Reviewer to review tickets in in_review status.
+// handleInReviewTickets distributes in_review tickets across all active reviewer agents.
 func (d *Daemon) handleInReviewTickets() {
 	reviews, err := d.issues.List("in_review")
 	if err != nil {
@@ -237,11 +237,6 @@ func (d *Daemon) handleInReviewTickets() {
 
 	if len(reviews) == 0 {
 		return
-	}
-
-	reviewerSession := session.SessionName("reviewer")
-	if !d.sessionExists(reviewerSession) {
-		return // Reviewer not running
 	}
 
 	// Collect only tickets that have a PR number.
@@ -255,25 +250,78 @@ func (d *Daemon) handleInReviewTickets() {
 		return
 	}
 
+	activeSessions := d.activeReviewerSessions()
+	if len(activeSessions) == 0 {
+		return
+	}
+
 	if !d.shouldNudge("in_review") {
 		return
 	}
 
-	parts := make([]string, len(withPR))
+	// Distribute tickets round-robin across active reviewers.
+	perReviewer := make([][]string, len(activeSessions))
 	for i, issue := range withPR {
-		parts[i] = fmt.Sprintf("%s-%d (PR #%d)", d.cfg.TicketPrefix, issue.ID, issue.PRNumber.Int64)
+		bucket := i % len(activeSessions)
+		perReviewer[bucket] = append(perReviewer[bucket],
+			fmt.Sprintf("%s-%d (PR #%d)", d.cfg.TicketPrefix, issue.ID, issue.PRNumber.Int64))
 	}
 
-	msg := fmt.Sprintf("%d ticket(s) ready for review: %s. "+
-		"Review each PR and file comments.",
-		len(withPR), strings.Join(parts, ", "))
-
-	if err := d.sendKeys(reviewerSession, msg); err != nil {
-		d.logger.Printf("error nudging Reviewer: %v", err)
-	} else {
-		d.logger.Printf("nudged Reviewer: %d in_review ticket(s)", len(withPR))
+	nudged := 0
+	for i, reviewerSession := range activeSessions {
+		if len(perReviewer[i]) == 0 {
+			continue
+		}
+		msg := fmt.Sprintf("%d ticket(s) ready for review: %s. "+
+			"Review each PR and file comments.",
+			len(perReviewer[i]), strings.Join(perReviewer[i], ", "))
+		if err := d.sendKeys(reviewerSession, msg); err != nil {
+			d.logger.Printf("error nudging reviewer %s: %v", reviewerSession, err)
+		} else {
+			nudged++
+		}
+	}
+	if nudged > 0 {
+		d.logger.Printf("nudged %d reviewer(s): %d in_review ticket(s)", nudged, len(withPR))
 		d.recordNudge("in_review")
 	}
+}
+
+// activeReviewerSessions returns session names for all non-dead reviewer agents
+// whose tmux sessions are currently active, ordered by agent name.
+func (d *Daemon) activeReviewerSessions() []string {
+	allAgents, err := d.agents.ListAll()
+	if err != nil {
+		d.logger.Printf("error listing agents for reviewer sessions: %v", err)
+		return nil
+	}
+	var sessions []string
+	for _, a := range allAgents {
+		if a.Type != "reviewer" || a.Status == "dead" {
+			continue
+		}
+		s := session.SessionName(a.Name)
+		if d.sessionExists(s) {
+			sessions = append(sessions, s)
+		}
+	}
+	return sessions
+}
+
+// reviewerAgentNames returns a set of all registered reviewer agent names.
+func (d *Daemon) reviewerAgentNames() map[string]bool {
+	allAgents, err := d.agents.ListAll()
+	if err != nil {
+		d.logger.Printf("error listing reviewer agent names: %v", err)
+		return nil
+	}
+	names := make(map[string]bool)
+	for _, a := range allAgents {
+		if a.Type == "reviewer" {
+			names[a.Name] = true
+		}
+	}
+	return names
 }
 
 // handleRepairingTickets prompts the Conductor to assign a prole to fix review comments.
@@ -422,9 +470,10 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		return
 	}
 
-	// Look for human comments (not from bots or Reviewer agent)
+	// Look for human comments (not from bots or any registered reviewer agent).
+	reviewerNames := d.reviewerAgentNames()
 	for _, c := range comments {
-		if c.IsBot || c.Author == "reviewer" {
+		if c.IsBot || reviewerNames[c.Author] {
 			continue
 		}
 
