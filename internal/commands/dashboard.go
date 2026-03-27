@@ -32,8 +32,10 @@ var (
 		"draft":       lipgloss.NewStyle().Foreground(lipgloss.Color("8")),  // dark gray
 		"open":        lipgloss.NewStyle().Foreground(lipgloss.Color("4")),  // blue
 		"in_progress": lipgloss.NewStyle().Foreground(lipgloss.Color("6")),  // cyan
-		"in_review":   lipgloss.NewStyle().Foreground(lipgloss.Color("5")),  // magenta
-		"reviewed":    lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // bright magenta
+		"in_review":    lipgloss.NewStyle().Foreground(lipgloss.Color("5")),  // magenta
+		"under_review": lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // bright magenta
+		"pr_open":      lipgloss.NewStyle().Foreground(lipgloss.Color("10")), // bright green
+		"reviewed":     lipgloss.NewStyle().Foreground(lipgloss.Color("13")), // bright magenta
 		"repairing":   lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // red
 		"closed":      lipgloss.NewStyle().Foreground(lipgloss.Color("8")),  // dark gray
 	}
@@ -46,6 +48,28 @@ func colorStatus(status string) string {
 		return s.Render(status)
 	}
 	return status
+}
+
+// formatDuration formats a duration as a compact human-readable string.
+// e.g. "3m", "2h 15m", "4d 3h"
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	default:
+		if minutes == 0 {
+			return "<1m"
+		}
+		return fmt.Sprintf("%dm", minutes)
+	}
 }
 
 // dashboardData holds a snapshot fetched from the database.
@@ -181,7 +205,11 @@ func (m dashboardModel) renderAgents(width, height int) string {
 			if a.CurrentIssue.Valid {
 				issue = fmt.Sprintf(" → nc-%d", a.CurrentIssue.Int64)
 			}
-			sb.WriteString(fmt.Sprintf("%s %s%s\n", name, status, issue))
+			age := ""
+			if a.StatusChangedAt.Valid {
+				age = footerStyle.Render(" (" + formatDuration(time.Since(a.StatusChangedAt.Time)) + ")")
+			}
+			sb.WriteString(fmt.Sprintf("%s %s%s%s\n", name, status, issue, age))
 		}
 	}
 
@@ -222,18 +250,20 @@ func renderIssueNode(sb *strings.Builder, node *repo.IssueNode, depth int, width
 	idStr := fmt.Sprintf("%-6d", node.ID)
 	statusStr := fmt.Sprintf("[%-11s]", node.Status)
 	coloredStatus := colorStatus(node.Status)
+	age := footerStyle.Render("(" + formatDuration(time.Since(node.UpdatedAt)) + ")")
+	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
 
 	// Truncate title so the row fits inside the panel.
-	// prefix + space + id + space + status + space + title
-	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1
+	// prefix + space + id + space + status + space + age + space + title
+	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + len(ageRaw) + 1
 	titleMax := width - fixedLen - 2
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	sb.WriteString(fmt.Sprintf("%s %s %s %s\n",
-		prefix, idStr, coloredStatus, title,
+	sb.WriteString(fmt.Sprintf("%s %s %s %s %s\n",
+		prefix, idStr, coloredStatus, age, title,
 	))
 
 	for _, child := range node.Children {

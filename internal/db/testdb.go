@@ -34,8 +34,9 @@ CREATE TABLE IF NOT EXISTS agents (
   current_issue INTEGER,
   tmux_session  TEXT,
   worktree_path TEXT,
-  time_created  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  time_ended    DATETIME,
+  time_created       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  time_ended         DATETIME,
+  status_changed_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (current_issue) REFERENCES issues(id)
 );
 
@@ -45,6 +46,16 @@ CREATE TABLE IF NOT EXISTS issue_dependencies (
   PRIMARY KEY (issue_id, depends_on_id),
   FOREIGN KEY (issue_id) REFERENCES issues(id),
   FOREIGN KEY (depends_on_id) REFERENCES issues(id)
+);
+
+CREATE TABLE IF NOT EXISTS quality_metrics (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_name TEXT     NOT NULL,
+  status     TEXT     NOT NULL,
+  output     TEXT,
+  value      REAL,
+  run_at     DATETIME NOT NULL,
+  error      TEXT
 );
 `
 

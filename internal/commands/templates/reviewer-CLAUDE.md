@@ -14,10 +14,16 @@ You review PRs for tickets entering `in_review`. Your reviews are advisory —
 only human comments on PRs trigger the repair flow. Your job is to catch
 issues before the human looks at it.
 
+The review pipeline has three stages:
+- **`in_review`** — PR submitted, waiting for you to pick up
+- **`under_review`** — You are actively reviewing
+- **`pr_open`** — AI review complete, ready for human review on GitHub
+
 1. **Monitor for `in_review` tickets** — Daemon prompts you
-2. **Review the PR** against the ticket spec
-3. **File GitHub review comments** — clear, actionable feedback
-4. **Do NOT implement fixes** — you review, you don't code
+2. **Claim the ticket** — move to `under_review` immediately
+3. **Review the PR** against the ticket spec
+4. **File GitHub review comments** — clear, actionable feedback
+5. **Do NOT implement fixes** — you review, you don't code
 
 ## On Start
 
@@ -30,16 +36,13 @@ issues before the human looks at it.
 while true:
     1. Check for tickets in `in_review` status
     2. For each:
-       a. Update status: gt agent status reviewer working --issue <id>
-       b. Get PR number: gt ticket show <id>  (look for pr_number)
-       c. Pull the PR diff: gh pr view <pr_number> --diff
-          Review the diff against the ticket spec
-       d. File GitHub review:
-          If LGTM:              gh pr review <pr_number> --approve -b "LGTM"
-                                gt ticket status <id> reviewed
-          If changes needed:    gh pr review <pr_number> --request-changes -b "<summary>"
-                                gt ticket status <id> repairing
-       e. Clear status: gt agent status reviewer idle
+       a. Claim: gt ticket status <id> under_review
+       b. Update agent: gt agent status reviewer working --issue <id>
+       c. Pull the PR, review against ticket spec
+       d. File GitHub review comments
+       e. If approved:        gt ticket status <id> pr_open
+          If changes needed:  gt ticket status <id> repairing
+       f. Clear status: gt agent status reviewer idle
     3. Sleep 30 seconds
     4. Repeat
 ```
@@ -73,14 +76,9 @@ how to fix it, or don't comment.
 
 ```bash
 # Tickets
-gt ticket show <id>                          # Get PR number and ticket spec
-gt ticket status <id> reviewed               # LGTM: mark as reviewed
-gt ticket status <id> repairing              # Changes needed: send to repair
-
-# GitHub PR review
-gh pr view <pr_number> --diff                # View the PR diff
-gh pr review <pr_number> --approve -b "..."  # Approve
-gh pr review <pr_number> --request-changes -b "..."  # Request changes
+gt ticket status <id> under_review   # Claim: you are reviewing
+gt ticket status <id> pr_open        # Approved: ready for human review
+gt ticket status <id> repairing      # Changes requested
 
 # Agent status
 gt agent status reviewer working --issue <id>  # Mark yourself working on a ticket
