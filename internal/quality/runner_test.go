@@ -40,6 +40,17 @@ func metricCheck(name, command string, threshold float64) config.QualityCheckCon
 	}
 }
 
+func metricCheckWithWarn(name, command string, threshold, warnThreshold float64) config.QualityCheckConfig {
+	return config.QualityCheckConfig{
+		Name:          name,
+		Command:       command,
+		Type:          string(CheckTypeMetric),
+		Threshold:     threshold,
+		WarnThreshold: warnThreshold,
+		Enabled:       true,
+	}
+}
+
 // --- pass_fail tests ---
 
 func TestRunner_PassFail_pass(t *testing.T) {
@@ -201,6 +212,51 @@ func TestRunner_Metric_commandFails(t *testing.T) {
 
 	if baseline.Results[0].Status != StatusError {
 		t.Errorf("expected StatusError when metric command fails, got %q", baseline.Results[0].Status)
+	}
+}
+
+// --- warn threshold tests ---
+
+func TestRunner_Metric_warn(t *testing.T) {
+	// Value between WarnThreshold and Threshold → StatusWarn
+	r := newTestRunner("echo 75.0")
+	baseline := r.Run([]config.QualityCheckConfig{metricCheckWithWarn("coverage", "cmd", 80.0, 70.0)})
+
+	res := baseline.Results[0]
+	if res.Status != StatusWarn {
+		t.Errorf("expected StatusWarn for 75.0 in [70.0, 80.0), got %q", res.Status)
+	}
+	if res.Value == nil || *res.Value != 75.0 {
+		t.Errorf("expected Value=75.0, got %v", res.Value)
+	}
+}
+
+func TestRunner_Metric_warnExactlyAtWarnThreshold(t *testing.T) {
+	r := newTestRunner("echo 70.0")
+	baseline := r.Run([]config.QualityCheckConfig{metricCheckWithWarn("coverage", "cmd", 80.0, 70.0)})
+
+	if baseline.Results[0].Status != StatusWarn {
+		t.Errorf("expected StatusWarn at WarnThreshold, got %q", baseline.Results[0].Status)
+	}
+}
+
+func TestRunner_Metric_warnZero_noWarn(t *testing.T) {
+	// WarnThreshold=0 (unset) — value below Threshold should be StatusFail, not StatusWarn
+	r := newTestRunner("echo 75.0")
+	baseline := r.Run([]config.QualityCheckConfig{metricCheck("coverage", "cmd", 80.0)})
+
+	if baseline.Results[0].Status != StatusFail {
+		t.Errorf("expected StatusFail when WarnThreshold=0 and value < Threshold, got %q", baseline.Results[0].Status)
+	}
+}
+
+func TestRunner_Metric_aboveThreshold_notWarn(t *testing.T) {
+	// Value >= Threshold → StatusPass even when WarnThreshold is set
+	r := newTestRunner("echo 85.0")
+	baseline := r.Run([]config.QualityCheckConfig{metricCheckWithWarn("coverage", "cmd", 80.0, 70.0)})
+
+	if baseline.Results[0].Status != StatusPass {
+		t.Errorf("expected StatusPass for 85.0 >= 80.0, got %q", baseline.Results[0].Status)
 	}
 }
 
