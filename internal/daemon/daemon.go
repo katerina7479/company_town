@@ -29,9 +29,10 @@ type Daemon struct {
 	sendKeys      func(session, msg string) error
 	sessionExists func(session string) bool
 	resetWorktree func(name string) error
-	lastNudged    map[string]time.Time
-	nudgeCooldown time.Duration
-	nowFn         func() time.Time
+	lastNudged      map[string]time.Time
+	lastNudgeDigest map[string]string // hash of ticket IDs from last nudge per key
+	nudgeCooldown   time.Duration
+	nowFn           func() time.Time
 
 	// Quality baseline
 	runQualityBaseline  func() error
@@ -64,7 +65,8 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		resetWorktree: func(name string) error {
 			return prole.Reset(name, cfg, repo.NewAgentRepo(db))
 		},
-		lastNudged:    make(map[string]time.Time),
+		lastNudged:      make(map[string]time.Time),
+		lastNudgeDigest: make(map[string]string),
 		nudgeCooldown: time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
 		nowFn:         time.Now,
 		runQualityBaseline: func() error {
@@ -136,9 +138,46 @@ func (d *Daemon) shouldNudge(key string) bool {
 	return d.nowFn().Sub(last) >= d.nudgeCooldown
 }
 
-// recordNudge records the current time as the last nudge for key.
-func (d *Daemon) recordNudge(key string) {
+// isAgentWorking returns true if the named agent has status "working".
+// Used to suppress nudges to agents that are already actively processing.
+func (d *Daemon) isAgentWorking(name string) bool {
+	agent, err := d.agents.Get(name)
+	if err != nil {
+		return false // agent not found — allow nudge
+	}
+	return agent.Status == "working"
+}
+
+// recordNudge records the current time and ticket digest for key.
+func (d *Daemon) recordNudge(key, digest string) {
 	d.lastNudged[key] = d.nowFn()
+	d.lastNudgeDigest[key] = digest
+}
+
+// digestChanged returns true if the given digest differs from the last recorded one for key.
+func (d *Daemon) digestChanged(key, digest string) bool {
+	prev, ok := d.lastNudgeDigest[key]
+	if !ok {
+		return true
+	}
+	return prev != digest
+}
+
+// ticketDigest builds a stable string from a sorted list of ticket IDs.
+func ticketDigest(ids []int) string {
+	sorted := make([]int, len(ids))
+	copy(sorted, ids)
+	// Simple insertion sort — nudge lists are small
+	for i := 1; i < len(sorted); i++ {
+		for j := i; j > 0 && sorted[j-1] > sorted[j]; j-- {
+			sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
+		}
+	}
+	parts := make([]string, len(sorted))
+	for i, id := range sorted {
+		parts[i] = strconv.Itoa(id)
+	}
+	return strings.Join(parts, ",")
 }
 
 func (d *Daemon) poll() {
@@ -220,7 +259,17 @@ func (d *Daemon) handleOpenTickets() {
 		return // Conductor not running, nothing to do
 	}
 
-	if !d.shouldNudge("open") {
+	if d.isAgentWorking("conductor") {
+		return // Conductor is already working — don't pile on
+	}
+
+	ticketIDs := make([]int, len(unassigned))
+	for i, issue := range unassigned {
+		ticketIDs[i] = issue.ID
+	}
+	digest := ticketDigest(ticketIDs)
+
+	if !d.digestChanged("open", digest) || !d.shouldNudge("open") {
 		return
 	}
 
@@ -240,7 +289,7 @@ func (d *Daemon) handleOpenTickets() {
 	} else {
 		d.logger.Printf("nudged conductor: %d ready ticket(s) unassigned (%s)",
 			len(unassigned), strings.Join(ids, ", "))
-		d.recordNudge("open")
+		d.recordNudge("open", digest)
 	}
 }
 
@@ -261,7 +310,17 @@ func (d *Daemon) handleDraftTickets() {
 		return // Architect not running, nothing to do
 	}
 
-	if !d.shouldNudge("draft") {
+	if d.isAgentWorking("architect") {
+		return // Architect is already working — don't pile on
+	}
+
+	draftIDs := make([]int, len(drafts))
+	for i, issue := range drafts {
+		draftIDs[i] = issue.ID
+	}
+	digest := ticketDigest(draftIDs)
+
+	if !d.digestChanged("draft", digest) || !d.shouldNudge("draft") {
 		return
 	}
 
@@ -278,7 +337,7 @@ func (d *Daemon) handleDraftTickets() {
 		d.logger.Printf("error nudging architect: %v", err)
 	} else {
 		d.logger.Printf("nudged architect: %d draft ticket(s)", len(drafts))
-		d.recordNudge("draft")
+		d.recordNudge("draft", digest)
 	}
 }
 
@@ -305,12 +364,18 @@ func (d *Daemon) handleInReviewTickets() {
 		return
 	}
 
-	activeSessions := d.activeReviewerSessions()
+	activeSessions := d.nudgeableReviewerSessions()
 	if len(activeSessions) == 0 {
 		return
 	}
 
-	if !d.shouldNudge("in_review") {
+	reviewIDs := make([]int, len(withPR))
+	for i, issue := range withPR {
+		reviewIDs[i] = issue.ID
+	}
+	digest := ticketDigest(reviewIDs)
+
+	if !d.digestChanged("in_review", digest) || !d.shouldNudge("in_review") {
 		return
 	}
 
@@ -338,13 +403,13 @@ func (d *Daemon) handleInReviewTickets() {
 	}
 	if nudged > 0 {
 		d.logger.Printf("nudged %d reviewer(s): %d in_review ticket(s)", nudged, len(withPR))
-		d.recordNudge("in_review")
+		d.recordNudge("in_review", digest)
 	}
 }
 
-// activeReviewerSessions returns session names for all non-dead reviewer agents
-// whose tmux sessions are currently active, ordered by agent name.
-func (d *Daemon) activeReviewerSessions() []string {
+// nudgeableReviewerSessions returns session names for reviewer agents that are
+// alive, have an active tmux session, and are NOT already working.
+func (d *Daemon) nudgeableReviewerSessions() []string {
 	allAgents, err := d.agents.ListAll()
 	if err != nil {
 		d.logger.Printf("error listing agents for reviewer sessions: %v", err)
@@ -352,7 +417,7 @@ func (d *Daemon) activeReviewerSessions() []string {
 	}
 	var sessions []string
 	for _, a := range allAgents {
-		if a.Type != "reviewer" || a.Status == "dead" {
+		if a.Type != "reviewer" || a.Status == "dead" || a.Status == "working" {
 			continue
 		}
 		s := session.SessionName(a.Name)
@@ -396,7 +461,17 @@ func (d *Daemon) handleRepairingTickets() {
 		return // Conductor not running
 	}
 
-	if !d.shouldNudge("repairing") {
+	if d.isAgentWorking("conductor") {
+		return // Conductor is already working — don't pile on
+	}
+
+	repairIDs := make([]int, len(tickets))
+	for i, issue := range tickets {
+		repairIDs[i] = issue.ID
+	}
+	digest := ticketDigest(repairIDs)
+
+	if !d.digestChanged("repairing", digest) || !d.shouldNudge("repairing") {
 		return
 	}
 
@@ -417,7 +492,7 @@ func (d *Daemon) handleRepairingTickets() {
 		d.logger.Printf("error nudging Conductor for repairing tickets: %v", err)
 	} else {
 		d.logger.Printf("nudged Conductor: %d repairing ticket(s)", len(tickets))
-		d.recordNudge("repairing")
+		d.recordNudge("repairing", digest)
 	}
 }
 
