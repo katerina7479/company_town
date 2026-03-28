@@ -287,6 +287,10 @@ func Stop() error {
 		agentName := s[len(session.SessionPrefix):]
 
 		switch {
+		case agentName == "daemon":
+			session.Kill(s)
+			fmt.Printf("  stopped: %s\n", s)
+			continue
 		case agentName == "architect":
 			signalPath := filepath.Join(ctDir, "agents", "architect", "memory", "handoff_requested")
 			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
@@ -344,6 +348,9 @@ func Nuke() error {
 
 		if connErr == nil {
 			agentName := s[len(session.SessionPrefix):]
+			if agentName == "daemon" {
+				continue // daemon is not an agent; no DB record to update
+			}
 			agents := repo.NewAgentRepo(conn)
 			agents.UpdateStatus(agentName, "dead")
 		}
