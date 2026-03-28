@@ -1100,3 +1100,272 @@ func TestDigest_nudgesWhenTicketSetChanges(t *testing.T) {
 		t.Errorf("expected 2 nudges (ticket set changed + cooldown expired), got %d", len(*sent))
 	}
 }
+
+// --- Stuck agent detection tests ---
+
+func TestHandleStuckAgents_escalatesToMayor(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("flint", "prole", nil)
+	id, _ := issues.Create("Implement auth", "task", nil, nil)
+	agents.SetCurrentIssue("flint", &id)
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation message, got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-mayor" {
+		t.Errorf("expected message to ct-mayor, got %q", (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "flint", "ESCALATION") {
+		t.Errorf("escalation message missing expected content: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleStuckAgents_includesTicketInfo(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("granite", "prole", nil)
+	id, _ := issues.Create("Wire artisan command", "task", nil, nil)
+	agents.SetCurrentIssue("granite", &id)
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation message, got %d", len(*sent))
+	}
+	ticketRef := fmt.Sprintf("NC-%d", id)
+	if !strings.Contains((*sent)[0].msg, ticketRef) {
+		t.Errorf("expected ticket ref %q in message: %q", ticketRef, (*sent)[0].msg)
+	}
+}
+
+func TestHandleStuckAgents_noTicketInfoWhenUnassigned(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("slate", "prole", nil)
+	agents.UpdateStatus("slate", "working")
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation message, got %d", len(*sent))
+	}
+	if !strings.Contains((*sent)[0].msg, "no assigned ticket") {
+		t.Errorf("expected 'no assigned ticket' in message: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleStuckAgents_noEscalationWhenBelowThreshold(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("obsidian", "prole", nil)
+	id, _ := issues.Create("Some task", "task", nil, nil)
+	agents.SetCurrentIssue("obsidian", &id)
+
+	// Threshold is 2 hours but we only advance 30 minutes
+	d.stuckAgentThreshold = 2 * time.Hour
+	d.nowFn = func() time.Time { return time.Now().Add(30 * time.Minute) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (below threshold), got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckAgents_noEscalationWhenMayorNotRunning(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, nil)
+
+	agents.Register("quartz", "prole", nil)
+	id, _ := issues.Create("Some task", "task", nil, nil)
+	agents.SetCurrentIssue("quartz", &id)
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (Mayor not running), got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckAgents_skipsIdleAgents(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("idle-agent", "prole", nil)
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (agent is idle), got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckAgents_skipsDeadAgents(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("dead-agent", "prole", nil)
+	agents.UpdateStatus("dead-agent", "dead")
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (agent is dead), got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckAgents_disabledWhenThresholdZero(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("basalt", "prole", nil)
+	id, _ := issues.Create("Some task", "task", nil, nil)
+	agents.SetCurrentIssue("basalt", &id)
+
+	// stuckAgentThreshold defaults to 0 in test helper — feature disabled
+	d.nowFn = func() time.Time { return time.Now().Add(24 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (threshold=0 means disabled), got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckAgents_cooldownSuppressesRepeatEscalation(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("flint", "prole", nil)
+	id, _ := issues.Create("Some task", "task", nil, nil)
+	agents.SetCurrentIssue("flint", &id)
+
+	base := time.Now()
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nudgeCooldown = 1 * time.Hour
+	d.nowFn = func() time.Time { return base.Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation on first call, got %d", len(*sent))
+	}
+
+	// Same time: within cooldown — suppressed
+	d.handleStuckAgents()
+	if len(*sent) != 1 {
+		t.Errorf("expected no repeat escalation within cooldown, got %d total", len(*sent))
+	}
+}
+
+func TestHandleStuckAgents_cooldownIsPerAgent(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("agent-a", "prole", nil)
+	agents.Register("agent-b", "prole", nil)
+
+	idA, _ := issues.Create("Task A", "task", nil, nil)
+	idB, _ := issues.Create("Task B", "task", nil, nil)
+	agents.SetCurrentIssue("agent-a", &idA)
+	agents.SetCurrentIssue("agent-b", &idB)
+
+	base := time.Now()
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nudgeCooldown = 1 * time.Hour
+	d.nowFn = func() time.Time { return base.Add(2 * time.Hour) }
+
+	// Both agents escalated on first call
+	d.handleStuckAgents()
+	if len(*sent) != 2 {
+		t.Fatalf("expected 2 escalations (one per agent), got %d", len(*sent))
+	}
+
+	// Both suppressed by cooldown
+	d.handleStuckAgents()
+	if len(*sent) != 2 {
+		t.Errorf("expected no additional escalations within cooldown, got %d total", len(*sent))
+	}
+
+	// Advance past cooldown — both escalate again
+	d.nowFn = func() time.Time { return base.Add(4 * time.Hour) }
+	d.handleStuckAgents()
+	if len(*sent) != 4 {
+		t.Errorf("expected 4 total escalations after cooldown expiry, got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckAgents_skipsNullStatusChangedAt(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("creating test db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	cfg := &config.Config{
+		TicketPrefix: "NC",
+		ProjectRoot:  t.TempDir(),
+	}
+
+	agents := repo.NewAgentRepo(conn)
+	agents.Register("null-ts-agent", "prole", nil)
+	// Set status=working directly without setting status_changed_at, simulating
+	// an agent created before the status_changed_at column was added.
+	conn.Exec(`UPDATE agents SET status = 'working', status_changed_at = NULL WHERE name = 'null-ts-agent'`)
+
+	sessions := map[string]bool{"ct-mayor": true}
+	var sent []sentMessage
+
+	d := &Daemon{
+		cfg:             cfg,
+		issues:          repo.NewIssueRepo(conn),
+		agents:          agents,
+		logger:          log.New(io.Discard, "", 0),
+		stop:            make(chan struct{}),
+		sessionExists:   func(s string) bool { return sessions[s] },
+		sendKeys:        func(s, msg string) error { sent = append(sent, sentMessage{session: s, msg: msg}); return nil },
+		resetWorktree:   func(string) error { return nil },
+		lastNudged:      make(map[string]time.Time),
+		lastNudgeDigest: make(map[string]string),
+		stuckAgentThreshold: 30 * time.Minute,
+		nowFn:           func() time.Time { return time.Now().Add(24 * time.Hour) },
+	}
+
+	d.handleStuckAgents()
+
+	if len(sent) != 0 {
+		t.Errorf("expected 0 escalations for agent with NULL status_changed_at, got %d", len(sent))
+	}
+}
+
+func TestHandleStuckAgents_skipsMayor(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	// Mayor itself is working past the threshold
+	agents.Register("mayor", "mayor", nil)
+	id, _ := issues.Create("Some mayor task", "task", nil, nil)
+	agents.SetCurrentIssue("mayor", &id)
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (Mayor must not escalate itself), got %d", len(*sent))
+	}
+}
