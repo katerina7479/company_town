@@ -38,6 +38,17 @@ func main() {
 		} else {
 			err = commands.Architect()
 		}
+	case "artisan":
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty> [stop]")
+			os.Exit(1)
+		}
+		specialty := args[0]
+		if len(args) > 1 && args[1] == "stop" {
+			err = commands.ArtisanStop(specialty)
+		} else {
+			err = commands.Artisan(specialty)
+		}
 	case "janitor":
 		if len(args) > 0 && args[0] == "stop" {
 			err = commands.JanitorStop()
@@ -76,6 +87,8 @@ Commands:
   nuke                Immediate shutdown, no handoffs
   architect           Start the Architect agent
   architect stop      Signal Architect to write handoff and exit
+  artisan <specialty> Start an Artisan agent for the given specialty
+  artisan <specialty> stop  Signal Artisan to write handoff and exit
   janitor             Start the Janitor agent
   janitor stop        Signal Janitor to write handoff and exit
   attach <name>       Attach to a running agent session
