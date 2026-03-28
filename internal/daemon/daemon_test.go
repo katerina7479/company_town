@@ -69,6 +69,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		lastNudgeDigest:     make(map[string]string),
 		nudgeCooldown:       0, // disabled by default in tests
 		qualityInterval:     0, // disabled by default in tests
+		worktreeInterval:    0, // disabled by default in tests
 		nowFn:               time.Now,
 	}
 
@@ -1413,5 +1414,37 @@ func TestHandleStuckAgents_skipsMayor(t *testing.T) {
 
 	if len(*sent) != 0 {
 		t.Errorf("expected 0 escalations (Mayor must not escalate itself), got %d", len(*sent))
+	}
+}
+
+func TestHandleStaleWorktrees_respectsInterval(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.worktreeInterval = 5 * time.Minute
+
+	var calls int
+	d.pruneStaleWorktrees = func() error {
+		calls++
+		return nil
+	}
+
+	// First call: interval not elapsed — should run (zero time → always run first time)
+	d.handleStaleWorktrees()
+	if calls != 1 {
+		t.Fatalf("expected 1 call on first invocation, got %d", calls)
+	}
+
+	// Second call immediately: interval not elapsed — should NOT run
+	d.handleStaleWorktrees()
+	if calls != 1 {
+		t.Errorf("expected no call within interval, got %d", calls)
+	}
+
+	// Advance past interval
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleStaleWorktrees()
+	if calls != 2 {
+		t.Errorf("expected 2 calls after interval elapsed, got %d", calls)
 	}
 }
