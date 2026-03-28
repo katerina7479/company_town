@@ -62,13 +62,14 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
-		resetWorktree:      func(string) error { return nil },
-		runQualityBaseline: func() error { return nil },
-		lastNudged:         make(map[string]time.Time),
-		lastNudgeDigest:    make(map[string]string),
-		nudgeCooldown:      0, // disabled by default in tests
-		qualityInterval:    0, // disabled by default in tests
-		nowFn:              time.Now,
+		resetWorktree:       func(string) error { return nil },
+		runQualityBaseline:  func() error { return nil },
+		pruneStaleWorktrees: func() error { return nil },
+		lastNudged:          make(map[string]time.Time),
+		lastNudgeDigest:     make(map[string]string),
+		nudgeCooldown:       0, // disabled by default in tests
+		qualityInterval:     0, // disabled by default in tests
+		nowFn:               time.Now,
 	}
 
 	return d, issues, agents, &sent
@@ -1098,6 +1099,51 @@ func TestDigest_nudgesWhenTicketSetChanges(t *testing.T) {
 	d.handleRepairingTickets()
 	if len(*sent) != 2 {
 		t.Errorf("expected 2 nudges (ticket set changed + cooldown expired), got %d", len(*sent))
+	}
+}
+
+// --- Stale worktree pruning tests ---
+
+func TestHandleStaleWorktrees_callsPruneFunction(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.pruneStaleWorktrees = func() error {
+		calls++
+		return nil
+	}
+
+	d.handleStaleWorktrees()
+
+	if calls != 1 {
+		t.Errorf("expected pruneStaleWorktrees called once, got %d", calls)
+	}
+}
+
+func TestHandleStaleWorktrees_logsErrorWithoutPanicking(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	d.pruneStaleWorktrees = func() error {
+		return fmt.Errorf("git worktree remove failed")
+	}
+
+	// Should not panic
+	d.handleStaleWorktrees()
+}
+
+func TestHandleStaleWorktrees_calledEachPollCycle(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.pruneStaleWorktrees = func() error {
+		calls++
+		return nil
+	}
+
+	d.poll()
+
+	if calls != 1 {
+		t.Errorf("expected pruneStaleWorktrees called once per poll, got %d", calls)
 	}
 }
 

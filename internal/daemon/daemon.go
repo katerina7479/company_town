@@ -39,6 +39,9 @@ type Daemon struct {
 	runQualityBaseline  func() error
 	lastQualityBaseline time.Time
 	qualityInterval     time.Duration
+
+	// Stale worktree pruning
+	pruneStaleWorktrees func() error
 }
 
 // New creates a new Daemon.
@@ -75,6 +78,13 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 			return runAndPersistBaseline(runner, cfg.Quality.Checks, metrics, logger)
 		},
 		qualityInterval: time.Duration(cfg.Quality.BaselineIntervalSeconds) * time.Second,
+		pruneStaleWorktrees: func() error {
+			pruned, err := prole.PruneDeadWorktrees(cfg, repo.NewAgentRepo(db))
+			for _, name := range pruned {
+				logger.Printf("pruned stale worktree for dead prole %s", name)
+			}
+			return err
+		},
 	}, nil
 }
 
@@ -184,6 +194,7 @@ func ticketDigest(ids []int) string {
 
 func (d *Daemon) poll() {
 	d.handleDeadSessions()
+	d.handleStaleWorktrees()
 	d.handleDraftTickets()
 	d.handleOpenTickets()
 	d.handleInReviewTickets()
@@ -191,6 +202,14 @@ func (d *Daemon) poll() {
 	d.handlePREvents()
 	d.handleStuckAgents()
 	d.handleQualityBaseline()
+}
+
+// handleStaleWorktrees prunes git worktrees belonging to dead prole agents when they
+// are git-clean (no uncommitted changes, no unpushed commits).
+func (d *Daemon) handleStaleWorktrees() {
+	if err := d.pruneStaleWorktrees(); err != nil {
+		d.logger.Printf("error pruning stale worktrees: %v", err)
+	}
 }
 
 // handleStuckAgents detects working agents that have not changed status for longer than
