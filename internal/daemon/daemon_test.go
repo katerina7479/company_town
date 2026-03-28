@@ -65,6 +65,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		resetWorktree:      func(string) error { return nil },
 		runQualityBaseline: func() error { return nil },
 		lastNudged:         make(map[string]time.Time),
+		lastNudgeDigest:    make(map[string]string),
 		nudgeCooldown:      0, // disabled by default in tests
 		qualityInterval:    0, // disabled by default in tests
 		nowFn:              time.Now,
@@ -763,7 +764,7 @@ func TestCooldown_suppressesRepeatNudge(t *testing.T) {
 	}
 }
 
-func TestCooldown_allowsNudgeAfterExpiry(t *testing.T) {
+func TestCooldown_allowsNudgeAfterExpiry_withNewTickets(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
 	agents.Register("reviewer", "reviewer", nil)
 
@@ -780,13 +781,21 @@ func TestCooldown_allowsNudgeAfterExpiry(t *testing.T) {
 		t.Fatalf("expected 1 nudge on first call, got %d", len(*sent))
 	}
 
-	// Advance clock past cooldown
+	// Same tickets after cooldown — should NOT re-nudge (digest unchanged)
 	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleInReviewTickets()
+	if len(*sent) != 1 {
+		t.Errorf("expected no re-nudge for unchanged tickets, got %d total", len(*sent))
+	}
 
-	// Should nudge again
+	// Add a new ticket — digest changes, cooldown already expired → should nudge
+	id2, _ := issues.Create("Another feature", "task", nil, nil)
+	issues.UpdateStatus(id2, "in_review")
+	issues.SetPR(id2, 6)
+
 	d.handleInReviewTickets()
 	if len(*sent) != 2 {
-		t.Errorf("expected 2 nudges after cooldown expiry, got %d", len(*sent))
+		t.Errorf("expected 2 nudges after ticket set changed, got %d", len(*sent))
 	}
 }
 
@@ -935,20 +944,159 @@ func TestHandleQualityBaseline_runsAgainAfterInterval(t *testing.T) {
 	}
 }
 
-func TestCooldown_disabledWhenZero(t *testing.T) {
+func TestCooldown_disabledWhenZero_dedupsIdenticalTickets(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
 	agents.Register("reviewer", "reviewer", nil)
-	// nudgeCooldown is 0 (default in test helper) — should always nudge
+	// nudgeCooldown is 0 (default in test helper) — no time-based suppression
 
 	id, _ := issues.Create("Add feature", "task", nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 5)
 
+	// First call sends, subsequent calls deduped by digest
 	d.handleInReviewTickets()
 	d.handleInReviewTickets()
 	d.handleInReviewTickets()
 
-	if len(*sent) != 3 {
-		t.Errorf("expected 3 nudges with cooldown disabled, got %d", len(*sent))
+	if len(*sent) != 1 {
+		t.Errorf("expected 1 nudge (digest dedup), got %d", len(*sent))
+	}
+}
+
+// --- Working agent suppression tests ---
+
+func TestHandleOpenTickets_skipsWhenConductorWorking(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+	agents.Register("conductor", "conductor", nil)
+	agents.UpdateStatus("conductor", "working")
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	d.handleOpenTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (conductor is working), got %d", len(*sent))
+	}
+}
+
+func TestHandleOpenTickets_nudgesWhenConductorIdle(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+	agents.Register("conductor", "conductor", nil)
+	// status defaults to idle
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	d.handleOpenTickets()
+
+	if len(*sent) != 1 {
+		t.Errorf("expected 1 nudge (conductor is idle), got %d", len(*sent))
+	}
+}
+
+func TestHandleDraftTickets_skipsWhenArchitectWorking(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-architect"})
+	agents.Register("architect", "architect", nil)
+	agents.UpdateStatus("architect", "working")
+
+	id, _ := issues.Create("Draft ticket", "task", nil, nil)
+	_ = id // ticket starts as draft
+
+	d.handleDraftTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (architect is working), got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairingTickets_skipsWhenConductorWorking(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+	agents.Register("conductor", "conductor", nil)
+	agents.UpdateStatus("conductor", "working")
+
+	id, _ := issues.Create("Fix bug", "task", nil, nil)
+	issues.UpdateStatus(id, "repairing")
+
+	d.handleRepairingTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (conductor is working), got %d", len(*sent))
+	}
+}
+
+func TestHandleInReviewTickets_skipsWorkingReviewer(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t,
+		[]string{"ct-reviewer-1", "ct-reviewer-2"})
+	agents.Register("reviewer-1", "reviewer", nil)
+	agents.Register("reviewer-2", "reviewer", nil)
+	agents.UpdateStatus("reviewer-1", "working") // busy
+
+	id, _ := issues.Create("Review me", "task", nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	// Only reviewer-2 should get nudged
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge (working reviewer skipped), got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-reviewer-2" {
+		t.Errorf("expected nudge to ct-reviewer-2, got %q", (*sent)[0].session)
+	}
+}
+
+// --- Digest dedup tests ---
+
+func TestDigest_suppressesDuplicateNudge(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+	agents.Register("conductor", "conductor", nil)
+
+	now := time.Now()
+	withCooldown(d, 5*time.Minute, now)
+
+	id, _ := issues.Create("Fix bug", "task", nil, nil)
+	issues.UpdateStatus(id, "repairing")
+
+	// First nudge — should send
+	d.handleRepairingTickets()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge on first call, got %d", len(*sent))
+	}
+
+	// Advance past cooldown — same tickets → should NOT re-send
+	d.nowFn = func() time.Time { return now.Add(10 * time.Minute) }
+	d.handleRepairingTickets()
+	if len(*sent) != 1 {
+		t.Errorf("expected no re-nudge for same ticket set, got %d total", len(*sent))
+	}
+}
+
+func TestDigest_nudgesWhenTicketSetChanges(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+	agents.Register("conductor", "conductor", nil)
+
+	now := time.Now()
+	withCooldown(d, 5*time.Minute, now)
+
+	id1, _ := issues.Create("Fix bug A", "task", nil, nil)
+	issues.UpdateStatus(id1, "repairing")
+
+	// First nudge
+	d.handleRepairingTickets()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge, got %d", len(*sent))
+	}
+
+	// Add a new repairing ticket — digest changes
+	id2, _ := issues.Create("Fix bug B", "task", nil, nil)
+	issues.UpdateStatus(id2, "repairing")
+
+	// Advance past cooldown so the changed digest can fire
+	d.nowFn = func() time.Time { return now.Add(10 * time.Minute) }
+	d.handleRepairingTickets()
+	if len(*sent) != 2 {
+		t.Errorf("expected 2 nudges (ticket set changed + cooldown expired), got %d", len(*sent))
 	}
 }
