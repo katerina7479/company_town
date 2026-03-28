@@ -237,6 +237,35 @@ func JanitorStop() error {
 	return nil
 }
 
+// ArtisanStop implements `ct artisan <specialty> stop` — graceful Artisan shutdown.
+func ArtisanStop(specialty string) error {
+	name := fmt.Sprintf("artisan-%s", specialty)
+	sessionName := session.SessionName(name)
+
+	if !session.Exists(sessionName) {
+		fmt.Printf("artisan-%s is not running.\n", specialty)
+		return nil
+	}
+
+	fmt.Printf("Signaling %s artisan to write handoff and exit...\n", specialty)
+
+	projectRoot, err := db.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+	ctDir := config.CompanyTownDir(projectRoot)
+
+	signalPath := filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
+	if err := os.WriteFile(signalPath, []byte("handoff requested\n"), 0644); err != nil {
+		return fmt.Errorf("writing handoff signal: %w", err)
+	}
+
+	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.")
+
+	fmt.Printf("Handoff signal sent. artisan-%s will exit after writing handoff.md.\n", specialty)
+	return nil
+}
+
 // ArchitectStop implements `ct architect stop` — graceful Architect shutdown.
 func ArchitectStop() error {
 	sessionName := session.SessionName("architect")
