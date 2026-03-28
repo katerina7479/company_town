@@ -283,35 +283,43 @@ func Stop() error {
 	}
 	ctDir := config.CompanyTownDir(projectRoot)
 
+	stopCore(sessions, ctDir, session.Kill, session.SendKeys)
+
+	fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
+	fmt.Println("Run `ct nuke` if you need to force-kill all sessions.")
+	return nil
+}
+
+// stopCore is the testable shutdown logic used by Stop.
+func stopCore(sessions []string, ctDir string, killFn func(string) error, sendKeysFn func(string, string) error) {
 	for _, s := range sessions {
 		agentName := s[len(session.SessionPrefix):]
 
 		switch {
 		case agentName == "daemon":
-			session.Kill(s)
-			fmt.Printf("  stopped: %s\n", s)
+			if err := killFn(s); err != nil {
+				fmt.Printf("  error stopping daemon: %v\n", err)
+			} else {
+				fmt.Printf("  stopped: %s\n", s)
+			}
 			continue
 		case agentName == "architect":
 			signalPath := filepath.Join(ctDir, "agents", "architect", "memory", "handoff_requested")
 			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
-			session.SendKeys(s, "System is shutting down. Write handoff.md and exit cleanly.")
+			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.")
 		case agentName == "mayor":
-			session.SendKeys(s, "System is shutting down. Save any state and exit cleanly.")
+			sendKeysFn(s, "System is shutting down. Save any state and exit cleanly.")
 		case strings.HasPrefix(agentName, "artisan-"):
 			specialty := strings.TrimPrefix(agentName, "artisan-")
 			signalPath := filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
 			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
-			session.SendKeys(s, "System is shutting down. Write handoff.md and exit cleanly.")
+			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.")
 		default:
-			session.SendKeys(s, "System is shutting down. Commit and push any work, then exit.")
+			sendKeysFn(s, "System is shutting down. Commit and push any work, then exit.")
 		}
 
 		fmt.Printf("  signaled: %s\n", s)
 	}
-
-	fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
-	fmt.Println("Run `ct nuke` if you need to force-kill all sessions.")
-	return nil
 }
 
 // Attach implements `ct attach <name>` — attach to an existing agent session.
@@ -339,27 +347,35 @@ func Nuke() error {
 
 	conn, _, connErr := db.OpenFromWorkingDir()
 
+	var updateStatus func(string, string) error
+	if connErr == nil {
+		agents := repo.NewAgentRepo(conn)
+		updateStatus = agents.UpdateStatus
+		defer conn.Close()
+	}
+
+	nukeCore(sessions, session.Kill, updateStatus)
+
+	fmt.Println("\nAll sessions killed.")
+	return nil
+}
+
+// nukeCore is the testable kill logic used by Nuke.
+// updateStatus may be nil when the DB is unavailable.
+func nukeCore(sessions []string, killFn func(string) error, updateStatus func(string, string) error) {
 	for _, s := range sessions {
-		if err := session.Kill(s); err != nil {
+		if err := killFn(s); err != nil {
 			fmt.Printf("  error killing %s: %v\n", s, err)
 		} else {
 			fmt.Printf("  killed: %s\n", s)
 		}
 
-		if connErr == nil {
-			agentName := s[len(session.SessionPrefix):]
-			if agentName == "daemon" {
-				continue // daemon is not an agent; no DB record to update
-			}
-			agents := repo.NewAgentRepo(conn)
-			agents.UpdateStatus(agentName, "dead")
+		agentName := s[len(session.SessionPrefix):]
+		if agentName == "daemon" {
+			continue // daemon is not an agent; no DB record to update
+		}
+		if updateStatus != nil {
+			updateStatus(agentName, "dead")
 		}
 	}
-
-	if connErr == nil {
-		conn.Close()
-	}
-
-	fmt.Println("\nAll sessions killed.")
-	return nil
 }
