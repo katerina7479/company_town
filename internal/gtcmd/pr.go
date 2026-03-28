@@ -45,9 +45,9 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 		return fmt.Errorf("usage: gt pr create <ticket_id>")
 	}
 
-	id, err := strconv.Atoi(args[0])
+	id, err := parseTicketID(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid ticket ID: %s", args[0])
+		return err
 	}
 
 	issue, err := issues.Get(id)
