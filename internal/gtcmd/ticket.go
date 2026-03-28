@@ -14,7 +14,7 @@ import (
 // or a bare number (e.g. "58"). The prefix is stripped before parsing.
 func parseTicketID(s string) (int, error) {
 	raw := s
-	if i := strings.LastIndex(s, "-"); i >= 0 {
+	if i := strings.Index(s, "-"); i >= 0 {
 		raw = s[i+1:]
 	}
 	id, err := strconv.Atoi(raw)
@@ -375,7 +375,7 @@ func ticketDepend(issues *repo.IssueRepo, prefix string, args []string) error {
 
 	dependsOnID, err := parseTicketID(args[1])
 	if err != nil {
-		return fmt.Errorf("invalid depends-on ID: %s", args[1])
+		return err
 	}
 
 	if _, err := issues.Get(id); err != nil {

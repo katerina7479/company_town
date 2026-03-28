@@ -56,6 +56,7 @@ func TestParseTicketID(t *testing.T) {
 		{"notanumber", 0, true},
 		{"nc-notanumber", 0, true},
 		{"nc-", 0, true},
+		{"nc-58-2", 0, true},
 	}
 
 	for _, tc := range cases {
