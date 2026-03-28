@@ -1308,3 +1308,64 @@ func TestHandleStuckAgents_cooldownIsPerAgent(t *testing.T) {
 		t.Errorf("expected 4 total escalations after cooldown expiry, got %d", len(*sent))
 	}
 }
+
+func TestHandleStuckAgents_skipsNullStatusChangedAt(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("creating test db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	cfg := &config.Config{
+		TicketPrefix: "NC",
+		ProjectRoot:  t.TempDir(),
+	}
+
+	agents := repo.NewAgentRepo(conn)
+	agents.Register("null-ts-agent", "prole", nil)
+	// Set status=working directly without setting status_changed_at, simulating
+	// an agent created before the status_changed_at column was added.
+	conn.Exec(`UPDATE agents SET status = 'working', status_changed_at = NULL WHERE name = 'null-ts-agent'`)
+
+	sessions := map[string]bool{"ct-mayor": true}
+	var sent []sentMessage
+
+	d := &Daemon{
+		cfg:             cfg,
+		issues:          repo.NewIssueRepo(conn),
+		agents:          agents,
+		logger:          log.New(io.Discard, "", 0),
+		stop:            make(chan struct{}),
+		sessionExists:   func(s string) bool { return sessions[s] },
+		sendKeys:        func(s, msg string) error { sent = append(sent, sentMessage{session: s, msg: msg}); return nil },
+		resetWorktree:   func(string) error { return nil },
+		lastNudged:      make(map[string]time.Time),
+		lastNudgeDigest: make(map[string]string),
+		stuckAgentThreshold: 30 * time.Minute,
+		nowFn:           func() time.Time { return time.Now().Add(24 * time.Hour) },
+	}
+
+	d.handleStuckAgents()
+
+	if len(sent) != 0 {
+		t.Errorf("expected 0 escalations for agent with NULL status_changed_at, got %d", len(sent))
+	}
+}
+
+func TestHandleStuckAgents_skipsMayor(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	// Mayor itself is working past the threshold
+	agents.Register("mayor", "mayor", nil)
+	id, _ := issues.Create("Some mayor task", "task", nil, nil)
+	agents.SetCurrentIssue("mayor", &id)
+
+	d.stuckAgentThreshold = 30 * time.Minute
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+
+	d.handleStuckAgents()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (Mayor must not escalate itself), got %d", len(*sent))
+	}
+}

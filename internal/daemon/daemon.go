@@ -213,6 +213,9 @@ func (d *Daemon) handleStuckAgents() {
 
 	now := d.nowFn()
 	for _, agent := range agents {
+		if agent.Name == "mayor" {
+			continue // do not escalate the Mayor to itself
+		}
 		if !agent.StatusChangedAt.Valid {
 			continue
 		}
