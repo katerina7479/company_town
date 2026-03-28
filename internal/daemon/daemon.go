@@ -204,7 +204,6 @@ func (d *Daemon) poll() {
 	d.handleRepairingTickets()
 	d.handlePREvents()
 	d.handleEpicAutoClose()
-	d.handleStuckAgents()
 	d.handleQualityBaseline()
 }
 
