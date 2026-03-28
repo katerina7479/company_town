@@ -2,6 +2,9 @@ package commands
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -33,18 +36,24 @@ func TestStopCore_daemonKillErrorSurfaced(t *testing.T) {
 	killFn := func(s string) error {
 		return fmt.Errorf("tmux error")
 	}
-	// Should not panic; error is printed, not returned.
-	// We just verify it doesn't call sendKeys either.
-	sent := []string{}
-	sendKeysFn := func(s, msg string) error {
-		sent = append(sent, s)
-		return nil
-	}
+	sendKeysFn := func(s, msg string) error { return nil }
+
+	// Capture stdout to verify the error message is actually printed.
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
 
 	stopCore([]string{"ct-daemon"}, t.TempDir(), killFn, sendKeysFn)
 
-	if len(sent) != 0 {
-		t.Errorf("expected no sendKeys on kill failure, got %v", sent)
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	if !strings.Contains(string(out), "error stopping daemon") {
+		t.Errorf("expected error message printed to stdout, got: %q", string(out))
+	}
+	if strings.Contains(string(out), "stopped:") {
+		t.Errorf("must not print 'stopped' when kill failed, got: %q", string(out))
 	}
 }
 
