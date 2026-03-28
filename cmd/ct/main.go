@@ -43,6 +43,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty> [stop]")
 			os.Exit(1)
 		}
+		if len(args) == 1 && args[0] == "stop" {
+			fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty> stop")
+			os.Exit(1)
+		}
 		specialty := args[0]
 		if len(args) > 1 && args[1] == "stop" {
 			err = commands.ArtisanStop(specialty)

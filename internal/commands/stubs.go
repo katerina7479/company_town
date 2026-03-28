@@ -247,6 +247,8 @@ func ArtisanStop(specialty string) error {
 		return nil
 	}
 
+	fmt.Printf("Signaling %s artisan to write handoff and exit...\n", specialty)
+
 	projectRoot, err := db.FindProjectRoot()
 	if err != nil {
 		return err
