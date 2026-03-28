@@ -227,10 +227,14 @@ func (m dashboardModel) renderTickets(width, height int) string {
 	var sb strings.Builder
 	sb.WriteString(headerStyle.Render("Tickets") + "\n\n")
 
-	if len(m.data.roots) == 0 {
+	// Filter out closed tickets older than 4 hours to reduce clutter.
+	cutoff := time.Now().Add(-4 * time.Hour)
+	filtered := filterStaleClosedNodes(m.data.roots, cutoff)
+
+	if len(filtered) == 0 {
 		sb.WriteString(footerStyle.Render("(no tickets)"))
 	} else {
-		for _, root := range m.data.roots {
+		for _, root := range filtered {
 			renderIssueNode(&sb, root, 0, width)
 		}
 	}
@@ -240,6 +244,37 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		Width(width).
 		Height(height - 2).
 		Render(inner)
+}
+
+// filterStaleClosedNodes returns a copy of the tree with closed tickets
+// older than cutoff removed. Non-closed nodes are always kept; parent nodes
+// are kept if they have any surviving children.
+func filterStaleClosedNodes(roots []*repo.IssueNode, cutoff time.Time) []*repo.IssueNode {
+	var result []*repo.IssueNode
+	for _, root := range roots {
+		if filtered := filterNode(root, cutoff); filtered != nil {
+			result = append(result, filtered)
+		}
+	}
+	return result
+}
+
+func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
+	var children []*repo.IssueNode
+	for _, child := range node.Children {
+		if filtered := filterNode(child, cutoff); filtered != nil {
+			children = append(children, filtered)
+		}
+	}
+
+	isStale := node.Status == "closed" && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
+	if isStale && len(children) == 0 {
+		return nil
+	}
+
+	clone := *node
+	clone.Children = children
+	return &clone
 }
 
 func renderIssueNode(sb *strings.Builder, node *repo.IssueNode, depth int, width int) {
