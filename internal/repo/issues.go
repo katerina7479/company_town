@@ -308,6 +308,39 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 	return issues, rows.Err()
 }
 
+// ListEpicsWithAllChildrenClosed returns epics that are not closed but have at
+// least one child and all children are closed.
+func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
+	rows, err := r.db.Query(
+		`SELECT id, issue_type, status, title, description, specialty, branch,
+		        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+		 FROM issues
+		 WHERE issue_type = 'epic'
+		   AND status != 'closed'
+		   AND EXISTS (
+		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id
+		   )
+		   AND NOT EXISTS (
+		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id AND child.status != 'closed'
+		   )
+		 ORDER BY id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing epics with all children closed: %w", err)
+	}
+	defer rows.Close()
+
+	var epics []*Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		epics = append(epics, issue)
+	}
+	return epics, rows.Err()
+}
+
 // IssueNode wraps an Issue with its children for hierarchical display.
 type IssueNode struct {
 	*Issue

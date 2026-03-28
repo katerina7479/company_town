@@ -1448,3 +1448,94 @@ func TestHandleStaleWorktrees_respectsInterval(t *testing.T) {
 		t.Errorf("expected 2 calls after interval elapsed, got %d", calls)
 	}
 }
+
+func TestHandleEpicAutoClose_closesEpicWhenAllChildrenClosed(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	epicID, _ := issues.Create("Epic A", "epic", nil, nil)
+	issues.UpdateStatus(epicID, "open")
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	issues.UpdateStatus(child1, "closed")
+	child2, _ := issues.Create("Task 2", "task", &epicID, nil)
+	issues.UpdateStatus(child2, "closed")
+
+	d.handleEpicAutoClose()
+
+	epic, err := issues.Get(epicID)
+	if err != nil {
+		t.Fatalf("Get epic: %v", err)
+	}
+	if epic.Status != "closed" {
+		t.Errorf("expected epic status=closed, got %q", epic.Status)
+	}
+}
+
+func TestHandleEpicAutoClose_noopWhenOpenChildExists(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	epicID, _ := issues.Create("Epic B", "epic", nil, nil)
+	issues.UpdateStatus(epicID, "open")
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	issues.UpdateStatus(child1, "closed")
+	child2, _ := issues.Create("Task 2", "task", &epicID, nil)
+	issues.UpdateStatus(child2, "open")
+
+	d.handleEpicAutoClose()
+
+	epic, _ := issues.Get(epicID)
+	if epic.Status != "open" {
+		t.Errorf("expected epic status=open, got %q", epic.Status)
+	}
+}
+
+func TestHandleEpicAutoClose_noopWhenNoChildren(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	epicID, _ := issues.Create("Epic C", "epic", nil, nil)
+	issues.UpdateStatus(epicID, "open")
+
+	d.handleEpicAutoClose()
+
+	epic, _ := issues.Get(epicID)
+	if epic.Status != "open" {
+		t.Errorf("expected epic status=open, got %q", epic.Status)
+	}
+}
+
+func TestHandleEpicAutoClose_noopWhenAlreadyClosed(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	epicID, _ := issues.Create("Epic D", "epic", nil, nil)
+	issues.UpdateStatus(epicID, "open")
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	issues.UpdateStatus(child1, "closed")
+	issues.UpdateStatus(epicID, "closed")
+
+	d.handleEpicAutoClose()
+
+	epic, _ := issues.Get(epicID)
+	if epic.Status != "closed" {
+		t.Errorf("expected epic status=closed, got %q", epic.Status)
+	}
+}
+
+func TestHandleEpicAutoClose_notifiesMayor(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	epicID, _ := issues.Create("Big Feature", "epic", nil, nil)
+	issues.UpdateStatus(epicID, "open")
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	issues.UpdateStatus(child1, "closed")
+
+	d.handleEpicAutoClose()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 mayor message, got %d", len(*sent))
+	}
+	if !strings.Contains((*sent)[0].msg, "Big Feature") {
+		t.Errorf("expected message to mention epic title, got %q", (*sent)[0].msg)
+	}
+	if (*sent)[0].session != "ct-mayor" {
+		t.Errorf("expected message to mayor session, got %q", (*sent)[0].session)
+	}
+}

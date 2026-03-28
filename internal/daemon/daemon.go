@@ -203,6 +203,7 @@ func (d *Daemon) poll() {
 	d.handleInReviewTickets()
 	d.handleRepairingTickets()
 	d.handlePREvents()
+	d.handleEpicAutoClose()
 	d.handleStuckAgents()
 	d.handleQualityBaseline()
 }
@@ -218,6 +219,34 @@ func (d *Daemon) handleStaleWorktrees() {
 		d.logger.Printf("error pruning stale worktrees: %v", err)
 	}
 	d.lastWorktreePrune = d.nowFn()
+}
+
+// handleEpicAutoClose closes epics whose sub-tasks are all closed.
+func (d *Daemon) handleEpicAutoClose() {
+	epics, err := d.issues.ListEpicsWithAllChildrenClosed()
+	if err != nil {
+		d.logger.Printf("error listing completable epics: %v", err)
+		return
+	}
+
+	for _, epic := range epics {
+		d.logger.Printf("auto-closing epic %s-%d (%s): all sub-tasks closed",
+			d.cfg.TicketPrefix, epic.ID, epic.Title)
+
+		if err := d.issues.UpdateStatus(epic.ID, "closed"); err != nil {
+			d.logger.Printf("error closing epic %d: %v", epic.ID, err)
+			continue
+		}
+
+		mayorSession := session.SessionName("mayor")
+		if d.sessionExists(mayorSession) {
+			msg := fmt.Sprintf("Epic %s-%d (%s) auto-closed: all sub-tasks are complete.",
+				d.cfg.TicketPrefix, epic.ID, epic.Title)
+			if err := d.sendKeys(mayorSession, msg); err != nil {
+				d.logger.Printf("error notifying Mayor of epic %d closure: %v", epic.ID, err)
+			}
+		}
+	}
 }
 
 // handleStuckAgents detects working agents that have not changed status for longer than

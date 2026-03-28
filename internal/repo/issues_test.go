@@ -498,3 +498,45 @@ func TestIssueRepo_ClearAssignee_notFound(t *testing.T) {
 		t.Fatal("expected error for non-existent issue, got nil")
 	}
 }
+
+func TestIssueRepo_ListEpicsWithAllChildrenClosed(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Epic with all children closed → should be returned.
+	epicID, _ := r.Create("Epic A", "epic", nil, nil)
+	r.UpdateStatus(epicID, "open")
+	child1, _ := r.Create("Task 1", "task", &epicID, nil)
+	r.UpdateStatus(child1, "closed")
+	child2, _ := r.Create("Task 2", "task", &epicID, nil)
+	r.UpdateStatus(child2, "closed")
+
+	// Epic with one open child → should NOT be returned.
+	epic2ID, _ := r.Create("Epic B", "epic", nil, nil)
+	r.UpdateStatus(epic2ID, "open")
+	child3, _ := r.Create("Task 3", "task", &epic2ID, nil)
+	r.UpdateStatus(child3, "closed")
+	child4, _ := r.Create("Task 4", "task", &epic2ID, nil)
+	r.UpdateStatus(child4, "open")
+
+	// Epic with no children → should NOT be returned.
+	epic3ID, _ := r.Create("Epic C", "epic", nil, nil)
+	r.UpdateStatus(epic3ID, "open")
+
+	// Already-closed epic with all children closed → should NOT be returned.
+	epic4ID, _ := r.Create("Epic D", "epic", nil, nil)
+	r.UpdateStatus(epic4ID, "open")
+	child5, _ := r.Create("Task 5", "task", &epic4ID, nil)
+	r.UpdateStatus(child5, "closed")
+	r.UpdateStatus(epic4ID, "closed")
+
+	epics, err := r.ListEpicsWithAllChildrenClosed()
+	if err != nil {
+		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+	}
+	if len(epics) != 1 {
+		t.Fatalf("expected 1 epic, got %d", len(epics))
+	}
+	if epics[0].ID != epicID {
+		t.Errorf("expected epic ID %d, got %d", epicID, epics[0].ID)
+	}
+}
