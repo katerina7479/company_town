@@ -40,3 +40,37 @@ func TestFormatPRTitle_prefixCaseSensitive(t *testing.T) {
 		t.Errorf("expected prefix to be case-sensitive, but %q == %q", lower, upper)
 	}
 }
+
+func TestParseTicketID(t *testing.T) {
+	cases := []struct {
+		input   string
+		wantID  int
+		wantErr bool
+	}{
+		{"58", 58, false},
+		{"nc-58", 58, false},
+		{"NC-58", 58, false},
+		{"CT-100", 100, false},
+		{"1", 1, false},
+		{"prefix-42", 42, false},
+		{"notanumber", 0, true},
+		{"nc-notanumber", 0, true},
+		{"nc-", 0, true},
+		{"nc-58-2", 0, true},
+	}
+
+	for _, tc := range cases {
+		id, err := parseTicketID(tc.input)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseTicketID(%q): expected error, got id=%d", tc.input, id)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("parseTicketID(%q): unexpected error: %v", tc.input, err)
+			} else if id != tc.wantID {
+				t.Errorf("parseTicketID(%q) = %d, want %d", tc.input, id, tc.wantID)
+			}
+		}
+	}
+}

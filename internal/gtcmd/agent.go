@@ -3,7 +3,6 @@ package gtcmd
 import (
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
@@ -71,7 +70,7 @@ func agentStatus(agents *repo.AgentRepo, args []string) error {
 	for i := 2; i < len(args); i++ {
 		if args[i] == "--issue" && i+1 < len(args) {
 			i++
-			v, err := strconv.Atoi(args[i])
+			v, err := parseTicketID(args[i])
 			if err != nil {
 				return fmt.Errorf("invalid issue ID: %s", args[i])
 			}

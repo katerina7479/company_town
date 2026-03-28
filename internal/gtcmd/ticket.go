@@ -10,6 +10,20 @@ import (
 	"github.com/katerina7479/company_town/internal/repo"
 )
 
+// parseTicketID parses a ticket ID that may be in the form "PREFIX-N" (e.g. "nc-58")
+// or a bare number (e.g. "58"). The prefix is stripped before parsing.
+func parseTicketID(s string) (int, error) {
+	raw := s
+	if i := strings.Index(s, "-"); i >= 0 {
+		raw = s[i+1:]
+	}
+	id, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid ticket ID: %s", s)
+	}
+	return id, nil
+}
+
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
@@ -67,7 +81,7 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 				return fmt.Errorf("--parent requires a value")
 			}
 			i++
-			v, err := strconv.Atoi(args[i])
+			v, err := parseTicketID(args[i])
 			if err != nil {
 				return fmt.Errorf("invalid parent ID: %s", args[i])
 			}
@@ -102,9 +116,9 @@ func ticketShow(issues *repo.IssueRepo, prefix string, args []string) error {
 		return fmt.Errorf("usage: gt ticket show <id>")
 	}
 
-	id, err := strconv.Atoi(args[0])
+	id, err := parseTicketID(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid ticket ID: %s", args[0])
+		return err
 	}
 
 	issue, err := issues.Get(id)
@@ -210,9 +224,9 @@ func ticketAssign(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 		return fmt.Errorf("usage: gt ticket assign <ticket_id> <agent_name>")
 	}
 
-	id, err := strconv.Atoi(args[0])
+	id, err := parseTicketID(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid ticket ID: %s", args[0])
+		return err
 	}
 
 	agentName := args[1]
@@ -244,9 +258,9 @@ func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 		return fmt.Errorf("usage: gt ticket status <id> <status> [--agent <name>]")
 	}
 
-	id, err := strconv.Atoi(args[0])
+	id, err := parseTicketID(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid ticket ID: %s", args[0])
+		return err
 	}
 
 	status := args[1]
@@ -307,9 +321,9 @@ func ticketClose(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) 
 		return fmt.Errorf("usage: gt ticket close <id>")
 	}
 
-	id, err := strconv.Atoi(args[0])
+	id, err := parseTicketID(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid ticket ID: %s", args[0])
+		return err
 	}
 
 	issue, err := issues.Get(id)
@@ -336,9 +350,9 @@ func ticketDelete(issues *repo.IssueRepo, args []string) error {
 		return fmt.Errorf("usage: gt ticket delete <id>")
 	}
 
-	id, err := strconv.Atoi(args[0])
+	id, err := parseTicketID(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid ticket ID: %s", args[0])
+		return err
 	}
 
 	if err := issues.Delete(id); err != nil {
@@ -354,14 +368,14 @@ func ticketDepend(issues *repo.IssueRepo, prefix string, args []string) error {
 		return fmt.Errorf("usage: gt ticket depend <id> <depends-on-id>")
 	}
 
-	id, err := strconv.Atoi(args[0])
+	id, err := parseTicketID(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid ticket ID: %s", args[0])
+		return err
 	}
 
-	dependsOnID, err := strconv.Atoi(args[1])
+	dependsOnID, err := parseTicketID(args[1])
 	if err != nil {
-		return fmt.Errorf("invalid depends-on ID: %s", args[1])
+		return err
 	}
 
 	if _, err := issues.Get(id); err != nil {
