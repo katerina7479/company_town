@@ -72,6 +72,17 @@ func EnsureBareRepo(cfg *config.Config) error {
 
 // Create sets up a new prole: bare repo worktree, DB registration, tmux session.
 func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
+	// Enforce max_proles limit before creating a new prole.
+	if cfg.MaxProles > 0 {
+		count, err := agents.CountByType("prole")
+		if err != nil {
+			return fmt.Errorf("counting proles: %w", err)
+		}
+		if count >= cfg.MaxProles {
+			return fmt.Errorf("max_proles limit reached (%d/%d): cannot create prole %q", count, cfg.MaxProles, name)
+		}
+	}
+
 	wtPath := WorktreePath(cfg, name)
 
 	// Ensure proles directory exists
@@ -259,3 +270,4 @@ func mustGetOriginURL(cfg *config.Config) string {
 	}
 	return url
 }
+
