@@ -62,13 +62,15 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
-		resetWorktree:      func(string) error { return nil },
-		runQualityBaseline: func() error { return nil },
-		lastNudged:         make(map[string]time.Time),
-		lastNudgeDigest:    make(map[string]string),
-		nudgeCooldown:      0, // disabled by default in tests
-		qualityInterval:    0, // disabled by default in tests
-		nowFn:              time.Now,
+		resetWorktree:       func(string) error { return nil },
+		runQualityBaseline:  func() error { return nil },
+		pruneStaleWorktrees: func() error { return nil },
+		lastNudged:          make(map[string]time.Time),
+		lastNudgeDigest:     make(map[string]string),
+		nudgeCooldown:       0, // disabled by default in tests
+		qualityInterval:     0, // disabled by default in tests
+		worktreeInterval:    0, // disabled by default in tests
+		nowFn:               time.Now,
 	}
 
 	return d, issues, agents, &sent
@@ -1101,6 +1103,51 @@ func TestDigest_nudgesWhenTicketSetChanges(t *testing.T) {
 	}
 }
 
+// --- Stale worktree pruning tests ---
+
+func TestHandleStaleWorktrees_callsPruneFunction(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.pruneStaleWorktrees = func() error {
+		calls++
+		return nil
+	}
+
+	d.handleStaleWorktrees()
+
+	if calls != 1 {
+		t.Errorf("expected pruneStaleWorktrees called once, got %d", calls)
+	}
+}
+
+func TestHandleStaleWorktrees_logsErrorWithoutPanicking(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	d.pruneStaleWorktrees = func() error {
+		return fmt.Errorf("git worktree remove failed")
+	}
+
+	// Should not panic
+	d.handleStaleWorktrees()
+}
+
+func TestHandleStaleWorktrees_calledEachPollCycle(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	var calls int
+	d.pruneStaleWorktrees = func() error {
+		calls++
+		return nil
+	}
+
+	d.poll()
+
+	if calls != 1 {
+		t.Errorf("expected pruneStaleWorktrees called once per poll, got %d", calls)
+	}
+}
+
 // --- Stuck agent detection tests ---
 
 func TestHandleStuckAgents_escalatesToMayor(t *testing.T) {
@@ -1367,5 +1414,37 @@ func TestHandleStuckAgents_skipsMayor(t *testing.T) {
 
 	if len(*sent) != 0 {
 		t.Errorf("expected 0 escalations (Mayor must not escalate itself), got %d", len(*sent))
+	}
+}
+
+func TestHandleStaleWorktrees_respectsInterval(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.worktreeInterval = 5 * time.Minute
+
+	var calls int
+	d.pruneStaleWorktrees = func() error {
+		calls++
+		return nil
+	}
+
+	// First call: interval not elapsed — should run (zero time → always run first time)
+	d.handleStaleWorktrees()
+	if calls != 1 {
+		t.Fatalf("expected 1 call on first invocation, got %d", calls)
+	}
+
+	// Second call immediately: interval not elapsed — should NOT run
+	d.handleStaleWorktrees()
+	if calls != 1 {
+		t.Errorf("expected no call within interval, got %d", calls)
+	}
+
+	// Advance past interval
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleStaleWorktrees()
+	if calls != 2 {
+		t.Errorf("expected 2 calls after interval elapsed, got %d", calls)
 	}
 }

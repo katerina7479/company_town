@@ -2,6 +2,7 @@ package prole
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -271,3 +272,76 @@ func mustGetOriginURL(cfg *config.Config) string {
 	return url
 }
 
+// PruneDeadWorktrees removes worktrees belonging to dead prole agents when they
+// are git-clean (no uncommitted changes, no unpushed commits). After processing
+// individual worktrees, it runs git worktree prune on the bare repo to clear any
+// stale metadata. Returns the names of agents whose worktrees were removed.
+func PruneDeadWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logger) ([]string, error) {
+	all, err := agents.ListAll()
+	if err != nil {
+		return nil, fmt.Errorf("listing agents: %w", err)
+	}
+
+	var pruned []string
+	for _, a := range all {
+		if a.Type != "prole" || a.Status != "dead" {
+			continue
+		}
+		if !a.WorktreePath.Valid || a.WorktreePath.String == "" {
+			continue
+		}
+		wtPath := a.WorktreePath.String
+		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+			continue // already removed from disk
+		}
+
+		// Check for uncommitted changes — preserve worktree if dirty.
+		statusCmd := exec.Command("git", "status", "--porcelain")
+		statusCmd.Dir = wtPath
+		statusOut, statusErr := statusCmd.Output()
+		if statusErr != nil {
+			logger.Printf("warning: could not check git status for prole %s at %s: %v", a.Name, wtPath, statusErr)
+			continue
+		}
+		if len(strings.TrimSpace(string(statusOut))) > 0 {
+			continue // dirty — leave in place
+		}
+
+		// Check for unpushed commits — preserve worktree if work hasn't been pushed.
+		unpushedCmd := exec.Command("git", "log", "@{u}..", "--oneline")
+		unpushedCmd.Dir = wtPath
+		unpushedOut, upErr := unpushedCmd.Output()
+		if upErr != nil {
+			logger.Printf("warning: could not check unpushed commits for prole %s at %s (no upstream?): %v", a.Name, wtPath, upErr)
+			continue
+		}
+		if len(strings.TrimSpace(string(unpushedOut))) > 0 {
+			continue // unpushed commits — leave in place
+		}
+
+		// Worktree is clean — remove it via git so the worktree list stays consistent.
+		removeCmd := exec.Command("git", "worktree", "remove", "--force", wtPath)
+		removeCmd.Dir = BareRepoPath(cfg)
+		if err := removeCmd.Run(); err != nil {
+			logger.Printf("warning: could not remove worktree for prole %s at %s: %v", a.Name, wtPath, err)
+			continue
+		}
+
+		// Clear the stale path from the database.
+		if err := agents.SetWorktree(a.Name, ""); err != nil {
+			logger.Printf("warning: removed worktree for prole %s but could not clear DB path: %v", a.Name, err)
+		}
+
+		pruned = append(pruned, a.Name)
+	}
+
+	// Prune stale worktree metadata from the bare repo (best effort).
+	barePath := BareRepoPath(cfg)
+	if _, err := os.Stat(barePath); err == nil {
+		pruneCmd := exec.Command("git", "worktree", "prune")
+		pruneCmd.Dir = barePath
+		pruneCmd.Run()
+	}
+
+	return pruned, nil
+}
