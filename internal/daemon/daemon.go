@@ -29,10 +29,11 @@ type Daemon struct {
 	sendKeys      func(session, msg string) error
 	sessionExists func(session string) bool
 	resetWorktree func(name string) error
-	lastNudged      map[string]time.Time
-	lastNudgeDigest map[string]string // hash of ticket IDs from last nudge per key
-	nudgeCooldown   time.Duration
-	nowFn           func() time.Time
+	lastNudged          map[string]time.Time
+	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
+	nudgeCooldown       time.Duration
+	stuckAgentThreshold time.Duration
+	nowFn               func() time.Time
 
 	// Quality baseline
 	runQualityBaseline  func() error
@@ -65,10 +66,11 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		resetWorktree: func(name string) error {
 			return prole.Reset(name, cfg, repo.NewAgentRepo(db))
 		},
-		lastNudged:      make(map[string]time.Time),
-		lastNudgeDigest: make(map[string]string),
-		nudgeCooldown: time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
-		nowFn:         time.Now,
+		lastNudged:          make(map[string]time.Time),
+		lastNudgeDigest:     make(map[string]string),
+		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
+		stuckAgentThreshold: time.Duration(cfg.StuckAgentThresholdSeconds) * time.Second,
+		nowFn:               time.Now,
 		runQualityBaseline: func() error {
 			return runAndPersistBaseline(runner, cfg.Quality.Checks, metrics, logger)
 		},
@@ -187,7 +189,61 @@ func (d *Daemon) poll() {
 	d.handleInReviewTickets()
 	d.handleRepairingTickets()
 	d.handlePREvents()
+	d.handleStuckAgents()
 	d.handleQualityBaseline()
+}
+
+// handleStuckAgents detects working agents that have not changed status for longer than
+// stuckAgentThreshold and escalates each one to the Mayor.
+func (d *Daemon) handleStuckAgents() {
+	if d.stuckAgentThreshold == 0 {
+		return // disabled
+	}
+
+	mayorSession := session.SessionName("mayor")
+	if !d.sessionExists(mayorSession) {
+		return // Mayor not running, nowhere to escalate
+	}
+
+	agents, err := d.agents.ListByStatus("working")
+	if err != nil {
+		d.logger.Printf("error listing working agents: %v", err)
+		return
+	}
+
+	now := d.nowFn()
+	for _, agent := range agents {
+		if !agent.StatusChangedAt.Valid {
+			continue
+		}
+		elapsed := now.Sub(agent.StatusChangedAt.Time)
+		if elapsed < d.stuckAgentThreshold {
+			continue
+		}
+
+		nudgeKey := "stuck:" + agent.Name
+		if !d.shouldNudge(nudgeKey) {
+			continue
+		}
+
+		ticketInfo := "no assigned ticket"
+		if agent.CurrentIssue.Valid {
+			ticketInfo = fmt.Sprintf("%s-%d", d.cfg.TicketPrefix, agent.CurrentIssue.Int64)
+		}
+
+		d.logger.Printf("agent %s appears stuck: working for %s (ticket: %s)",
+			agent.Name, elapsed.Round(time.Second), ticketInfo)
+
+		msg := fmt.Sprintf("ESCALATION: Agent %s has been working for %s on %s with no status change. "+
+			"Please investigate whether the agent is stuck.",
+			agent.Name, elapsed.Round(time.Minute), ticketInfo)
+
+		if err := d.sendKeys(mayorSession, msg); err != nil {
+			d.logger.Printf("error escalating stuck agent %s to Mayor: %v", agent.Name, err)
+		} else {
+			d.recordNudge(nudgeKey, "")
+		}
+	}
 }
 
 // handleQualityBaseline runs quality checks and persists results when the interval has elapsed.

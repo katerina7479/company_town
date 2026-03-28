@@ -61,10 +61,11 @@ type Config struct {
 	LogDir                  string       `json:"log_dir"`
 	MaxProles               int          `json:"max_proles"`
 	Agents                  AgentsConfig `json:"agents"`
-	PollingIntervalSeconds  int           `json:"polling_interval_seconds"`
-	NudgeCooldownSeconds    int           `json:"nudge_cooldown_seconds"`
-	ContextHandoffThreshold float64       `json:"context_handoff_threshold"`
-	Quality                 QualityConfig `json:"quality"`
+	PollingIntervalSeconds     int           `json:"polling_interval_seconds"`
+	NudgeCooldownSeconds       int           `json:"nudge_cooldown_seconds"`
+	ContextHandoffThreshold    float64       `json:"context_handoff_threshold"`
+	StuckAgentThresholdSeconds int           `json:"stuck_agent_threshold_seconds"`
+	Quality                    QualityConfig `json:"quality"`
 }
 
 // CompanyTownDir returns the .company_town directory path for a project root.
@@ -118,9 +119,10 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 			Prole:     AgentConfig{Model: "claude-sonnet-4-5"},
 			Janitor:   AgentConfig{Model: "claude-sonnet-4-5"},
 		},
-		PollingIntervalSeconds:  30,
-		NudgeCooldownSeconds:    300,
-		ContextHandoffThreshold: 0.80,
+		PollingIntervalSeconds:     30,
+		NudgeCooldownSeconds:       300,
+		ContextHandoffThreshold:    0.80,
+		StuckAgentThresholdSeconds: 1800,
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,
