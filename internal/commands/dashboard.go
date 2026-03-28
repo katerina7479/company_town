@@ -272,9 +272,9 @@ func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
 		return nil
 	}
 
-	copy := *node
-	copy.Children = children
-	return &copy
+	clone := *node
+	clone.Children = children
+	return &clone
 }
 
 func renderIssueNode(sb *strings.Builder, node *repo.IssueNode, depth int, width int) {
