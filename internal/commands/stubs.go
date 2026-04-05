@@ -60,18 +60,30 @@ func Start() error {
 	}
 	defer conn.Close()
 
-	// Start daemon if not already running
+	agents := repo.NewAgentRepo(conn)
+
+	// Register daemon in DB if not already present.
+	if _, err := agents.Get("daemon"); err != nil {
+		if regErr := agents.Register("daemon", "daemon", nil); regErr != nil {
+			return fmt.Errorf("registering daemon: %w", regErr)
+		}
+	}
+
+	// Start daemon if not already running.
 	daemonSession := session.SessionName("daemon")
 	if !session.Exists(daemonSession) {
 		fmt.Println("Starting daemon...")
 		if err := startDaemon(cfg); err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
 		}
+		if err := agents.UpdateStatus("daemon", "working"); err != nil {
+			return fmt.Errorf("updating daemon status: %w", err)
+		}
 	} else {
 		fmt.Println("Daemon already running.")
+		agents.UpdateStatus("daemon", "working")
 	}
 
-	agents := repo.NewAgentRepo(conn)
 	prompt := fmt.Sprintf(
 		"You are the Mayor. Ticket prefix: %s. "+
 			"Read your CLAUDE.md for instructions, then run `gt status` to check the system.",
@@ -312,7 +324,14 @@ func Stop() error {
 	}
 	ctDir := config.CompanyTownDir(projectRoot)
 
-	stopCore(sessions, ctDir, session.Kill, session.SendKeys)
+	conn, _, connErr := db.OpenFromWorkingDir()
+	var updateStatus func(string, string) error
+	if connErr == nil {
+		updateStatus = repo.NewAgentRepo(conn).UpdateStatus
+		defer conn.Close()
+	}
+
+	stopCore(sessions, ctDir, session.Kill, session.SendKeys, updateStatus)
 
 	fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
 	fmt.Println("Run `ct nuke` if you need to force-kill all sessions.")
@@ -320,7 +339,8 @@ func Stop() error {
 }
 
 // stopCore is the testable shutdown logic used by Stop.
-func stopCore(sessions []string, ctDir string, killFn func(string) error, sendKeysFn func(string, string) error) {
+// updateStatus may be nil when the DB is unavailable.
+func stopCore(sessions []string, ctDir string, killFn func(string) error, sendKeysFn func(string, string) error, updateStatus func(string, string) error) {
 	for _, s := range sessions {
 		agentName := s[len(session.SessionPrefix):]
 
@@ -330,6 +350,9 @@ func stopCore(sessions []string, ctDir string, killFn func(string) error, sendKe
 				fmt.Printf("  error stopping daemon: %v\n", err)
 			} else {
 				fmt.Printf("  stopped: %s\n", s)
+				if updateStatus != nil {
+					updateStatus("daemon", "dead")
+				}
 			}
 			continue
 		case agentName == "architect":
@@ -399,11 +422,8 @@ func nukeCore(sessions []string, killFn func(string) error, updateStatus func(st
 			fmt.Printf("  killed: %s\n", s)
 		}
 
-		agentName := s[len(session.SessionPrefix):]
-		if agentName == "daemon" {
-			continue // daemon is not an agent; no DB record to update
-		}
 		if updateStatus != nil {
+			agentName := s[len(session.SessionPrefix):]
 			updateStatus(agentName, "dead")
 		}
 	}

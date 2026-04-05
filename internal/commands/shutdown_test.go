@@ -21,8 +21,13 @@ func TestStopCore_killsDaemonSession(t *testing.T) {
 		sent = append(sent, s)
 		return nil
 	}
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error {
+		updated[name] = status
+		return nil
+	}
 
-	stopCore([]string{"ct-daemon"}, t.TempDir(), killFn, sendKeysFn)
+	stopCore([]string{"ct-daemon"}, t.TempDir(), killFn, sendKeysFn, updateStatus)
 
 	if len(killed) != 1 || killed[0] != "ct-daemon" {
 		t.Errorf("expected daemon session killed, got %v", killed)
@@ -32,18 +37,39 @@ func TestStopCore_killsDaemonSession(t *testing.T) {
 	}
 }
 
+func TestStopCore_marksDaemonDeadAfterKill(t *testing.T) {
+	killFn := func(s string) error { return nil }
+	sendKeysFn := func(s, msg string) error { return nil }
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error {
+		updated[name] = status
+		return nil
+	}
+
+	stopCore([]string{"ct-daemon"}, t.TempDir(), killFn, sendKeysFn, updateStatus)
+
+	if updated["daemon"] != "dead" {
+		t.Errorf("expected daemon status set to 'dead', got %q", updated["daemon"])
+	}
+}
+
 func TestStopCore_daemonKillErrorSurfaced(t *testing.T) {
 	killFn := func(s string) error {
 		return fmt.Errorf("tmux error")
 	}
 	sendKeysFn := func(s, msg string) error { return nil }
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error {
+		updated[name] = status
+		return nil
+	}
 
 	// Capture stdout to verify the error message is actually printed.
 	r, w, _ := os.Pipe()
 	old := os.Stdout
 	os.Stdout = w
 
-	stopCore([]string{"ct-daemon"}, t.TempDir(), killFn, sendKeysFn)
+	stopCore([]string{"ct-daemon"}, t.TempDir(), killFn, sendKeysFn, updateStatus)
 
 	w.Close()
 	os.Stdout = old
@@ -54,6 +80,9 @@ func TestStopCore_daemonKillErrorSurfaced(t *testing.T) {
 	}
 	if strings.Contains(string(out), "stopped:") {
 		t.Errorf("must not print 'stopped' when kill failed, got: %q", string(out))
+	}
+	if updated["daemon"] == "dead" {
+		t.Errorf("must not mark daemon dead when kill failed")
 	}
 }
 
@@ -69,7 +98,7 @@ func TestStopCore_nonDaemonSessionsNotKilled(t *testing.T) {
 		return nil
 	}
 
-	stopCore([]string{"ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn)
+	stopCore([]string{"ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn, nil)
 
 	if len(killed) != 0 {
 		t.Errorf("expected no kills for non-daemon sessions, got %v", killed)
@@ -91,7 +120,7 @@ func TestStopCore_daemonKilledOtherSessionsSignaled(t *testing.T) {
 		return nil
 	}
 
-	stopCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn)
+	stopCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn, nil)
 
 	if len(killed) != 1 || killed[0] != "ct-daemon" {
 		t.Errorf("expected only daemon killed, got %v", killed)
@@ -109,9 +138,9 @@ func TestNukeCore_killsDaemonSession(t *testing.T) {
 		killed = append(killed, s)
 		return nil
 	}
-	updated := []string{}
+	updated := map[string]string{}
 	updateStatus := func(name, status string) error {
-		updated = append(updated, name)
+		updated[name] = status
 		return nil
 	}
 
@@ -122,61 +151,35 @@ func TestNukeCore_killsDaemonSession(t *testing.T) {
 	}
 }
 
-func TestNukeCore_skipsDBUpdateForDaemon(t *testing.T) {
+func TestNukeCore_marksDaemonDeadAfterKill(t *testing.T) {
 	killFn := func(s string) error { return nil }
-	updated := []string{}
+	updated := map[string]string{}
 	updateStatus := func(name, status string) error {
-		updated = append(updated, name)
+		updated[name] = status
 		return nil
 	}
 
 	nukeCore([]string{"ct-daemon"}, killFn, updateStatus)
 
-	if len(updated) != 0 {
-		t.Errorf("expected no DB update for daemon, got updates for: %v", updated)
+	if updated["daemon"] != "dead" {
+		t.Errorf("expected daemon status set to 'dead', got %q", updated["daemon"])
 	}
 }
 
-func TestNukeCore_updatesStatusForNonDaemonSessions(t *testing.T) {
+func TestNukeCore_updatesStatusForAllSessions(t *testing.T) {
 	killFn := func(s string) error { return nil }
-	updated := []string{}
+	updated := map[string]string{}
 	updateStatus := func(name, status string) error {
-		updated = append(updated, name)
-		return nil
-	}
-
-	nukeCore([]string{"ct-mayor", "ct-prole-copper"}, killFn, updateStatus)
-
-	if len(updated) != 2 {
-		t.Errorf("expected 2 DB updates, got %v", updated)
-	}
-}
-
-func TestNukeCore_daemonSkippedOtherSessionsUpdated(t *testing.T) {
-	killed := []string{}
-	killFn := func(s string) error {
-		killed = append(killed, s)
-		return nil
-	}
-	updated := []string{}
-	updateStatus := func(name, status string) error {
-		updated = append(updated, name)
+		updated[name] = status
 		return nil
 	}
 
 	nukeCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, killFn, updateStatus)
 
-	if len(killed) != 3 {
-		t.Errorf("expected all 3 sessions killed, got %v", killed)
-	}
-	// daemon must not appear in DB updates
-	for _, name := range updated {
-		if name == "daemon" {
-			t.Errorf("daemon must not have a DB status update, but it appeared in updates")
+	for _, name := range []string{"daemon", "mayor", "prole-copper"} {
+		if updated[name] != "dead" {
+			t.Errorf("expected %q status 'dead', got %q", name, updated[name])
 		}
-	}
-	if len(updated) != 2 {
-		t.Errorf("expected 2 DB updates (mayor + copper), got %v", updated)
 	}
 }
 
