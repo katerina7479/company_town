@@ -371,6 +371,9 @@ func stopCore(sessions []string, ctDir string, killFn func(string) error, sendKe
 		}
 
 		fmt.Printf("  signaled: %s\n", s)
+		if updateStatus != nil {
+			updateStatus(agentName, "idle")
+		}
 	}
 }
 
