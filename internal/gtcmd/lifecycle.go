@@ -52,7 +52,7 @@ func Start(args []string) error {
 			"You are the Conductor. Ticket prefix: %s. "+
 				"Read your CLAUDE.md for instructions. "+
 				"Check memory/handoff.md to resume previous work. "+
-				"Begin coordinating proles: check ready tickets and assign them.",
+				"Begin your patrol loop and run it continuously — never stop.",
 			cfg.TicketPrefix,
 		)
 
@@ -64,7 +64,7 @@ func Start(args []string) error {
 			"You are the Reviewer. Ticket prefix: %s. "+
 				"Read your CLAUDE.md for instructions. "+
 				"Check memory/handoff.md to resume previous work. "+
-				"Begin patrol: check for in_review tickets and review their PRs.",
+				"Begin your patrol loop and run it continuously — never stop.",
 			cfg.TicketPrefix,
 		)
 

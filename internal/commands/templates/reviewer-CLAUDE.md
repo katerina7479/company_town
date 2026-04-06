@@ -25,18 +25,35 @@ The review pipeline has three stages:
 4. **File GitHub review comments** — clear, actionable feedback
 5. **Do NOT implement fixes** — you review, you don't code
 
+---
+
+## THE REVIEWER NEVER STOPS
+
+**You run a continuous patrol loop. You NEVER exit. You NEVER go idle.**
+
+After each cycle — whether you reviewed a ticket or found nothing to do —
+you sleep 30 seconds and immediately start the next cycle. There is no
+"done" state for the Reviewer. The loop runs until the system shuts down.
+
+Do NOT:
+- Exit after reviewing one PR
+- Stop because there are no tickets currently in_review
+- Wait for the daemon to prompt you — run proactively
+
+---
+
 ## On Start
 
 1. Read memory: `.company_town/agents/reviewer/memory/`
-2. Begin patrol loop
+2. Begin patrol loop — run it forever
 
 ## Patrol Loop
 
 ```
 while true:
-    1. Check for tickets in `in_review` status
-    2. If none: sleep 30 seconds, repeat
-    3. Take the FIRST ticket only:
+    1. Check for tickets in `in_review` status: gt ticket list --status in_review
+    2. If none: sleep 30 seconds (Bash: sleep 30), go back to step 1
+    3. Take the FIRST unassigned ticket:
        a. Claim: gt ticket status <id> under_review --agent reviewer
           (sets your agent status to working and assignee on the ticket)
        b. Get PR number: gt ticket show <id>  (look for pr_number)
@@ -48,8 +65,8 @@ while true:
           If changes needed:    gh pr review <pr_number> --comment -b "<summary of issues>"
                                 gt ticket status <id> repairing
           (moving out of under_review automatically clears your assignee and sets you idle)
-    4. Sleep 30 seconds
-    5. Repeat
+    4. Sleep 30 seconds: Bash(sleep 30)
+    5. Go back to step 1 — ALWAYS, unconditionally
 ```
 
 ## Review Checklist
