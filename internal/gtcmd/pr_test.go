@@ -3,7 +3,25 @@ package gtcmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/katerina7479/company_town/internal/config"
+	"github.com/katerina7479/company_town/internal/db"
+	"github.com/katerina7479/company_town/internal/repo"
 )
+
+func setupPRTestRepo(t *testing.T) *repo.IssueRepo {
+	t.Helper()
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("creating test db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return repo.NewIssueRepo(conn)
+}
+
+func testCfg() *config.Config {
+	return &config.Config{TicketPrefix: "nc"}
+}
 
 func TestFormatPRTitle(t *testing.T) {
 	cases := []struct {
@@ -72,5 +90,48 @@ func TestParseTicketID(t *testing.T) {
 				t.Errorf("parseTicketID(%q) = %d, want %d", tc.input, id, tc.wantID)
 			}
 		}
+	}
+}
+
+func TestPRUpdate_missingArgs(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prUpdate(issues, testCfg(), []string{})
+	if err == nil {
+		t.Fatal("expected usage error for 0 args, got nil")
+	}
+}
+
+func TestPRUpdate_notFound(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prUpdate(issues, testCfg(), []string{"9999"})
+	if err == nil {
+		t.Fatal("expected error for non-existent ticket, got nil")
+	}
+}
+
+func TestPRUpdate_wrongStatus(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	_, _ = issues.Create("A task", "task", nil, nil, nil)
+	issues.UpdateStatus(1, "in_review")
+
+	err := prUpdate(issues, testCfg(), []string{"1"})
+	if err == nil {
+		t.Fatal("expected error when ticket is not in repairing status, got nil")
+	}
+	if !strings.Contains(err.Error(), "repairing") {
+		t.Errorf("expected error to mention 'repairing', got: %v", err)
+	}
+}
+
+func TestPRUpdate_wrongStatus_open(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	_, _ = issues.Create("A task", "task", nil, nil, nil)
+	issues.UpdateStatus(1, "open")
+
+	err := prUpdate(issues, testCfg(), []string{"1"})
+	if err == nil {
+		t.Fatal("expected error for ticket in open status, got nil")
 	}
 }

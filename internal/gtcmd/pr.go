@@ -15,7 +15,7 @@ import (
 // PR dispatches gt pr subcommands.
 func PR(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt pr <create> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt pr <create|update> ...")
 		os.Exit(1)
 	}
 
@@ -30,6 +30,8 @@ func PR(args []string) error {
 	switch args[0] {
 	case "create":
 		return prCreate(issues, cfg, args[1:])
+	case "update":
+		return prUpdate(issues, cfg, args[1:])
 	default:
 		return fmt.Errorf("unknown pr command: %s", args[0])
 	}
@@ -105,6 +107,42 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	// Move ticket to in_review
+	if err := issues.UpdateStatus(id, "in_review"); err != nil {
+		return fmt.Errorf("updating ticket status: %w", err)
+	}
+
+	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
+	return nil
+}
+
+func prUpdate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt pr update <ticket_id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if issue.Status != "repairing" {
+		return fmt.Errorf("ticket %d is not in repairing status (current: %s)", id, issue.Status)
+	}
+
+	// Push latest changes
+	pushCmd := exec.Command("git", "push", "origin", "HEAD")
+	pushCmd.Stdout = os.Stdout
+	pushCmd.Stderr = os.Stderr
+	if err := pushCmd.Run(); err != nil {
+		return fmt.Errorf("pushing branch: %w", err)
+	}
+
+	// Move ticket back to in_review
 	if err := issues.UpdateStatus(id, "in_review"); err != nil {
 		return fmt.Errorf("updating ticket status: %w", err)
 	}
