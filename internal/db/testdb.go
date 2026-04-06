@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS issues (
   pr_number     INTEGER,
   assignee      TEXT,
   parent_id     INTEGER,
+  priority      TEXT,
   created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   closed_at     DATETIME,
