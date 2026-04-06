@@ -204,6 +204,22 @@ func (r *IssueRepo) ClearAssignee(id int) error {
 	return nil
 }
 
+// UpdateDescription sets the description on an issue.
+func (r *IssueRepo) UpdateDescription(id int, description string) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		description, id,
+	)
+	if err != nil {
+		return fmt.Errorf("updating issue description: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
 // SetPR sets the PR number on an issue.
 func (r *IssueRepo) SetPR(id, prNumber int) error {
 	_, err := r.db.Exec(

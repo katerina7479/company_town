@@ -59,6 +59,8 @@ func Ticket(args []string) error {
 		return ticketDelete(issues, args[1:])
 	case "depend":
 		return ticketDepend(issues, cfg.TicketPrefix, args[1:])
+	case "describe":
+		return ticketDescribe(issues, args[1:])
 	default:
 		return fmt.Errorf("unknown ticket command: %s", args[0])
 	}
@@ -66,12 +68,13 @@ func Ticket(args []string) error {
 
 func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>]")
+		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>]")
 	}
 
 	title := args[0]
 	var parentID *int
 	var specialty *string
+	var description string
 	issueType := "task"
 
 	for i := 1; i < len(args); i++ {
@@ -99,12 +102,24 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 			}
 			i++
 			issueType = args[i]
+		case "--description":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--description requires a value")
+			}
+			i++
+			description = args[i]
 		}
 	}
 
 	id, err := issues.Create(title, issueType, parentID, specialty)
 	if err != nil {
 		return err
+	}
+
+	if description != "" {
+		if err := issues.UpdateDescription(id, description); err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("Created %s-%d: %s\n", prefix, id, title)
@@ -360,6 +375,26 @@ func ticketDelete(issues *repo.IssueRepo, args []string) error {
 	}
 
 	fmt.Printf("Ticket %d deleted.\n", id)
+	return nil
+}
+
+func ticketDescribe(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket describe <id> <description>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	description := args[1]
+
+	if err := issues.UpdateDescription(id, description); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d description updated.\n", id)
 	return nil
 }
 

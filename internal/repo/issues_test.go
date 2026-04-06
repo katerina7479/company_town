@@ -499,6 +499,36 @@ func TestIssueRepo_ClearAssignee_notFound(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_UpdateDescription(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("My ticket", "task", nil, nil)
+
+	if err := repo.UpdateDescription(id, "This is a description."); err != nil {
+		t.Fatalf("UpdateDescription: %v", err)
+	}
+
+	issue, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !issue.Description.Valid {
+		t.Fatal("expected description to be set, got NULL")
+	}
+	if issue.Description.String != "This is a description." {
+		t.Errorf("expected %q, got %q", "This is a description.", issue.Description.String)
+	}
+}
+
+func TestIssueRepo_UpdateDescription_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	err := repo.UpdateDescription(9999, "irrelevant")
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
+
 func TestIssueRepo_ListEpicsWithAllChildrenClosed(t *testing.T) {
 	r := setupTestRepo(t)
 
