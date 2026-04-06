@@ -97,14 +97,24 @@ func TestStopCore_nonDaemonSessionsNotKilled(t *testing.T) {
 		sent = append(sent, s)
 		return nil
 	}
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error {
+		updated[name] = status
+		return nil
+	}
 
-	stopCore([]string{"ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn, nil)
+	stopCore([]string{"ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn, updateStatus)
 
 	if len(killed) != 0 {
 		t.Errorf("expected no kills for non-daemon sessions, got %v", killed)
 	}
 	if len(sent) != 2 {
 		t.Errorf("expected 2 sendKeys for non-daemon sessions, got %d", len(sent))
+	}
+	for _, name := range []string{"mayor", "prole-copper"} {
+		if updated[name] != "idle" {
+			t.Errorf("expected %q status 'idle', got %q", name, updated[name])
+		}
 	}
 }
 
@@ -119,14 +129,27 @@ func TestStopCore_daemonKilledOtherSessionsSignaled(t *testing.T) {
 		sent = append(sent, s)
 		return nil
 	}
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error {
+		updated[name] = status
+		return nil
+	}
 
-	stopCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn, nil)
+	stopCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, sendKeysFn, updateStatus)
 
 	if len(killed) != 1 || killed[0] != "ct-daemon" {
 		t.Errorf("expected only daemon killed, got %v", killed)
 	}
 	if len(sent) != 2 {
 		t.Errorf("expected 2 non-daemon sessions signaled, got %d", len(sent))
+	}
+	if updated["daemon"] != "dead" {
+		t.Errorf("expected daemon status 'dead', got %q", updated["daemon"])
+	}
+	for _, name := range []string{"mayor", "prole-copper"} {
+		if updated[name] != "idle" {
+			t.Errorf("expected %q status 'idle', got %q", name, updated[name])
+		}
 	}
 }
 
