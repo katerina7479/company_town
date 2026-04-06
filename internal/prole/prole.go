@@ -91,31 +91,38 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		return fmt.Errorf("creating proles dir: %w", err)
 	}
 
-	// Check if worktree already exists
-	if _, err := os.Stat(wtPath); err == nil {
-		return fmt.Errorf("worktree already exists: %s", wtPath)
-	}
+	// Create worktree if it doesn't already exist
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		// Ensure bare repo is set up and current
+		if err := EnsureBareRepo(cfg); err != nil {
+			return fmt.Errorf("setting up bare repo: %w", err)
+		}
 
-	// Ensure bare repo is set up and current
-	if err := EnsureBareRepo(cfg); err != nil {
-		return fmt.Errorf("setting up bare repo: %w", err)
-	}
+		// Create worktree on a new branch from origin/main
+		branch := fmt.Sprintf("prole/%s/standby", name)
+		cmd := exec.Command("git", "worktree", "add", "-b", branch, wtPath, "origin/main")
+		cmd.Dir = BareRepoPath(cfg)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("creating worktree: %w", err)
+		}
 
-	// Create worktree on a new branch from origin/main
-	branch := fmt.Sprintf("prole/%s/standby", name)
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, wtPath, "origin/main")
-	cmd.Dir = BareRepoPath(cfg)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("creating worktree: %w", err)
+		// Set push remote to origin so proles push to GitHub
+		pushCmd := exec.Command("git", "remote", "set-url", "--push", "origin",
+			mustGetOriginURL(cfg))
+		pushCmd.Dir = wtPath
+		pushCmd.Run()
+	} else {
+		// Worktree exists — pull latest from main
+		pullCmd := exec.Command("git", "pull", "origin", "main", "--ff-only")
+		pullCmd.Dir = wtPath
+		pullCmd.Stdout = os.Stdout
+		pullCmd.Stderr = os.Stderr
+		if err := pullCmd.Run(); err != nil {
+			return fmt.Errorf("updating worktree from main: %w", err)
+		}
 	}
-
-	// Set push remote to origin so proles push to GitHub
-	pushCmd := exec.Command("git", "remote", "set-url", "--push", "origin",
-		mustGetOriginURL(cfg))
-	pushCmd.Dir = wtPath
-	pushCmd.Run()
 
 	// Register agent in DB
 	if _, err := agents.Get(name); err != nil {
