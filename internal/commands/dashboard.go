@@ -205,11 +205,15 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataMsg:
 		m.data = dashboardData(msg)
 		// Clamp cursors in case list shrank after refresh.
-		if m.agentCursor >= len(m.data.agents) && len(m.data.agents) > 0 {
+		if len(m.data.agents) == 0 {
+			m.agentCursor = 0
+		} else if m.agentCursor >= len(m.data.agents) {
 			m.agentCursor = len(m.data.agents) - 1
 		}
 		flat := m.flatTickets()
-		if m.ticketCursor >= len(flat) && len(flat) > 0 {
+		if len(flat) == 0 {
+			m.ticketCursor = 0
+		} else if m.ticketCursor >= len(flat) {
 			m.ticketCursor = len(flat) - 1
 		}
 	}
@@ -268,7 +272,7 @@ func (m dashboardModel) renderAgents(width, height int) string {
 	sb.WriteString(headerStyle.Render("Agents") + "\n\n")
 
 	focused := m.focusedPanel == 0
-	rowWidth := width - 2 // subtract panel padding
+	rowWidth := width
 
 	if len(m.data.agents) == 0 {
 		sb.WriteString(footerStyle.Render("(none registered)"))
@@ -308,7 +312,7 @@ func (m dashboardModel) renderTickets(width, height int) string {
 	sb.WriteString(headerStyle.Render("Tickets") + "\n\n")
 
 	focused := m.focusedPanel == 1
-	rowWidth := width - 2 // subtract panel padding
+	rowWidth := width
 
 	flat := m.flatTickets()
 	if len(flat) == 0 {
