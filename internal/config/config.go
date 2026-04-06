@@ -66,6 +66,7 @@ type Config struct {
 	ContextHandoffThreshold      float64       `json:"context_handoff_threshold"`
 	StuckAgentThresholdSeconds   int           `json:"stuck_agent_threshold_seconds"`
 	WorktreePruneIntervalSeconds int           `json:"worktree_prune_interval_seconds"`
+	PRBackfillIntervalSeconds    int           `json:"pr_backfill_interval_seconds"`
 	Quality                      QualityConfig `json:"quality"`
 }
 
@@ -125,6 +126,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		ContextHandoffThreshold:      0.80,
 		StuckAgentThresholdSeconds:   1800,
 		WorktreePruneIntervalSeconds: 300,
+		PRBackfillIntervalSeconds:    300,
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,

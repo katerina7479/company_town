@@ -237,6 +237,31 @@ func (r *IssueRepo) ListWithPRs() ([]*Issue, error) {
 	return issues, rows.Err()
 }
 
+// ListMissingPR returns non-closed issues that have a branch set but no pr_number.
+func (r *IssueRepo) ListMissingPR() ([]*Issue, error) {
+	rows, err := r.db.Query(
+		`SELECT id, issue_type, status, title, description, specialty, branch,
+		        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+		 FROM issues
+		 WHERE pr_number IS NULL AND branch IS NOT NULL AND status != 'closed'
+		 ORDER BY id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing issues missing PR: %w", err)
+	}
+	defer rows.Close()
+
+	var issues []*Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
 // Close closes an issue.
 func (r *IssueRepo) Close(id int) error {
 	return r.UpdateStatus(id, "closed")

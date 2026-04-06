@@ -1539,3 +1539,113 @@ func TestHandleEpicAutoClose_notifiesMayor(t *testing.T) {
 		t.Errorf("expected message to mayor session, got %q", (*sent)[0].session)
 	}
 }
+
+func TestHandleBackfillPRNumbers_backfillsMatchingBranch(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	id, err := issues.Create("My ticket", "task", nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.Assign(id, "copper", "prole/copper/NC-1"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	issues.UpdateStatus(id, "in_review")
+
+	d.lookupPRForBranch = func(branch string) (int, bool, error) {
+		if branch == "prole/copper/NC-1" {
+			return 42, true, nil
+		}
+		return 0, false, nil
+	}
+
+	d.handleBackfillPRNumbers()
+
+	updated, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !updated.PRNumber.Valid || updated.PRNumber.Int64 != 42 {
+		t.Errorf("expected pr_number=42, got %v", updated.PRNumber)
+	}
+}
+
+func TestHandleBackfillPRNumbers_skipsTicketsWithExistingPR(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	id, _ := issues.Create("Already has PR", "task", nil, nil)
+	issues.Assign(id, "copper", "prole/copper/NC-2")
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 99)
+
+	var lookupCalls int
+	d.lookupPRForBranch = func(branch string) (int, bool, error) {
+		lookupCalls++
+		return 0, false, nil
+	}
+
+	d.handleBackfillPRNumbers()
+
+	if lookupCalls != 0 {
+		t.Errorf("expected no GitHub lookups for tickets with existing PR, got %d", lookupCalls)
+	}
+}
+
+func TestHandleBackfillPRNumbers_skipsTicketsWithNullBranch(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	id, _ := issues.Create("No branch", "task", nil, nil)
+	issues.UpdateStatus(id, "open")
+	// No Assign call — branch remains NULL
+
+	var lookupCalls int
+	d.lookupPRForBranch = func(branch string) (int, bool, error) {
+		lookupCalls++
+		return 0, false, nil
+	}
+
+	d.handleBackfillPRNumbers()
+
+	if lookupCalls != 0 {
+		t.Errorf("expected no GitHub lookups for tickets with null branch, got %d", lookupCalls)
+	}
+}
+
+func TestHandleBackfillPRNumbers_respectsInterval(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	id, _ := issues.Create("Interval test", "task", nil, nil)
+	issues.Assign(id, "copper", "prole/copper/NC-3")
+	issues.UpdateStatus(id, "in_review")
+
+	// Return not-found so the ticket is never backfilled and remains available
+	// for the next interval — this lets us count handler invocations cleanly.
+	var lookupCalls int
+	d.lookupPRForBranch = func(branch string) (int, bool, error) {
+		lookupCalls++
+		return 0, false, nil
+	}
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.prBackfillInterval = 5 * time.Minute
+
+	// First call: lastPRBackfill is zero, should run
+	d.handleBackfillPRNumbers()
+	if lookupCalls != 1 {
+		t.Fatalf("expected 1 lookup on first call, got %d", lookupCalls)
+	}
+
+	// Second call immediately: interval not elapsed — should NOT run
+	d.handleBackfillPRNumbers()
+	if lookupCalls != 1 {
+		t.Errorf("expected no lookup within interval, got %d", lookupCalls)
+	}
+
+	// Advance past interval
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleBackfillPRNumbers()
+	if lookupCalls != 2 {
+		t.Errorf("expected 2 lookups after interval elapsed, got %d", lookupCalls)
+	}
+}
