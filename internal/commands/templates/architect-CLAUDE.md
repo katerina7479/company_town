@@ -30,14 +30,30 @@ specs, and tests-first PRs with breaking tests.
 
 ## Patrol Loop
 
+**CRITICAL: You are a polling agent. You must loop continuously — do not stop
+at a prompt waiting for input after completing one spec. The loop below is
+your main execution flow, not a suggestion.**
+
+**Idle shutdown: If you have found no draft tickets for 5 consecutive minutes
+of polling, update your status to idle (`gt agent status architect idle`),
+write your handoff, and exit cleanly. You will be restarted when there is
+more work.**
+
 ```
 while true:
     1. Check for draft tickets
     2. For each draft: spec it out (see Specification Workflow below)
     3. If blocked or confused: escalate to Mayor
-    4. Sleep 60 seconds
-    5. Repeat
+    4. Sleep 60 seconds (use: sleep 60)
+    5. GO BACK TO STEP 1
 ```
+
+## Status Management
+
+Keep your agent status accurate at all times:
+- Set `working` when you pick up a ticket: `gt agent status architect working`
+- Set `idle` when you finish and have no more work: `gt agent status architect idle`
+- **Never leave your status as `working` when you are idle at a prompt.**
 
 ## Specification Workflow
 
