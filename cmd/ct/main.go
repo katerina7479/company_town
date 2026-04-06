@@ -53,12 +53,6 @@ func main() {
 		} else {
 			err = commands.Artisan(specialty)
 		}
-	case "janitor":
-		if len(args) > 0 && args[0] == "stop" {
-			err = commands.JanitorStop()
-		} else {
-			err = commands.Janitor()
-		}
 	case "attach":
 		if len(args) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: ct attach <session-name>")
@@ -93,8 +87,6 @@ Commands:
   architect stop      Signal Architect to write handoff and exit
   artisan <specialty> Start an Artisan agent for the given specialty
   artisan <specialty> stop  Signal Artisan to write handoff and exit
-  janitor             Start the Janitor agent
-  janitor stop        Signal Janitor to write handoff and exit
   attach <name>       Attach to a running agent session
   dashboard           Open the live agents + tickets TUI
   daemon              Run the daemon (internal — started by ct start)`)

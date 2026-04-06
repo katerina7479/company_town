@@ -26,7 +26,6 @@ type AgentsConfig struct {
 	Artisan   ArtisanConfig `json:"artisan"`
 	Conductor AgentConfig   `json:"conductor"`
 	Prole     AgentConfig   `json:"prole"`
-	Janitor   AgentConfig   `json:"janitor"`
 }
 
 type DoltConfig struct {
@@ -119,7 +118,6 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 			Artisan: ArtisanConfig{}, // User-defined in config.json
 			Conductor: AgentConfig{Model: "claude-sonnet-4-5"},
 			Prole:     AgentConfig{Model: "claude-sonnet-4-5"},
-			Janitor:   AgentConfig{Model: "claude-sonnet-4-5"},
 		},
 		PollingIntervalSeconds:       30,
 		NudgeCooldownSeconds:         300,

@@ -50,4 +50,3 @@ See the system specification for full details. Roles:
 - **Conductor** (Sonnet) — assigns tickets to workers
 - **Prole** (Sonnet) — ephemeral implementation agents
 - **QA** (Sonnet) — reviews PRs
-- **Janitor** (Sonnet) — cleanup and maintenance patrols
