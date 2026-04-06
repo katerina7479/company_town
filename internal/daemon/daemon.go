@@ -44,6 +44,11 @@ type Daemon struct {
 	pruneStaleWorktrees  func() error
 	lastWorktreePrune    time.Time
 	worktreeInterval     time.Duration
+
+	// PR number backfill
+	lookupPRForBranch  func(branch string) (int, bool, error)
+	lastPRBackfill     time.Time
+	prBackfillInterval time.Duration
 }
 
 // New creates a new Daemon.
@@ -88,6 +93,10 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 			return err
 		},
 		worktreeInterval: time.Duration(cfg.WorktreePruneIntervalSeconds) * time.Second,
+		lookupPRForBranch: func(branch string) (int, bool, error) {
+			return lookupPRForBranch(branch, cfg.ProjectRoot)
+		},
+		prBackfillInterval: time.Duration(cfg.PRBackfillIntervalSeconds) * time.Second,
 	}, nil
 }
 
@@ -198,6 +207,7 @@ func ticketDigest(ids []int) string {
 func (d *Daemon) poll() {
 	d.handleDeadSessions()
 	d.handleStaleWorktrees()
+	d.handleBackfillPRNumbers()
 	d.handleDraftTickets()
 	d.handleOpenTickets()
 	d.handleInReviewTickets()
@@ -218,6 +228,66 @@ func (d *Daemon) handleStaleWorktrees() {
 		d.logger.Printf("error pruning stale worktrees: %v", err)
 	}
 	d.lastWorktreePrune = d.nowFn()
+}
+
+// handleBackfillPRNumbers finds tickets with a branch but no pr_number and attempts
+// to look up a matching open PR on GitHub. Guarded by prBackfillInterval.
+func (d *Daemon) handleBackfillPRNumbers() {
+	if d.prBackfillInterval > 0 && !d.nowFn().After(d.lastPRBackfill.Add(d.prBackfillInterval)) {
+		return // not yet time
+	}
+
+	tickets, err := d.issues.ListMissingPR()
+	if err != nil {
+		d.logger.Printf("error listing tickets missing PR: %v", err)
+		d.lastPRBackfill = d.nowFn()
+		return
+	}
+
+	for _, issue := range tickets {
+		if !issue.Branch.Valid || issue.Branch.String == "" {
+			continue
+		}
+		prNum, found, err := d.lookupPRForBranch(issue.Branch.String)
+		if err != nil {
+			d.logger.Printf("error looking up PR for branch %s: %v", issue.Branch.String, err)
+			continue
+		}
+		if !found {
+			continue
+		}
+		if err := d.issues.SetPR(issue.ID, prNum); err != nil {
+			d.logger.Printf("error backfilling PR for ticket %s-%d: %v",
+				d.cfg.TicketPrefix, issue.ID, err)
+			continue
+		}
+		d.logger.Printf("backfilled PR #%d for ticket %s-%d (branch %s)",
+			prNum, d.cfg.TicketPrefix, issue.ID, issue.Branch.String)
+	}
+
+	d.lastPRBackfill = d.nowFn()
+}
+
+// lookupPRForBranch queries GitHub for an open PR matching the given head branch.
+// Returns (prNumber, found, error). found is false when no matching PR exists.
+func lookupPRForBranch(branch, projectRoot string) (int, bool, error) {
+	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--json", "number", "--limit", "1")
+	cmd.Dir = projectRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, false, fmt.Errorf("gh pr list: %w", err)
+	}
+
+	var results []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(out, &results); err != nil {
+		return 0, false, fmt.Errorf("parsing PR list: %w", err)
+	}
+	if len(results) == 0 {
+		return 0, false, nil
+	}
+	return results[0].Number, true, nil
 }
 
 // handleEpicAutoClose closes epics whose sub-tasks are all closed.
