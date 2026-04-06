@@ -72,9 +72,13 @@ func EnsureBareRepo(cfg *config.Config) error {
 }
 
 // Create sets up a new prole: bare repo worktree, DB registration, tmux session.
+// If the prole already exists in the DB, it re-launches the session without
+// checking the max_proles cap (no new prole is being created).
 func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
-	// Enforce max_proles limit before creating a new prole.
-	if cfg.MaxProles > 0 {
+	// Enforce max_proles limit only when creating a brand-new prole.
+	_, existsErr := agents.Get(name)
+	isNew := existsErr != nil
+	if isNew && cfg.MaxProles > 0 {
 		count, err := agents.CountByType("prole")
 		if err != nil {
 			return fmt.Errorf("counting proles: %w", err)
