@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
 )
 
 // refreshInterval controls how often the dashboard polls the database.
@@ -95,6 +97,12 @@ type tickMsg time.Time
 // dataMsg delivers a freshly fetched snapshot.
 type dataMsg dashboardData
 
+// actionResultMsg carries the result of an agent action (kill, stop).
+type actionResultMsg struct {
+	text string
+	err  error
+}
+
 // flatNode is an issue node with its render depth, used for cursor navigation.
 type flatNode struct {
 	node  *repo.IssueNode
@@ -115,6 +123,8 @@ type dashboardModel struct {
 	focusedPanel int // 0 = agents, 1 = tickets
 	agentCursor  int
 	ticketCursor int
+
+	statusMsg string // transient feedback from agent actions
 }
 
 func newDashboardModel() (*dashboardModel, error) {
@@ -190,7 +200,43 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ticketCursor--
 				}
 			}
+
+		case "a":
+			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
+				agent := m.data.agents[m.agentCursor]
+				sname := session.SessionName(agent.Name)
+				if session.Exists(sname) {
+					c := exec.Command("tmux", "attach-session", "-t", sname)
+					return m, tea.ExecProcess(c, func(err error) tea.Msg {
+						if err != nil {
+							return actionResultMsg{err: fmt.Errorf("attach %s: %w", agent.Name, err)}
+						}
+						return actionResultMsg{text: "Detached from " + agent.Name}
+					})
+				}
+				m.statusMsg = "No active session for " + agent.Name
+			}
+
+		case "x":
+			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
+				agent := m.data.agents[m.agentCursor]
+				return m, m.killAgentCmd(agent)
+			}
+
+		case "s":
+			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
+				agent := m.data.agents[m.agentCursor]
+				return m, m.stopAgentCmd(agent)
+			}
 		}
+
+	case actionResultMsg:
+		if msg.err != nil {
+			m.statusMsg = "Error: " + msg.err.Error()
+		} else {
+			m.statusMsg = msg.text
+		}
+		return m, func() tea.Msg { return m.fetch() }
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -219,6 +265,35 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// killAgentCmd kills the agent's tmux session and marks it dead in the DB.
+func (m dashboardModel) killAgentCmd(a *repo.Agent) tea.Cmd {
+	return func() tea.Msg {
+		sname := session.SessionName(a.Name)
+		if err := session.Kill(sname); err != nil {
+			return actionResultMsg{err: fmt.Errorf("kill session %s: %w", a.Name, err)}
+		}
+		if err := m.agents.UpdateStatus(a.Name, "dead"); err != nil {
+			return actionResultMsg{err: fmt.Errorf("update status %s: %w", a.Name, err)}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Killed %s", a.Name)}
+	}
+}
+
+// stopAgentCmd sends a graceful shutdown signal to the agent's tmux session.
+func (m dashboardModel) stopAgentCmd(a *repo.Agent) tea.Cmd {
+	return func() tea.Msg {
+		sname := session.SessionName(a.Name)
+		if !session.Exists(sname) {
+			return actionResultMsg{err: fmt.Errorf("no active session for %s", a.Name)}
+		}
+		msg := "Complete your current work, follow the completion protocol, and go idle."
+		if err := session.SendKeys(sname, msg); err != nil {
+			return actionResultMsg{err: fmt.Errorf("send stop signal to %s: %w", a.Name, err)}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Sent stop signal to %s", a.Name)}
+	}
 }
 
 // flatTickets returns the flat ordered list of visible ticket nodes (same order as rendered).
@@ -259,10 +334,15 @@ func (m dashboardModel) View() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, agentsPanel, "  ", ticketsPanel)
 
-	footer := footerStyle.Render(fmt.Sprintf(
-		" q quit  r refresh  tab switch panel  j/k navigate  (auto-refresh every %s)",
+	var footerParts []string
+	footerParts = append(footerParts, fmt.Sprintf(
+		" q quit  r refresh  tab switch panel  j/k navigate  a attach  x kill  s stop  (auto-refresh every %s)",
 		refreshInterval,
 	))
+	if m.statusMsg != "" {
+		footerParts = append(footerParts, "  "+m.statusMsg)
+	}
+	footer := footerStyle.Render(strings.Join(footerParts, ""))
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }
