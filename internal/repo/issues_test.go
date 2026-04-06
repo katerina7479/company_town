@@ -502,7 +502,7 @@ func TestIssueRepo_ClearAssignee_notFound(t *testing.T) {
 func TestIssueRepo_UpdateDescription(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("My ticket", "task", nil, nil)
+	id, _ := repo.Create("My ticket", "task", nil, nil, nil)
 
 	if err := repo.UpdateDescription(id, "This is a description."); err != nil {
 		t.Fatalf("UpdateDescription: %v", err)
