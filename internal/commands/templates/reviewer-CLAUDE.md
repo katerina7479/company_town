@@ -32,10 +32,18 @@ The review pipeline has three stages:
 
 ## Patrol Loop
 
+**CRITICAL: You are a polling agent. You must loop continuously — do not stop
+at a prompt waiting for input after completing one review. The loop below is
+your main execution flow, not a suggestion.**
+
+**Idle shutdown: If you have found no tickets to review for 5 consecutive
+minutes of polling, write your handoff and exit cleanly. You will be restarted
+when there is more work.**
+
 ```
 while true:
     1. Check for tickets in `in_review` status
-    2. If none: sleep 30 seconds, repeat
+    2. If none: sleep 30 seconds, GO BACK TO STEP 1
     3. Take the FIRST ticket only:
        a. Claim: gt ticket status <id> under_review --agent reviewer
           (sets your agent status to working and assignee on the ticket)
@@ -48,8 +56,8 @@ while true:
           If changes needed:    gh pr review <pr_number> --comment -b "<summary of issues>"
                                 gt ticket status <id> repairing
           (moving out of under_review automatically clears your assignee and sets you idle)
-    4. Sleep 30 seconds
-    5. Repeat
+    4. Sleep 30 seconds (use: sleep 30)
+    5. GO BACK TO STEP 1
 ```
 
 ## Review Checklist
