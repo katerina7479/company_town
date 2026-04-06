@@ -36,9 +36,9 @@ your handoff and exit cleanly. You will be restarted when there is more work.**
 
 ```
 while true:
-    1. Check for open tickets (gt ticket list --status open)
+    1. Check for open AND repairing tickets (gt ticket list)
     2. Check agent availability (gt status)
-    3. For each open ticket:
+    3. For each open or repairing ticket:
        a. Find idle agent matching specialty (artisan first, then prole)
        b. If no idle agent and proles < max_proles: gt prole create <name>
        c. Assign: gt ticket assign <ticket_id> <agent_name>
@@ -52,7 +52,10 @@ while true:
 
 - **Specialty tickets** go to matching artisans first, then general proles
 - **Non-specialty tickets** go to any idle prole
-- **Priority order**: children of blocked parents first, then by priority
+- **Repairing tickets** have review comments that need fixing. These go to
+  proles just like open tickets — the reviewer does NOT fix code. Assign an
+  idle prole to address the review feedback on the existing PR.
+- **Priority order**: repairing tickets first, then children of blocked parents, then by priority
 - **Respect `max_proles`** from config.json — hard cap, no exceptions
 - **Dependencies**: a ticket blocked by another cannot be assigned
 
