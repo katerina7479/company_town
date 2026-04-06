@@ -115,6 +115,10 @@ type dashboardModel struct {
 	agents *repo.AgentRepo
 	issues *repo.IssueRepo
 
+	killSession   func(name string) error
+	sessionExists func(name string) bool
+	sendKeys      func(name, msg string) error
+
 	data dashboardData
 
 	width  int
@@ -133,9 +137,12 @@ func newDashboardModel() (*dashboardModel, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 	return &dashboardModel{
-		conn:   conn,
-		agents: repo.NewAgentRepo(conn),
-		issues: repo.NewIssueRepo(conn),
+		conn:          conn,
+		agents:        repo.NewAgentRepo(conn),
+		issues:        repo.NewIssueRepo(conn),
+		killSession:   session.Kill,
+		sessionExists: session.Exists,
+		sendKeys:      session.SendKeys,
 	}, nil
 }
 
@@ -250,6 +257,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dataMsg:
 		m.data = dashboardData(msg)
+		m.statusMsg = "" // clear transient status on each data refresh
 		// Clamp cursors in case list shrank after refresh.
 		if len(m.data.agents) == 0 {
 			m.agentCursor = 0
@@ -271,11 +279,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m dashboardModel) killAgentCmd(a *repo.Agent) tea.Cmd {
 	return func() tea.Msg {
 		sname := session.SessionName(a.Name)
-		if err := session.Kill(sname); err != nil {
+		if err := m.killSession(sname); err != nil {
 			return actionResultMsg{err: fmt.Errorf("kill session %s: %w", a.Name, err)}
 		}
 		if err := m.agents.UpdateStatus(a.Name, "dead"); err != nil {
-			return actionResultMsg{err: fmt.Errorf("update status %s: %w", a.Name, err)}
+			return actionResultMsg{err: fmt.Errorf("session for %s was killed but DB status update failed: %w", a.Name, err)}
 		}
 		return actionResultMsg{text: fmt.Sprintf("Killed %s", a.Name)}
 	}
@@ -285,11 +293,11 @@ func (m dashboardModel) killAgentCmd(a *repo.Agent) tea.Cmd {
 func (m dashboardModel) stopAgentCmd(a *repo.Agent) tea.Cmd {
 	return func() tea.Msg {
 		sname := session.SessionName(a.Name)
-		if !session.Exists(sname) {
+		if !m.sessionExists(sname) {
 			return actionResultMsg{err: fmt.Errorf("no active session for %s", a.Name)}
 		}
 		msg := "Complete your current work, follow the completion protocol, and go idle."
-		if err := session.SendKeys(sname, msg); err != nil {
+		if err := m.sendKeys(sname, msg); err != nil {
 			return actionResultMsg{err: fmt.Errorf("send stop signal to %s: %w", a.Name, err)}
 		}
 		return actionResultMsg{text: fmt.Sprintf("Sent stop signal to %s", a.Name)}

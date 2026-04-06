@@ -2,9 +2,11 @@ package commands
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 )
 
@@ -177,4 +179,200 @@ func TestFilterStaleClosedNodes(t *testing.T) {
 			t.Errorf("expected 2 roots, got %d", len(result))
 		}
 	})
+}
+
+// newTestModel creates a dashboardModel with a real test DB and injectable session stubs.
+func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string) bool, sendKeysFn func(string, string) error) (*dashboardModel, *repo.AgentRepo) {
+	t.Helper()
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	agents := repo.NewAgentRepo(conn)
+	m := &dashboardModel{
+		conn:          conn,
+		agents:        agents,
+		issues:        repo.NewIssueRepo(conn),
+		killSession:   killFn,
+		sessionExists: existsFn,
+		sendKeys:      sendKeysFn,
+	}
+	return m, agents
+}
+
+// --- killAgentCmd tests ---
+
+func TestKillAgentCmd_success(t *testing.T) {
+	killed := ""
+	m, agents := newTestModel(t,
+		func(name string) error { killed = name; return nil },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+	)
+
+	if err := agents.Register("obsidian", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	agent := &repo.Agent{Name: "obsidian"}
+	cmd := m.killAgentCmd(agent)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err != nil {
+		t.Fatalf("expected no error, got %v", msg.err)
+	}
+	if msg.text != "Killed obsidian" {
+		t.Errorf("expected 'Killed obsidian', got %q", msg.text)
+	}
+	if killed != "ct-obsidian" {
+		t.Errorf("expected killSession called with 'ct-obsidian', got %q", killed)
+	}
+
+	a, err := agents.Get("obsidian")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if a.Status != "dead" {
+		t.Errorf("expected agent status=dead, got %q", a.Status)
+	}
+}
+
+func TestKillAgentCmd_killSessionFails(t *testing.T) {
+	m, agents := newTestModel(t,
+		func(string) error { return fmt.Errorf("tmux error") },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+	)
+	agents.Register("quartz", "prole", nil)
+
+	agent := &repo.Agent{Name: "quartz"}
+	cmd := m.killAgentCmd(agent)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected error when killSession fails")
+	}
+	if msg.text != "" {
+		t.Errorf("expected no success text on failure, got %q", msg.text)
+	}
+}
+
+func TestKillAgentCmd_partialFailureMessage(t *testing.T) {
+	// killSession succeeds but the agent is not in the DB → UpdateStatus fails.
+	m, _ := newTestModel(t,
+		func(string) error { return nil }, // kill succeeds
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+	)
+	// Do NOT register the agent — UpdateStatus will fail.
+	agent := &repo.Agent{Name: "ghost"}
+	cmd := m.killAgentCmd(agent)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected error when DB update fails after successful kill")
+	}
+	errStr := msg.err.Error()
+	// Error message must communicate that the session was killed but status update failed.
+	if !containsAll(errStr, "ghost", "killed", "status") {
+		t.Errorf("error message should mention both kill and status failure, got: %q", errStr)
+	}
+}
+
+// --- stopAgentCmd tests ---
+
+func TestStopAgentCmd_success(t *testing.T) {
+	var sentTo, sentMsg string
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true }, // session exists
+		func(name, msg string) error { sentTo = name; sentMsg = msg; return nil },
+	)
+
+	agent := &repo.Agent{Name: "conductor"}
+	cmd := m.stopAgentCmd(agent)
+	result := cmd().(actionResultMsg)
+
+	if result.err != nil {
+		t.Fatalf("expected no error, got %v", result.err)
+	}
+	if result.text != "Sent stop signal to conductor" {
+		t.Errorf("unexpected success text: %q", result.text)
+	}
+	if sentTo != "ct-conductor" {
+		t.Errorf("expected sendKeys to 'ct-conductor', got %q", sentTo)
+	}
+	if sentMsg == "" {
+		t.Error("expected non-empty stop message sent to agent")
+	}
+}
+
+func TestStopAgentCmd_noSessionError(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false }, // session does not exist
+		func(string, string) error { return nil },
+	)
+
+	agent := &repo.Agent{Name: "conductor"}
+	cmd := m.stopAgentCmd(agent)
+	result := cmd().(actionResultMsg)
+
+	if result.err == nil {
+		t.Fatal("expected error when session does not exist")
+	}
+	if result.text != "" {
+		t.Errorf("expected no success text, got %q", result.text)
+	}
+}
+
+func TestStopAgentCmd_sendKeysFails(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true },
+		func(string, string) error { return fmt.Errorf("tmux send error") },
+	)
+
+	agent := &repo.Agent{Name: "conductor"}
+	cmd := m.stopAgentCmd(agent)
+	result := cmd().(actionResultMsg)
+
+	if result.err == nil {
+		t.Fatal("expected error when sendKeys fails")
+	}
+}
+
+// --- statusMsg cleared on data refresh ---
+
+func TestDataMsg_clearsStatusMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+	)
+	m.statusMsg = "previous status"
+
+	updated, _ := m.Update(dataMsg{agents: nil, roots: nil})
+	dm := updated.(dashboardModel)
+	if dm.statusMsg != "" {
+		t.Errorf("expected statusMsg cleared on dataMsg, got %q", dm.statusMsg)
+	}
+}
+
+func containsAll(s string, substrings ...string) bool {
+	for _, sub := range substrings {
+		found := false
+		for i := 0; i <= len(s)-len(sub); i++ {
+			if s[i:i+len(sub)] == sub {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
