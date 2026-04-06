@@ -23,7 +23,14 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			Padding(0, 1)
 
+	panelFocusedStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("6")). // cyan when focused
+				Padding(0, 1)
+
 	headerStyle = lipgloss.NewStyle().Bold(true).Underline(true)
+
+	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 
 	statusStyles = map[string]lipgloss.Style{
 		// Agent statuses
@@ -88,6 +95,12 @@ type tickMsg time.Time
 // dataMsg delivers a freshly fetched snapshot.
 type dataMsg dashboardData
 
+// flatNode is an issue node with its render depth, used for cursor navigation.
+type flatNode struct {
+	node  *repo.IssueNode
+	depth int
+}
+
 // dashboardModel is the bubbletea model for the dashboard.
 type dashboardModel struct {
 	conn   interface{ Close() error }
@@ -98,6 +111,10 @@ type dashboardModel struct {
 
 	width  int
 	height int
+
+	focusedPanel int // 0 = agents, 1 = tickets
+	agentCursor  int
+	ticketCursor int
 }
 
 func newDashboardModel() (*dashboardModel, error) {
@@ -146,6 +163,33 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "r":
 			return m, func() tea.Msg { return m.fetch() }
+		case "tab":
+			if m.focusedPanel == 0 {
+				m.focusedPanel = 1
+			} else {
+				m.focusedPanel = 0
+			}
+		case "j", "down":
+			if m.focusedPanel == 0 {
+				if m.agentCursor < len(m.data.agents)-1 {
+					m.agentCursor++
+				}
+			} else {
+				flat := m.flatTickets()
+				if m.ticketCursor < len(flat)-1 {
+					m.ticketCursor++
+				}
+			}
+		case "k", "up":
+			if m.focusedPanel == 0 {
+				if m.agentCursor > 0 {
+					m.agentCursor--
+				}
+			} else {
+				if m.ticketCursor > 0 {
+					m.ticketCursor--
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -160,9 +204,38 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case dataMsg:
 		m.data = dashboardData(msg)
+		// Clamp cursors in case list shrank after refresh.
+		if len(m.data.agents) == 0 {
+			m.agentCursor = 0
+		} else if m.agentCursor >= len(m.data.agents) {
+			m.agentCursor = len(m.data.agents) - 1
+		}
+		flat := m.flatTickets()
+		if len(flat) == 0 {
+			m.ticketCursor = 0
+		} else if m.ticketCursor >= len(flat) {
+			m.ticketCursor = len(flat) - 1
+		}
 	}
 
 	return m, nil
+}
+
+// flatTickets returns the flat ordered list of visible ticket nodes (same order as rendered).
+func (m dashboardModel) flatTickets() []flatNode {
+	cutoff := time.Now().Add(-4 * time.Hour)
+	filtered := filterStaleClosedNodes(m.data.roots, cutoff)
+	return flattenTree(filtered, 0)
+}
+
+// flattenTree recursively flattens a tree of issue nodes into a depth-annotated slice.
+func flattenTree(nodes []*repo.IssueNode, depth int) []flatNode {
+	var result []flatNode
+	for _, n := range nodes {
+		result = append(result, flatNode{n, depth})
+		result = append(result, flattenTree(n.Children, depth+1)...)
+	}
+	return result
 }
 
 func (m dashboardModel) View() string {
@@ -187,7 +260,7 @@ func (m dashboardModel) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, agentsPanel, "  ", ticketsPanel)
 
 	footer := footerStyle.Render(fmt.Sprintf(
-		" q quit  r refresh  (auto-refresh every %s)",
+		" q quit  r refresh  tab switch panel  j/k navigate  (auto-refresh every %s)",
 		refreshInterval,
 	))
 
@@ -198,10 +271,13 @@ func (m dashboardModel) renderAgents(width, height int) string {
 	var sb strings.Builder
 	sb.WriteString(headerStyle.Render("Agents") + "\n\n")
 
+	focused := m.focusedPanel == 0
+	rowWidth := width
+
 	if len(m.data.agents) == 0 {
 		sb.WriteString(footerStyle.Render("(none registered)"))
 	} else {
-		for _, a := range m.data.agents {
+		for i, a := range m.data.agents {
 			name := boldStyle.Render(fmt.Sprintf("%-14s", a.Name))
 			status := colorStatus(a.Status)
 			issue := ""
@@ -212,12 +288,20 @@ func (m dashboardModel) renderAgents(width, height int) string {
 			if a.StatusChangedAt.Valid {
 				age = footerStyle.Render(" (" + formatDuration(time.Since(a.StatusChangedAt.Time)) + ")")
 			}
-			sb.WriteString(fmt.Sprintf("%s %s%s%s\n", name, status, issue, age))
+			line := fmt.Sprintf("%s %s%s%s", name, status, issue, age)
+			if focused && i == m.agentCursor {
+				line = selectedStyle.Width(rowWidth).Render(line)
+			}
+			sb.WriteString(line + "\n")
 		}
 	}
 
 	inner := sb.String()
-	return panelStyle.
+	style := panelStyle
+	if focused {
+		style = panelFocusedStyle
+	}
+	return style.
 		Width(width).
 		Height(height - 2). // 2 = top+bottom border
 		Render(inner)
@@ -227,20 +311,28 @@ func (m dashboardModel) renderTickets(width, height int) string {
 	var sb strings.Builder
 	sb.WriteString(headerStyle.Render("Tickets") + "\n\n")
 
-	// Filter out closed tickets older than 4 hours to reduce clutter.
-	cutoff := time.Now().Add(-4 * time.Hour)
-	filtered := filterStaleClosedNodes(m.data.roots, cutoff)
+	focused := m.focusedPanel == 1
+	rowWidth := width
 
-	if len(filtered) == 0 {
+	flat := m.flatTickets()
+	if len(flat) == 0 {
 		sb.WriteString(footerStyle.Render("(no tickets)"))
 	} else {
-		for _, root := range filtered {
-			renderIssueNode(&sb, root, 0, width)
+		for i, fn := range flat {
+			line := renderIssueRow(fn.node, fn.depth, width)
+			if focused && i == m.ticketCursor {
+				line = selectedStyle.Width(rowWidth).Render(line)
+			}
+			sb.WriteString(line + "\n")
 		}
 	}
 
 	inner := sb.String()
-	return panelStyle.
+	style := panelStyle
+	if focused {
+		style = panelFocusedStyle
+	}
+	return style.
 		Width(width).
 		Height(height - 2).
 		Render(inner)
@@ -277,7 +369,8 @@ func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
 	return &clone
 }
 
-func renderIssueNode(sb *strings.Builder, node *repo.IssueNode, depth int, width int) {
+// renderIssueRow renders a single ticket row as a string (without trailing newline).
+func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	indent := strings.Repeat("  ", depth)
 	bullet := "●"
 	if depth > 0 {
@@ -288,8 +381,8 @@ func renderIssueNode(sb *strings.Builder, node *repo.IssueNode, depth int, width
 	idStr := fmt.Sprintf("%-6d", node.ID)
 	statusStr := fmt.Sprintf("[%-11s]", node.Status)
 	coloredStatus := colorStatus(node.Status)
-	age := footerStyle.Render("(" + formatDuration(time.Since(node.UpdatedAt)) + ")")
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
+	age := footerStyle.Render(ageRaw)
 
 	prStr := "      " // 6 chars blank when no PR
 	if node.PRNumber.Valid {
@@ -305,13 +398,9 @@ func renderIssueNode(sb *strings.Builder, node *repo.IssueNode, depth int, width
 		title = title[:titleMax-1] + "…"
 	}
 
-	sb.WriteString(fmt.Sprintf("%s %s %s %s %s %s\n",
+	return fmt.Sprintf("%s %s %s %s %s %s",
 		prefix, idStr, coloredStatus, prStr, age, title,
-	))
-
-	for _, child := range node.Children {
-		renderIssueNode(sb, child, depth+1, width)
-	}
+	)
 }
 
 // Dashboard implements `ct dashboard` — opens the live TUI.

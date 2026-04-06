@@ -84,6 +84,65 @@ func TestFilterNode(t *testing.T) {
 	})
 }
 
+func TestFlattenTree(t *testing.T) {
+	t.Run("empty input returns nil", func(t *testing.T) {
+		result := flattenTree(nil, 0)
+		if result != nil {
+			t.Errorf("expected nil for empty input, got %v", result)
+		}
+	})
+
+	t.Run("flat list returns same order at depth 0", func(t *testing.T) {
+		n1 := makeNode("open", nil)
+		n2 := makeNode("in_progress", nil)
+		n3 := makeNode("closed", nil)
+		result := flattenTree([]*repo.IssueNode{n1, n2, n3}, 0)
+		if len(result) != 3 {
+			t.Fatalf("expected 3 nodes, got %d", len(result))
+		}
+		for i, fn := range result {
+			if fn.depth != 0 {
+				t.Errorf("node %d: expected depth 0, got %d", i, fn.depth)
+			}
+		}
+		if result[0].node != n1 || result[1].node != n2 || result[2].node != n3 {
+			t.Error("flat list order not preserved")
+		}
+	})
+
+	t.Run("nested tree returns pre-order depth-annotated slice", func(t *testing.T) {
+		child1 := makeNode("open", nil)
+		child2 := makeNode("open", nil)
+		grandchild := makeNode("open", nil)
+		// child2 has grandchild
+		child2.Children = []*repo.IssueNode{grandchild}
+		root := makeNode("open", nil, child1, child2)
+
+		result := flattenTree([]*repo.IssueNode{root}, 0)
+		// Expected pre-order: root(0), child1(1), child2(1), grandchild(2)
+		if len(result) != 4 {
+			t.Fatalf("expected 4 nodes, got %d", len(result))
+		}
+		expected := []struct {
+			node  *repo.IssueNode
+			depth int
+		}{
+			{root, 0},
+			{child1, 1},
+			{child2, 1},
+			{grandchild, 2},
+		}
+		for i, e := range expected {
+			if result[i].node != e.node {
+				t.Errorf("index %d: wrong node", i)
+			}
+			if result[i].depth != e.depth {
+				t.Errorf("index %d: expected depth %d, got %d", i, e.depth, result[i].depth)
+			}
+		}
+	})
+}
+
 func TestFilterStaleClosedNodes(t *testing.T) {
 	now := time.Now()
 	cutoff := now.Add(-4 * time.Hour)
