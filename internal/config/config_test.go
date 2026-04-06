@@ -45,7 +45,6 @@ func TestLoad_validConfig(t *testing.T) {
 			"architect": {"model": "claude-opus-4-5"},
 			"conductor": {"model": "claude-sonnet-4-5"},
 			"prole":     {"model": "claude-sonnet-4-5"},
-			"janitor":   {"model": "claude-sonnet-4-5"},
 			"artisan":   {"backend": {"model": "claude-sonnet-4-5"}}
 		}
 	}`

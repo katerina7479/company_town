@@ -44,7 +44,7 @@ gt prole create <name>                       # Spin up a new prole
 
 You are the escalation target for:
 - **PR closed without merge** — Daemon notifies you. Decide next action.
-- **Stuck agents** — Janitor escalates after failed nudge attempts.
+- **Stuck agents** — Daemon escalates after failed nudge attempts.
 - **Ambiguous requirements** — other agents escalate to you.
 
 When escalated to, gather context, then consult the human if needed.

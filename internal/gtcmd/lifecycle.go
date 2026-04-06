@@ -16,7 +16,7 @@ import (
 // Start launches a named agent in a tmux session.
 func Start(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gt start <architect|conductor|reviewer|janitor|artisan-SPECIALTY>")
+		return fmt.Errorf("usage: gt start <architect|conductor|reviewer|artisan-SPECIALTY>")
 	}
 
 	conn, cfg, err := db.OpenFromWorkingDir()
@@ -65,18 +65,6 @@ func Start(args []string) error {
 				"Read your CLAUDE.md for instructions. "+
 				"Check memory/handoff.md to resume previous work. "+
 				"Begin patrol: check for in_review tickets and review their PRs.",
-			cfg.TicketPrefix,
-		)
-
-	case name == "janitor":
-		agentType = "janitor"
-		model = cfg.Agents.Janitor.Model
-		agentDir = filepath.Join(ctDir, "agents", "janitor")
-		prompt = fmt.Sprintf(
-			"You are the Janitor. Ticket prefix: %s. "+
-				"Read your CLAUDE.md for instructions. "+
-				"Check memory/handoff.md to resume previous work. "+
-				"Begin patrol: clean up stale worktrees, prune dead sessions.",
 			cfg.TicketPrefix,
 		)
 
