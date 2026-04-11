@@ -282,6 +282,11 @@ func Stop(clean bool) error {
 		return nil
 	}
 
+	if clean {
+		fmt.Println("--clean: prole worktrees will be removed immediately after signaling.")
+		fmt.Println("         Agents will NOT get time to finish in-flight commits.")
+	}
+
 	projectRoot, err := db.FindProjectRoot()
 	if err != nil {
 		return err

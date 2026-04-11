@@ -87,7 +87,9 @@ func printUsage() {
 Commands:
   init [--force]      Set up .company_town/ in project root
   start               Start the Mayor and attach to tmux session
-  stop [--clean]      Graceful shutdown with handoffs (--clean removes prole worktrees)
+  stop [--clean]      Graceful shutdown with handoffs (--clean removes prole
+                      worktrees immediately after signalling — does NOT wait
+                      for agents to exit, so in-flight commits may be lost)
   nuke                Immediate shutdown, no handoffs
   architect           Start the Architect agent
   architect stop      Signal Architect to write handoff and exit
