@@ -5,6 +5,7 @@ import (
 
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
 )
 
 // Status prints a summary of all agents and tickets.
@@ -17,6 +18,10 @@ func Status() error {
 
 	agents := repo.NewAgentRepo(conn)
 	issues := repo.NewIssueRepo(conn)
+
+	if err := reconcileDeadAgents(agents, session.Exists); err != nil {
+		return err
+	}
 
 	allAgents, err := agents.ListAll()
 	if err != nil {
@@ -46,5 +51,35 @@ func Status() error {
 		}
 	}
 
+	return nil
+}
+
+// reconcileDeadAgents marks agents as dead when their tmux session no longer
+// exists, keeping the DB in sync with reality. Mirrors the daemon's
+// handleDeadSessions so `gt status` is accurate even if the daemon is down.
+func reconcileDeadAgents(agents *repo.AgentRepo, sessionExists func(string) bool) error {
+	all, err := agents.ListAll()
+	if err != nil {
+		return err
+	}
+	for _, a := range all {
+		if a.Status == "dead" {
+			continue
+		}
+		if !a.TmuxSession.Valid || a.TmuxSession.String == "" {
+			continue
+		}
+		if sessionExists(a.TmuxSession.String) {
+			continue
+		}
+		if a.CurrentIssue.Valid {
+			if err := agents.ClearCurrentIssue(a.Name); err != nil {
+				return fmt.Errorf("clearing current issue for %s: %w", a.Name, err)
+			}
+		}
+		if err := agents.UpdateStatus(a.Name, "dead"); err != nil {
+			return fmt.Errorf("marking agent %s dead: %w", a.Name, err)
+		}
+	}
 	return nil
 }
