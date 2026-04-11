@@ -8,6 +8,13 @@ import (
 
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
+)
+
+// Overridable in tests. Default to the real tmux-backed implementations.
+var (
+	assignSessionExists = session.Exists
+	assignSendKeys      = session.SendKeys
 )
 
 // parseTicketID parses a ticket ID that may be in the form "PREFIX-N" (e.g. "nc-58")
@@ -277,15 +284,28 @@ func ticketAssign(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 		return err
 	}
 
-	if err := agents.SetCurrentIssue(agentName, &id); err != nil {
-		return fmt.Errorf("setting agent current issue: %w", err)
-	}
-
-	if err := agents.UpdateStatus(agentName, "working"); err != nil {
-		return fmt.Errorf("setting agent status to working: %w", err)
-	}
-
 	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
+
+	// Nudge the agent's tmux session so it picks the work up immediately.
+	// Without this, an agent that polled once and went idle won't notice the
+	// new assignment until something else wakes it up.
+	agent, err := agents.Get(agentName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not look up agent %s to nudge: %v\n", agentName, err)
+		return nil
+	}
+	if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
+		fmt.Fprintf(os.Stderr, "warning: agent %s has no tmux session recorded; nudge skipped\n", agentName)
+		return nil
+	}
+	if !assignSessionExists(agent.TmuxSession.String) {
+		fmt.Fprintf(os.Stderr, "warning: session %s for %s is not running; nudge skipped\n", agent.TmuxSession.String, agentName)
+		return nil
+	}
+	msg := fmt.Sprintf("You have been assigned ticket %d. Run `gt ticket show %d` and begin work per your CLAUDE.md lifecycle.", id, id)
+	if err := assignSendKeys(agent.TmuxSession.String, msg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to nudge %s: %v\n", agentName, err)
+	}
 	return nil
 }
 
