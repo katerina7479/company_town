@@ -491,7 +491,9 @@ func (d *Daemon) handleQualityBaseline() {
 	d.lastQualityBaseline = d.nowFn()
 }
 
-// handleDeadSessions marks agents as dead when their tmux session no longer exists.
+// handleDeadSessions reconciles the agents table with tmux reality.
+// Proles without a live session are deleted (they're ephemeral); core agents
+// are marked dead so restart cooldowns and history are preserved.
 func (d *Daemon) handleDeadSessions() {
 	agents, err := d.agents.ListAll()
 	if err != nil {
@@ -500,13 +502,17 @@ func (d *Daemon) handleDeadSessions() {
 	}
 
 	for _, agent := range agents {
+		if agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String) {
+			continue
+		}
+		if agent.Type == "prole" {
+			d.logger.Printf("prole %s has no live tmux session — deleting", agent.Name)
+			if err := d.agents.Delete(agent.Name); err != nil {
+				d.logger.Printf("error deleting prole %s: %v", agent.Name, err)
+			}
+			continue
+		}
 		if agent.Status == "dead" {
-			continue
-		}
-		if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
-			continue
-		}
-		if d.sessionExists(agent.TmuxSession.String) {
 			continue
 		}
 		d.logger.Printf("session %s for agent %s not found — marking dead",

@@ -653,20 +653,46 @@ func TestListWithPRs_onlyReturnsNonClosed(t *testing.T) {
 
 // --- Dead session detection tests ---
 
-func TestHandleDeadSessions_marksAgentDeadWhenSessionGone(t *testing.T) {
+func TestHandleDeadSessions_marksCoreAgentDeadWhenSessionGone(t *testing.T) {
 	d, _, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	agents.Register("reviewer", "reviewer", nil)
+	agents.SetTmuxSession("reviewer", "ct-reviewer")
+
+	d.handleDeadSessions()
+
+	agent, err := agents.Get("reviewer")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if agent.Status != "dead" {
+		t.Errorf("expected status='dead', got %q", agent.Status)
+	}
+}
+
+func TestHandleDeadSessions_deletesProleWhenSessionGone(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
 
 	agents.Register("worker", "prole", nil)
 	agents.SetTmuxSession("worker", "ct-worker")
 
 	d.handleDeadSessions()
 
-	agent, err := agents.Get("worker")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
+	if _, err := agents.Get("worker"); err == nil {
+		t.Errorf("expected prole to be deleted, still present")
 	}
-	if agent.Status != "dead" {
-		t.Errorf("expected status='dead', got %q", agent.Status)
+}
+
+func TestHandleDeadSessions_deletesProleWithNoSession(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	// No SetTmuxSession call — prole has no session recorded
+	agents.Register("worker", "prole", nil)
+
+	d.handleDeadSessions()
+
+	if _, err := agents.Get("worker"); err == nil {
+		t.Errorf("expected prole with no session to be deleted, still present")
 	}
 }
 
@@ -678,37 +704,26 @@ func TestHandleDeadSessions_keepsAgentAliveWhenSessionExists(t *testing.T) {
 
 	d.handleDeadSessions()
 
-	agent, _ := agents.Get("worker")
+	agent, err := agents.Get("worker")
+	if err != nil {
+		t.Fatalf("expected prole to survive, got error: %v", err)
+	}
 	if agent.Status != "idle" {
 		t.Errorf("expected status='idle' (session alive), got %q", agent.Status)
 	}
 }
 
-func TestHandleDeadSessions_skipsAgentWithNoSession(t *testing.T) {
+func TestHandleDeadSessions_skipsAlreadyDeadCoreAgents(t *testing.T) {
 	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
 
-	// No SetTmuxSession call — agent has no session recorded
-	agents.Register("worker", "prole", nil)
-
-	d.handleDeadSessions()
-
-	agent, _ := agents.Get("worker")
-	if agent.Status != "idle" {
-		t.Errorf("expected status='idle' (no session to check), got %q", agent.Status)
-	}
-}
-
-func TestHandleDeadSessions_skipsAlreadyDeadAgents(t *testing.T) {
-	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
-
-	agents.Register("worker", "prole", nil)
-	agents.SetTmuxSession("worker", "ct-worker")
-	agents.UpdateStatus("worker", "dead")
+	agents.Register("reviewer", "reviewer", nil)
+	agents.SetTmuxSession("reviewer", "ct-reviewer")
+	agents.UpdateStatus("reviewer", "dead")
 
 	// Should not error or double-process
 	d.handleDeadSessions()
 
-	agent, _ := agents.Get("worker")
+	agent, _ := agents.Get("reviewer")
 	if agent.Status != "dead" {
 		t.Errorf("expected status='dead', got %q", agent.Status)
 	}
@@ -717,22 +732,24 @@ func TestHandleDeadSessions_skipsAlreadyDeadAgents(t *testing.T) {
 func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
 	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-alive"})
 
-	agents.Register("alive-agent", "prole", nil)
-	agents.SetTmuxSession("alive-agent", "ct-alive")
+	agents.Register("alive-prole", "prole", nil)
+	agents.SetTmuxSession("alive-prole", "ct-alive")
 
-	agents.Register("dead-agent", "prole", nil)
-	agents.SetTmuxSession("dead-agent", "ct-dead")
+	agents.Register("dead-prole", "prole", nil)
+	agents.SetTmuxSession("dead-prole", "ct-dead")
 
 	d.handleDeadSessions()
 
-	alive, _ := agents.Get("alive-agent")
+	alive, err := agents.Get("alive-prole")
+	if err != nil {
+		t.Fatalf("alive-prole should survive: %v", err)
+	}
 	if alive.Status != "idle" {
-		t.Errorf("alive-agent: expected 'idle', got %q", alive.Status)
+		t.Errorf("alive-prole: expected 'idle', got %q", alive.Status)
 	}
 
-	dead, _ := agents.Get("dead-agent")
-	if dead.Status != "dead" {
-		t.Errorf("dead-agent: expected 'dead', got %q", dead.Status)
+	if _, err := agents.Get("dead-prole"); err == nil {
+		t.Errorf("dead-prole: expected to be deleted, still present")
 	}
 }
 

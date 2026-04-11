@@ -16,35 +16,48 @@ func TestReconcileDeadAgents(t *testing.T) {
 
 	agents := repo.NewAgentRepo(conn)
 
-	// alive: tmux session exists, currently working on an issue — should stay
+	// alive prole: tmux session exists, currently working — should stay
 	agents.Register("alive", "prole", nil)
 	agents.SetTmuxSession("alive", "ct-alive")
 	issueID := 1
 	agents.SetCurrentIssue("alive", &issueID)
 
-	// ghost: tmux session is gone, was working on an issue — should flip to dead
+	// ghost prole: tmux session is gone — should be deleted
 	agents.Register("ghost", "prole", nil)
 	agents.SetTmuxSession("ghost", "ct-ghost")
 	issueID2 := 2
 	agents.SetCurrentIssue("ghost", &issueID2)
 
-	// no-session: never had a tmux session — should be left alone
+	// no-session prole: never had a tmux session — should be deleted
 	agents.Register("no-session", "prole", nil)
 
-	// already-dead: already dead, should be skipped entirely
-	agents.Register("already-dead", "prole", nil)
-	agents.SetTmuxSession("already-dead", "ct-already-dead")
-	agents.UpdateStatus("already-dead", "dead")
+	// live-conductor: core agent with live session — should stay
+	agents.Register("conductor", "conductor", nil)
+	agents.SetTmuxSession("conductor", "ct-conductor")
+
+	// dead-reviewer: core agent whose session is gone — should be marked dead, not deleted
+	agents.Register("reviewer", "reviewer", nil)
+	agents.SetTmuxSession("reviewer", "ct-reviewer")
+	issueID3 := 3
+	agents.SetCurrentIssue("reviewer", &issueID3)
+
+	// already-dead core agent: should be left alone (not re-processed)
+	agents.Register("architect", "architect", nil)
+	agents.SetTmuxSession("architect", "ct-architect")
+	agents.UpdateStatus("architect", "dead")
 
 	sessionExists := func(name string) bool {
-		return name == "ct-alive"
+		return name == "ct-alive" || name == "ct-conductor"
 	}
 
 	if err := reconcileDeadAgents(agents, sessionExists); err != nil {
 		t.Fatalf("reconcileDeadAgents: %v", err)
 	}
 
-	alive, _ := agents.Get("alive")
+	alive, err := agents.Get("alive")
+	if err != nil {
+		t.Fatalf("alive prole should still exist: %v", err)
+	}
 	if alive.Status != "working" {
 		t.Errorf("alive: expected status='working', got %q", alive.Status)
 	}
@@ -52,21 +65,38 @@ func TestReconcileDeadAgents(t *testing.T) {
 		t.Errorf("alive: expected current_issue=1, got %v", alive.CurrentIssue)
 	}
 
-	ghost, _ := agents.Get("ghost")
-	if ghost.Status != "dead" {
-		t.Errorf("ghost: expected status='dead', got %q", ghost.Status)
-	}
-	if ghost.CurrentIssue.Valid {
-		t.Errorf("ghost: expected current_issue=NULL, got %d", ghost.CurrentIssue.Int64)
+	if _, err := agents.Get("ghost"); err == nil {
+		t.Errorf("ghost prole: expected to be deleted, still present")
 	}
 
-	noSession, _ := agents.Get("no-session")
-	if noSession.Status != "idle" {
-		t.Errorf("no-session: expected status='idle', got %q", noSession.Status)
+	if _, err := agents.Get("no-session"); err == nil {
+		t.Errorf("no-session prole: expected to be deleted, still present")
 	}
 
-	alreadyDead, _ := agents.Get("already-dead")
-	if alreadyDead.Status != "dead" {
-		t.Errorf("already-dead: expected status='dead', got %q", alreadyDead.Status)
+	conductor, err := agents.Get("conductor")
+	if err != nil {
+		t.Fatalf("conductor should still exist: %v", err)
+	}
+	if conductor.Status == "dead" {
+		t.Errorf("conductor: expected still alive, got dead")
+	}
+
+	reviewer, err := agents.Get("reviewer")
+	if err != nil {
+		t.Fatalf("reviewer should still exist (core agents marked dead, not deleted): %v", err)
+	}
+	if reviewer.Status != "dead" {
+		t.Errorf("reviewer: expected status='dead', got %q", reviewer.Status)
+	}
+	if reviewer.CurrentIssue.Valid {
+		t.Errorf("reviewer: expected current_issue=NULL, got %d", reviewer.CurrentIssue.Int64)
+	}
+
+	architect, err := agents.Get("architect")
+	if err != nil {
+		t.Fatalf("architect should still exist: %v", err)
+	}
+	if architect.Status != "dead" {
+		t.Errorf("architect: expected status='dead', got %q", architect.Status)
 	}
 }

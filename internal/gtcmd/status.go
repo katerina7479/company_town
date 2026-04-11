@@ -54,22 +54,26 @@ func Status() error {
 	return nil
 }
 
-// reconcileDeadAgents marks agents as dead when their tmux session no longer
-// exists, keeping the DB in sync with reality. Mirrors the daemon's
-// handleDeadSessions so `gt status` is accurate even if the daemon is down.
+// reconcileDeadAgents keeps the agents table in sync with tmux reality.
+// Proles without a live tmux session are deleted outright (they're ephemeral).
+// Core agents (conductor, reviewer, etc.) are marked dead so their row is
+// retained for restart cooldowns and history.
 func reconcileDeadAgents(agents *repo.AgentRepo, sessionExists func(string) bool) error {
 	all, err := agents.ListAll()
 	if err != nil {
 		return err
 	}
 	for _, a := range all {
+		if a.TmuxSession.Valid && a.TmuxSession.String != "" && sessionExists(a.TmuxSession.String) {
+			continue
+		}
+		if a.Type == "prole" {
+			if err := agents.Delete(a.Name); err != nil {
+				return fmt.Errorf("deleting prole %s: %w", a.Name, err)
+			}
+			continue
+		}
 		if a.Status == "dead" {
-			continue
-		}
-		if !a.TmuxSession.Valid || a.TmuxSession.String == "" {
-			continue
-		}
-		if sessionExists(a.TmuxSession.String) {
 			continue
 		}
 		if a.CurrentIssue.Valid {
