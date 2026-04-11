@@ -100,6 +100,7 @@ gt ticket status <id> <status>       # Update ticket status
 
 # PRs
 gt pr create <ticket_id>             # File PR: [PREFIX-ID] Title
+gt pr update <ticket_id>             # Push repairs and move repairing → in_review
 
 # Quality gates
 gt check run                         # Run all configured checks (exits non-zero on fail)
@@ -131,6 +132,21 @@ When your work is done — step 4 is REQUIRED:
 
 Quality gates are not optional. Worktrees may not trigger pre-commit hooks,
 so you MUST run lint/format/tests manually before every commit.
+
+## Repair Lifecycle
+
+If your PR is sent back for repairs (`repairing` status), the reviewer has left
+feedback. Fix the issues on your existing branch, then re-submit:
+
+```
+[ ] 1. Read reviewer feedback (gh pr view <number>)
+[ ] 2. Fix the issues on your branch
+[ ] 3. Run quality gates: go test ./... && go vet ./...
+[ ] 4. Commit and re-submit: gt pr update <ticket_id>
+```
+
+`gt pr update` pushes your latest commits and moves the ticket back to `in_review`.
+Do NOT file a new PR — update the existing one.
 
 ## Branch Naming
 
