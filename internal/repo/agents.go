@@ -187,6 +187,23 @@ func (r *AgentRepo) FindIdle(specialty *string) ([]*Agent, error) {
 	return scanAgentRows(rows)
 }
 
+// Delete removes an agent row entirely. Used for ephemeral agents (proles)
+// whose tmux session no longer exists.
+func (r *AgentRepo) Delete(name string) error {
+	res, err := r.db.Exec(`DELETE FROM agents WHERE name = ?`, name)
+	if err != nil {
+		return fmt.Errorf("deleting agent: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("agent %s not found", name)
+	}
+	return nil
+}
+
 // CountByType returns the number of agents of a given type.
 func (r *AgentRepo) CountByType(agentType string) (int, error) {
 	var count int
