@@ -270,7 +270,8 @@ func ArchitectStop() error {
 }
 
 // Stop implements `ct stop` — graceful shutdown with handoffs.
-func Stop() error {
+// When clean is true, worktree directories for stopped prole sessions are removed.
+func Stop(clean bool) error {
 	sessions, err := session.ListCompanyTown()
 	if err != nil {
 		return err
@@ -279,6 +280,11 @@ func Stop() error {
 	if len(sessions) == 0 {
 		fmt.Println("No Company Town sessions running.")
 		return nil
+	}
+
+	if clean {
+		fmt.Println("--clean: prole worktrees will be removed immediately after signaling.")
+		fmt.Println("         Agents will NOT get time to finish in-flight commits.")
 	}
 
 	projectRoot, err := db.FindProjectRoot()
@@ -294,7 +300,7 @@ func Stop() error {
 		defer conn.Close()
 	}
 
-	stopCore(sessions, ctDir, session.Kill, session.SendKeys, updateStatus)
+	stopCore(sessions, ctDir, clean, session.Kill, session.SendKeys, updateStatus, os.RemoveAll, gitWorktreePrune)
 
 	fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
 	fmt.Println("Run `ct nuke` if you need to force-kill all sessions.")
@@ -303,7 +309,9 @@ func Stop() error {
 
 // stopCore is the testable shutdown logic used by Stop.
 // updateStatus may be nil when the DB is unavailable.
-func stopCore(sessions []string, ctDir string, killFn func(string) error, sendKeysFn func(string, string) error, updateStatus func(string, string) error) {
+// When clean is true, worktree directories for prole sessions are removed after signaling.
+func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) error, sendKeysFn func(string, string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) {
+	var cleanedAny bool
 	for _, s := range sessions {
 		agentName := s[len(session.SessionPrefix):]
 
@@ -331,11 +339,28 @@ func stopCore(sessions []string, ctDir string, killFn func(string) error, sendKe
 			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.")
 		default:
 			sendKeysFn(s, "System is shutting down. Commit and push any work, then exit.")
+			if clean && strings.HasPrefix(agentName, "prole-") {
+				proleName := strings.TrimPrefix(agentName, "prole-")
+				worktreeDir := filepath.Join(ctDir, "proles", proleName)
+				if err := removeAll(worktreeDir); err != nil {
+					fmt.Printf("  error removing worktree for %s: %v\n", proleName, err)
+				} else {
+					fmt.Printf("  removed worktree: %s\n", worktreeDir)
+					cleanedAny = true
+				}
+			}
 		}
 
 		fmt.Printf("  signaled: %s\n", s)
 		if updateStatus != nil {
 			updateStatus(agentName, "idle")
+		}
+	}
+
+	if clean && cleanedAny {
+		repoGit := filepath.Join(ctDir, "repo.git")
+		if err := worktreePrune(repoGit); err != nil {
+			fmt.Printf("  error pruning worktrees: %v\n", err)
 		}
 	}
 }
@@ -363,6 +388,12 @@ func Nuke() error {
 		return nil
 	}
 
+	projectRoot, err := db.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+	ctDir := config.CompanyTownDir(projectRoot)
+
 	conn, _, connErr := db.OpenFromWorkingDir()
 
 	var updateStatus func(string, string) error
@@ -372,7 +403,7 @@ func Nuke() error {
 		defer conn.Close()
 	}
 
-	nukeCore(sessions, session.Kill, updateStatus)
+	nukeCore(sessions, ctDir, session.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
 
 	fmt.Println("\nAll sessions killed.")
 	return nil
@@ -380,17 +411,44 @@ func Nuke() error {
 
 // nukeCore is the testable kill logic used by Nuke.
 // updateStatus may be nil when the DB is unavailable.
-func nukeCore(sessions []string, killFn func(string) error, updateStatus func(string, string) error) {
+// Worktree directories for killed prole sessions are removed, then git worktree prune is run.
+func nukeCore(sessions []string, ctDir string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) {
+	var cleanedAny bool
 	for _, s := range sessions {
+		agentName := s[len(session.SessionPrefix):]
 		if err := killFn(s); err != nil {
 			fmt.Printf("  error killing %s: %v\n", s, err)
 		} else {
 			fmt.Printf("  killed: %s\n", s)
+			if strings.HasPrefix(agentName, "prole-") {
+				proleName := strings.TrimPrefix(agentName, "prole-")
+				worktreeDir := filepath.Join(ctDir, "proles", proleName)
+				if err := removeAll(worktreeDir); err != nil {
+					fmt.Printf("  error removing worktree for %s: %v\n", proleName, err)
+				} else {
+					fmt.Printf("  removed worktree: %s\n", worktreeDir)
+					cleanedAny = true
+				}
+			}
 		}
 
 		if updateStatus != nil {
-			agentName := s[len(session.SessionPrefix):]
 			updateStatus(agentName, "dead")
 		}
 	}
+
+	if cleanedAny {
+		repoGit := filepath.Join(ctDir, "repo.git")
+		if err := worktreePrune(repoGit); err != nil {
+			fmt.Printf("  error pruning worktrees: %v\n", err)
+		}
+	}
+}
+
+// gitWorktreePrune runs `git worktree prune` against the given bare repo path.
+func gitWorktreePrune(repoGitPath string) error {
+	cmd := exec.Command("git", "-C", repoGitPath, "worktree", "prune")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
