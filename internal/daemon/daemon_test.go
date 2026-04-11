@@ -71,6 +71,8 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		qualityInterval:     0, // disabled by default in tests
 		worktreeInterval:    0, // disabled by default in tests
 		nowFn:               time.Now,
+		lastRestartedAt:     make(map[string]time.Time),
+		restartDeadAgents:   false, // disabled by default in tests
 	}
 
 	return d, issues, agents, &sent
@@ -1647,5 +1649,280 @@ func TestHandleBackfillPRNumbers_respectsInterval(t *testing.T) {
 	d.handleBackfillPRNumbers()
 	if lookupCalls != 2 {
 		t.Errorf("expected 2 lookups after interval elapsed, got %d", lookupCalls)
+	}
+}
+
+// --- Agent restart tests ---
+
+// withRestartCapture replaces d.restartAgent with a stub that records calls.
+// Returns a pointer to the slice of agent names that were restarted.
+func withRestartCapture(d *Daemon) *[]string {
+	var restarted []string
+	d.restartAgent = func(agent *repo.Agent) error {
+		restarted = append(restarted, agent.Name)
+		return nil
+	}
+	return &restarted
+}
+
+func TestHandleOpenTickets_restartsConductorWhenDeadAndTicketsReady(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("conductor", "conductor", nil)
+	agents.UpdateStatus("conductor", "dead")
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	d.handleOpenTickets()
+
+	if len(*restarted) != 1 || (*restarted)[0] != "conductor" {
+		t.Errorf("expected conductor restart, got %v", *restarted)
+	}
+}
+
+func TestHandleOpenTickets_restartsConductorWhenIdleNoSession(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("conductor", "conductor", nil)
+	// status is idle (default), no session
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	d.handleOpenTickets()
+
+	if len(*restarted) != 1 || (*restarted)[0] != "conductor" {
+		t.Errorf("expected conductor restart for idle conductor with no session, got %v", *restarted)
+	}
+}
+
+func TestHandleOpenTickets_noRestartWhenDisabled(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = false // disabled
+
+	agents.Register("conductor", "conductor", nil)
+	agents.UpdateStatus("conductor", "dead")
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	d.handleOpenTickets()
+
+	if len(*restarted) != 0 {
+		t.Errorf("expected no restart when restartDeadAgents=false, got %v", *restarted)
+	}
+}
+
+func TestHandleOpenTickets_noRestartWhenNoTickets(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("conductor", "conductor", nil)
+	agents.UpdateStatus("conductor", "dead")
+
+	// no open tickets
+	d.handleOpenTickets()
+
+	if len(*restarted) != 0 {
+		t.Errorf("expected no restart when no open tickets, got %v", *restarted)
+	}
+}
+
+func TestHandleOpenTickets_noRestartWhenConductorWorking(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-conductor"})
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("conductor", "conductor", nil)
+	agents.UpdateStatus("conductor", "working")
+	agents.SetTmuxSession("conductor", "ct-conductor")
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	d.handleOpenTickets()
+
+	// Session exists and conductor is working — no restart, just skip nudge
+	if len(*restarted) != 0 {
+		t.Errorf("expected no restart when conductor session active, got %v", *restarted)
+	}
+}
+
+func TestHandleOpenTickets_restartCooldownPreventsSpam(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+	d.restartCooldown = 5 * time.Minute
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+
+	agents.Register("conductor", "conductor", nil)
+	agents.UpdateStatus("conductor", "dead")
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	// First call: restart happens
+	d.handleOpenTickets()
+	if len(*restarted) != 1 {
+		t.Fatalf("expected 1 restart on first call, got %d", len(*restarted))
+	}
+
+	// Second call within cooldown: no restart
+	d.handleOpenTickets()
+	if len(*restarted) != 1 {
+		t.Errorf("expected no restart within cooldown, got %d restarts", len(*restarted))
+	}
+
+	// After cooldown: restart again
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleOpenTickets()
+	if len(*restarted) != 2 {
+		t.Errorf("expected 2 restarts after cooldown elapsed, got %d", len(*restarted))
+	}
+}
+
+func TestHandleInReviewTickets_restartsDeadReviewerWhenTicketsReady(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("reviewer", "reviewer", nil)
+	agents.UpdateStatus("reviewer", "dead")
+
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	if len(*restarted) != 1 || (*restarted)[0] != "reviewer" {
+		t.Errorf("expected reviewer restart, got %v", *restarted)
+	}
+}
+
+func TestHandleInReviewTickets_restartsIdleReviewerWithNoSession(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("reviewer", "reviewer", nil)
+	// status is idle (default), no session recorded
+
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	if len(*restarted) != 1 || (*restarted)[0] != "reviewer" {
+		t.Errorf("expected reviewer restart for idle reviewer with no session, got %v", *restarted)
+	}
+}
+
+func TestHandleInReviewTickets_noRestartWhenDisabled(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = false
+
+	agents.Register("reviewer", "reviewer", nil)
+	agents.UpdateStatus("reviewer", "dead")
+
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	if len(*restarted) != 0 {
+		t.Errorf("expected no restart when restartDeadAgents=false, got %v", *restarted)
+	}
+}
+
+func TestHandleInReviewTickets_restartsMultipleDeadReviewers(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("reviewer-1", "reviewer", nil)
+	agents.Register("reviewer-2", "reviewer", nil)
+	agents.UpdateStatus("reviewer-1", "dead")
+	agents.UpdateStatus("reviewer-2", "dead")
+
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	if len(*restarted) != 2 {
+		t.Errorf("expected 2 reviewer restarts, got %v", *restarted)
+	}
+}
+
+func TestHandleInReviewTickets_reviewerRestartCooldownPreventsSpam(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+	d.restartCooldown = 5 * time.Minute
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+
+	agents.Register("reviewer", "reviewer", nil)
+	agents.UpdateStatus("reviewer", "dead")
+
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	// First call: restart
+	d.handleInReviewTickets()
+	if len(*restarted) != 1 {
+		t.Fatalf("expected 1 restart on first call, got %d", len(*restarted))
+	}
+
+	// Within cooldown: no restart
+	d.handleInReviewTickets()
+	if len(*restarted) != 1 {
+		t.Errorf("expected no restart within cooldown, got %d", len(*restarted))
+	}
+
+	// After cooldown: restart again
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleInReviewTickets()
+	if len(*restarted) != 2 {
+		t.Errorf("expected 2 restarts after cooldown elapsed, got %d", len(*restarted))
+	}
+}
+
+func TestHandleInReviewTickets_skipsReviewerWithActiveSession(t *testing.T) {
+	// reviewer-1 is dead with no session → restart; reviewer-2 is alive → no restart
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-reviewer-2"})
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("reviewer-1", "reviewer", nil)
+	agents.Register("reviewer-2", "reviewer", nil)
+	agents.UpdateStatus("reviewer-1", "dead")
+	// reviewer-2: idle with session → should nudge not restart
+
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	d.handleInReviewTickets()
+
+	// reviewer-2 has active session → nudge path taken, no restarts needed
+	if len(*restarted) != 0 {
+		t.Errorf("expected no restart when active reviewer session exists, got %v", *restarted)
 	}
 }

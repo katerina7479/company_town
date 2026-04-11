@@ -49,6 +49,12 @@ type Daemon struct {
 	lookupPRForBranch  func(branch string) (int, bool, error)
 	lastPRBackfill     time.Time
 	prBackfillInterval time.Duration
+
+	// Agent restart
+	restartAgent      func(agent *repo.Agent) error
+	lastRestartedAt   map[string]time.Time
+	restartCooldown   time.Duration
+	restartDeadAgents bool
 }
 
 // New creates a new Daemon.
@@ -64,11 +70,12 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	metrics := repo.NewQualityMetricRepo(db)
 	runner := quality.New(cfg.ProjectRoot)
 	logger := log.New(f, "[DAEMON] ", log.LstdFlags)
+	agentRepo := repo.NewAgentRepo(db)
 
 	return &Daemon{
 		cfg:           cfg,
 		issues:        repo.NewIssueRepo(db),
-		agents:        repo.NewAgentRepo(db),
+		agents:        agentRepo,
 		logger:        logger,
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
@@ -97,7 +104,81 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 			return lookupPRForBranch(branch, cfg.ProjectRoot)
 		},
 		prBackfillInterval: time.Duration(cfg.PRBackfillIntervalSeconds) * time.Second,
+		restartDeadAgents:  cfg.RestartDeadAgents,
+		restartCooldown:    time.Duration(cfg.RestartCooldownSeconds) * time.Second,
+		lastRestartedAt:    make(map[string]time.Time),
+		restartAgent:       makeRestartFn(cfg, agentRepo, logger),
 	}, nil
+}
+
+// agentStartPrompt returns the startup prompt for an agent type.
+func agentStartPrompt(agentType, ticketPrefix string) string {
+	switch agentType {
+	case "conductor":
+		return fmt.Sprintf(
+			"You are the Conductor. Ticket prefix: %s. "+
+				"Read your CLAUDE.md for instructions. "+
+				"Check memory/handoff.md to resume previous work. "+
+				"Begin coordinating proles: check ready tickets and assign them.",
+			ticketPrefix,
+		)
+	case "reviewer":
+		return fmt.Sprintf(
+			"You are the Reviewer. Ticket prefix: %s. "+
+				"Read your CLAUDE.md for instructions. "+
+				"Check memory/handoff.md to resume previous work. "+
+				"Begin patrol: check for in_review tickets and review their PRs.",
+			ticketPrefix,
+		)
+	default:
+		return ""
+	}
+}
+
+// agentModel returns the model string for an agent type.
+func agentModel(agentType string, cfg *config.Config) string {
+	switch agentType {
+	case "conductor", "reviewer":
+		return cfg.Agents.Conductor.Model
+	default:
+		return ""
+	}
+}
+
+// makeRestartFn creates the production restartAgent implementation.
+func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logger) func(*repo.Agent) error {
+	return func(agent *repo.Agent) error {
+		if agent.Type != "conductor" && agent.Type != "reviewer" {
+			return fmt.Errorf("restartAgent: unsupported agent type %q", agent.Type)
+		}
+
+		ctDir := config.CompanyTownDir(cfg.ProjectRoot)
+		agentDir := filepath.Join(ctDir, "agents", agent.Type)
+		model := agentModel(agent.Type, cfg)
+		prompt := agentStartPrompt(agent.Type, cfg.TicketPrefix)
+		sessionName := session.SessionName(agent.Name)
+
+		if err := agents.UpdateStatus(agent.Name, "working"); err != nil {
+			return fmt.Errorf("updating agent status: %w", err)
+		}
+		if err := agents.SetTmuxSession(agent.Name, sessionName); err != nil {
+			agents.UpdateStatus(agent.Name, "idle") //nolint:errcheck
+			return fmt.Errorf("recording tmux session: %w", err)
+		}
+		if err := session.CreateInteractive(session.AgentSessionConfig{
+			Name:     sessionName,
+			WorkDir:  cfg.ProjectRoot,
+			Model:    model,
+			AgentDir: agentDir,
+			Prompt:   prompt,
+		}); err != nil {
+			agents.UpdateStatus(agent.Name, "dead") //nolint:errcheck
+			return fmt.Errorf("creating session for %s: %w", agent.Name, err)
+		}
+
+		logger.Printf("restarted agent %s (type: %s, session: %s)", agent.Name, agent.Type, sessionName)
+		return nil
+	}
 }
 
 // runAndPersistBaseline executes all quality checks and records each result.
@@ -176,6 +257,24 @@ func (d *Daemon) isAgentWorking(name string) bool {
 func (d *Daemon) recordNudge(key, digest string) {
 	d.lastNudged[key] = d.nowFn()
 	d.lastNudgeDigest[key] = digest
+}
+
+// shouldRestart returns true if enough time has passed since the last restart for agentName.
+// Always returns true if restartCooldown is zero (cooldown disabled).
+func (d *Daemon) shouldRestart(agentName string) bool {
+	if d.restartCooldown == 0 {
+		return true
+	}
+	last, ok := d.lastRestartedAt[agentName]
+	if !ok {
+		return true
+	}
+	return d.nowFn().Sub(last) >= d.restartCooldown
+}
+
+// recordRestart records the current time as the last restart for agentName.
+func (d *Daemon) recordRestart(agentName string) {
+	d.lastRestartedAt[agentName] = d.nowFn()
 }
 
 // digestChanged returns true if the given digest differs from the last recorded one for key.
@@ -440,7 +539,18 @@ func (d *Daemon) handleOpenTickets() {
 
 	conductorSession := session.SessionName("conductor")
 	if !d.sessionExists(conductorSession) {
-		return // Conductor not running, nothing to do
+		// Conductor not running — attempt restart if enabled and off cooldown.
+		if d.restartDeadAgents && d.restartAgent != nil && d.shouldRestart("conductor") {
+			conductor, err := d.agents.Get("conductor")
+			if err == nil && (conductor.Status == "dead" || conductor.Status == "idle") {
+				if err := d.restartAgent(conductor); err != nil {
+					d.logger.Printf("error restarting conductor: %v", err)
+				} else {
+					d.recordRestart("conductor")
+				}
+			}
+		}
+		return
 	}
 
 	if d.isAgentWorking("conductor") {
@@ -550,6 +660,10 @@ func (d *Daemon) handleInReviewTickets() {
 
 	activeSessions := d.nudgeableReviewerSessions()
 	if len(activeSessions) == 0 {
+		// No active reviewer sessions — attempt to restart dead/idle reviewers.
+		if d.restartDeadAgents && d.restartAgent != nil {
+			d.restartDeadReviewers()
+		}
 		return
 	}
 
@@ -610,6 +724,36 @@ func (d *Daemon) nudgeableReviewerSessions() []string {
 		}
 	}
 	return sessions
+}
+
+// restartDeadReviewers restarts any dead or idle reviewer agents that have no active tmux session,
+// subject to the per-agent restart cooldown.
+func (d *Daemon) restartDeadReviewers() {
+	allAgents, err := d.agents.ListAll()
+	if err != nil {
+		d.logger.Printf("error listing agents for reviewer restart: %v", err)
+		return
+	}
+	for _, a := range allAgents {
+		if a.Type != "reviewer" {
+			continue
+		}
+		if a.Status != "dead" && a.Status != "idle" {
+			continue
+		}
+		s := session.SessionName(a.Name)
+		if d.sessionExists(s) {
+			continue // session alive, no restart needed
+		}
+		if !d.shouldRestart(a.Name) {
+			continue // on cooldown
+		}
+		if err := d.restartAgent(a); err != nil {
+			d.logger.Printf("error restarting reviewer %s: %v", a.Name, err)
+		} else {
+			d.recordRestart(a.Name)
+		}
+	}
 }
 
 // reviewerAgentNames returns a set of all registered reviewer agent names.

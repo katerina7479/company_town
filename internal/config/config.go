@@ -66,6 +66,8 @@ type Config struct {
 	StuckAgentThresholdSeconds   int           `json:"stuck_agent_threshold_seconds"`
 	WorktreePruneIntervalSeconds int           `json:"worktree_prune_interval_seconds"`
 	PRBackfillIntervalSeconds    int           `json:"pr_backfill_interval_seconds"`
+	RestartDeadAgents            bool          `json:"restart_dead_agents"`
+	RestartCooldownSeconds       int           `json:"restart_cooldown_seconds"`
 	Quality                      QualityConfig `json:"quality"`
 }
 
@@ -125,6 +127,8 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		StuckAgentThresholdSeconds:   1800,
 		WorktreePruneIntervalSeconds: 300,
 		PRBackfillIntervalSeconds:    300,
+		RestartDeadAgents:            true,
+		RestartCooldownSeconds:       300,
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,
