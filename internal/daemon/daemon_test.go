@@ -1673,7 +1673,7 @@ func TestHandleOpenTickets_restartsConductorWhenDeadAndTicketsReady(t *testing.T
 	agents.Register("conductor", "conductor", nil)
 	agents.UpdateStatus("conductor", "dead")
 
-	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 
 	d.handleOpenTickets()
@@ -1691,7 +1691,7 @@ func TestHandleOpenTickets_restartsConductorWhenIdleNoSession(t *testing.T) {
 	agents.Register("conductor", "conductor", nil)
 	// status is idle (default), no session
 
-	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 
 	d.handleOpenTickets()
@@ -1709,7 +1709,7 @@ func TestHandleOpenTickets_noRestartWhenDisabled(t *testing.T) {
 	agents.Register("conductor", "conductor", nil)
 	agents.UpdateStatus("conductor", "dead")
 
-	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 
 	d.handleOpenTickets()
@@ -1744,7 +1744,7 @@ func TestHandleOpenTickets_noRestartWhenConductorWorking(t *testing.T) {
 	agents.UpdateStatus("conductor", "working")
 	agents.SetTmuxSession("conductor", "ct-conductor")
 
-	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 
 	d.handleOpenTickets()
@@ -1767,7 +1767,7 @@ func TestHandleOpenTickets_restartCooldownPreventsSpam(t *testing.T) {
 	agents.Register("conductor", "conductor", nil)
 	agents.UpdateStatus("conductor", "dead")
 
-	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 
 	// First call: restart happens
@@ -1798,7 +1798,7 @@ func TestHandleInReviewTickets_restartsDeadReviewerWhenTicketsReady(t *testing.T
 	agents.Register("reviewer", "reviewer", nil)
 	agents.UpdateStatus("reviewer", "dead")
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -1817,7 +1817,7 @@ func TestHandleInReviewTickets_restartsIdleReviewerWithNoSession(t *testing.T) {
 	agents.Register("reviewer", "reviewer", nil)
 	// status is idle (default), no session recorded
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -1836,7 +1836,7 @@ func TestHandleInReviewTickets_noRestartWhenDisabled(t *testing.T) {
 	agents.Register("reviewer", "reviewer", nil)
 	agents.UpdateStatus("reviewer", "dead")
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -1857,7 +1857,7 @@ func TestHandleInReviewTickets_restartsMultipleDeadReviewers(t *testing.T) {
 	agents.UpdateStatus("reviewer-1", "dead")
 	agents.UpdateStatus("reviewer-2", "dead")
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -1880,7 +1880,7 @@ func TestHandleInReviewTickets_reviewerRestartCooldownPreventsSpam(t *testing.T)
 	agents.Register("reviewer", "reviewer", nil)
 	agents.UpdateStatus("reviewer", "dead")
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -1915,7 +1915,7 @@ func TestHandleInReviewTickets_skipsReviewerWithActiveSession(t *testing.T) {
 	agents.UpdateStatus("reviewer-1", "dead")
 	// reviewer-2: idle with session → should nudge not restart
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
