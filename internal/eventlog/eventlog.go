@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -56,7 +57,7 @@ func (w *Writer) Write(e Event) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if err := os.MkdirAll(parentDir(w.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(w.path), 0755); err != nil {
 		return fmt.Errorf("eventlog: create log dir: %w", err)
 	}
 
@@ -142,14 +143,4 @@ func (r *Reader) ReadFiltered(f Filter) ([]Event, error) {
 		return nil, fmt.Errorf("eventlog: scan log file: %w", err)
 	}
 	return events, nil
-}
-
-// parentDir returns the directory component of path.
-func parentDir(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			return path[:i]
-		}
-	}
-	return "."
 }
