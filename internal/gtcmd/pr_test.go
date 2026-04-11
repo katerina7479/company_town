@@ -135,3 +135,18 @@ func TestPRUpdate_wrongStatus_open(t *testing.T) {
 		t.Fatal("expected error for ticket in open status, got nil")
 	}
 }
+
+func TestPRUpdate_noBranch(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	_, _ = issues.Create("A task", "task", nil, nil, nil)
+	issues.UpdateStatus(1, "repairing")
+
+	err := prUpdate(issues, testCfg(), []string{"1"})
+	if err == nil {
+		t.Fatal("expected error for repairing ticket with no branch, got nil")
+	}
+	if !strings.Contains(err.Error(), "no branch") {
+		t.Errorf("expected error to mention 'no branch', got: %v", err)
+	}
+}

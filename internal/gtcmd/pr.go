@@ -134,6 +134,10 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 		return fmt.Errorf("ticket %d is not in repairing status (current: %s)", id, issue.Status)
 	}
 
+	if !issue.Branch.Valid || issue.Branch.String == "" {
+		return fmt.Errorf("ticket %d has no branch set", id)
+	}
+
 	// Push latest changes
 	pushCmd := exec.Command("git", "push", "origin", "HEAD")
 	pushCmd.Stdout = os.Stdout
