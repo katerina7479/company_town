@@ -32,6 +32,9 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 	if err := agents.UpdateStatus(name, "working"); err != nil {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
+	if err := agents.SetTmuxSession(name, sessionName); err != nil {
+		return fmt.Errorf("recording tmux session for %s: %w", name, err)
+	}
 
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	agentDir := filepath.Join(ctDir, "agents", agentType)
@@ -82,6 +85,9 @@ func Start() error {
 	} else {
 		fmt.Println("Daemon already running.")
 		agents.UpdateStatus("daemon", "working")
+	}
+	if err := agents.SetTmuxSession("daemon", daemonSession); err != nil {
+		return fmt.Errorf("recording daemon tmux session: %w", err)
 	}
 
 	prompt := fmt.Sprintf(
@@ -185,6 +191,9 @@ func Artisan(specialty string) error {
 
 	if err := agents.UpdateStatus(name, "working"); err != nil {
 		return fmt.Errorf("updating %s status: %w", name, err)
+	}
+	if err := agents.SetTmuxSession(name, sessionName); err != nil {
+		return fmt.Errorf("recording tmux session for %s: %w", name, err)
 	}
 
 	fmt.Printf("Starting %s...\n", name)

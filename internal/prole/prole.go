@@ -164,6 +164,10 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		return fmt.Errorf("creating session: %w", err)
 	}
 
+	if err := agents.SetTmuxSession(name, sessionName); err != nil {
+		return fmt.Errorf("recording tmux session for %s: %w", name, err)
+	}
+
 	if err := agents.UpdateStatus(name, "idle"); err != nil {
 		return fmt.Errorf("updating status: %w", err)
 	}
