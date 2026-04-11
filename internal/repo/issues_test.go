@@ -19,7 +19,7 @@ func setupTestRepo(t *testing.T) *IssueRepo {
 func TestIssueRepo_Create(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, err := repo.Create("Test ticket", "task", nil, nil)
+	id, err := repo.Create("Test ticket", "task", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestIssueRepo_Create(t *testing.T) {
 func TestIssueRepo_UpdateStatus(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("Test ticket", "task", nil, nil)
+	id, _ := repo.Create("Test ticket", "task", nil, nil, nil)
 
 	if err := repo.UpdateStatus(id, "open"); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
@@ -57,8 +57,8 @@ func TestIssueRepo_UpdateStatus(t *testing.T) {
 func TestIssueRepo_Dependencies(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id1, _ := repo.Create("Ticket 1", "task", nil, nil)
-	id2, _ := repo.Create("Ticket 2", "task", nil, nil)
+	id1, _ := repo.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := repo.Create("Ticket 2", "task", nil, nil, nil)
 
 	if err := repo.AddDependency(id2, id1); err != nil {
 		t.Fatalf("AddDependency: %v", err)
@@ -77,9 +77,9 @@ func TestIssueRepo_Ready(t *testing.T) {
 	repo := setupTestRepo(t)
 
 	// Create three tickets
-	id1, _ := repo.Create("Ticket 1", "task", nil, nil)
-	id2, _ := repo.Create("Ticket 2", "task", nil, nil)
-	id3, _ := repo.Create("Ticket 3", "task", nil, nil)
+	id1, _ := repo.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := repo.Create("Ticket 2", "task", nil, nil, nil)
+	id3, _ := repo.Create("Ticket 3", "task", nil, nil, nil)
 
 	// Set all to open
 	repo.UpdateStatus(id1, "open")
@@ -112,8 +112,8 @@ func TestIssueRepo_Ready(t *testing.T) {
 func TestIssueRepo_Ready_excludesEpics(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	taskID, _ := repo.Create("A task", "task", nil, nil)
-	epicID, _ := repo.Create("An epic", "epic", nil, nil)
+	taskID, _ := repo.Create("A task", "task", nil, nil, nil)
+	epicID, _ := repo.Create("An epic", "epic", nil, nil, nil)
 
 	repo.UpdateStatus(taskID, "open")
 	repo.UpdateStatus(epicID, "open")
@@ -140,10 +140,10 @@ func TestIssueRepo_ListHierarchy(t *testing.T) {
 	repo := setupTestRepo(t)
 
 	// Create a parent (epic) and two children (tasks), plus an orphan root
-	parentID, _ := repo.Create("Epic 1", "epic", nil, nil)
-	child1ID, _ := repo.Create("Task 1", "task", &parentID, nil)
-	child2ID, _ := repo.Create("Task 2", "task", &parentID, nil)
-	rootID, _ := repo.Create("Root Task", "task", nil, nil)
+	parentID, _ := repo.Create("Epic 1", "epic", nil, nil, nil)
+	child1ID, _ := repo.Create("Task 1", "task", &parentID, nil, nil)
+	child2ID, _ := repo.Create("Task 2", "task", &parentID, nil, nil)
+	rootID, _ := repo.Create("Root Task", "task", nil, nil, nil)
 
 	roots, err := repo.ListHierarchy()
 	if err != nil {
@@ -183,7 +183,7 @@ func TestIssueRepo_ListHierarchy_DanglingParent(t *testing.T) {
 
 	// Create a ticket with a parent_id that references a non-existent issue
 	// by manually inserting via the db (simulate orphan)
-	id, _ := repo.Create("Orphan", "task", nil, nil)
+	id, _ := repo.Create("Orphan", "task", nil, nil, nil)
 	// Set parent_id to a non-existent id by updating directly
 	repo.db.Exec(`UPDATE issues SET parent_id = 9999 WHERE id = ?`, id)
 
@@ -201,9 +201,9 @@ func TestIssueRepo_ListHierarchy_DanglingParent(t *testing.T) {
 func TestIssueRepo_List(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	repo.Create("Draft 1", "task", nil, nil)
-	repo.Create("Draft 2", "task", nil, nil)
-	id3, _ := repo.Create("Open 1", "task", nil, nil)
+	repo.Create("Draft 1", "task", nil, nil, nil)
+	repo.Create("Draft 2", "task", nil, nil, nil)
+	id3, _ := repo.Create("Open 1", "task", nil, nil, nil)
 	repo.UpdateStatus(id3, "open")
 
 	// List all
@@ -228,9 +228,9 @@ func TestIssueRepo_List(t *testing.T) {
 func TestIssueRepo_Create_withParentAndSpecialty(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	parentID, _ := repo.Create("Epic", "epic", nil, nil)
+	parentID, _ := repo.Create("Epic", "epic", nil, nil, nil)
 	spec := "backend"
-	childID, err := repo.Create("Child task", "task", &parentID, &spec)
+	childID, err := repo.Create("Child task", "task", &parentID, &spec, nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestIssueRepo_UpdateStatus_notFound(t *testing.T) {
 func TestIssueRepo_UpdateStatus_closedSetsClosedAt(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("To close", "task", nil, nil)
+	id, _ := repo.Create("To close", "task", nil, nil, nil)
 
 	if err := repo.UpdateStatus(id, "closed"); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
@@ -286,7 +286,7 @@ func TestIssueRepo_UpdateStatus_closedSetsClosedAt(t *testing.T) {
 func TestIssueRepo_Assign(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("Work item", "task", nil, nil)
+	id, _ := repo.Create("Work item", "task", nil, nil, nil)
 	repo.UpdateStatus(id, "open")
 
 	if err := repo.Assign(id, "obsidian", "prole/obsidian/NC-24"); err != nil {
@@ -317,7 +317,7 @@ func TestIssueRepo_Assign_notFound(t *testing.T) {
 func TestIssueRepo_SetPR(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("PR ticket", "task", nil, nil)
+	id, _ := repo.Create("PR ticket", "task", nil, nil, nil)
 
 	if err := repo.SetPR(id, 42); err != nil {
 		t.Fatalf("SetPR: %v", err)
@@ -333,17 +333,17 @@ func TestIssueRepo_ListWithPRs(t *testing.T) {
 	repo := setupTestRepo(t)
 
 	// in_review with PR — should appear
-	id1, _ := repo.Create("In review", "task", nil, nil)
+	id1, _ := repo.Create("In review", "task", nil, nil, nil)
 	repo.UpdateStatus(id1, "in_review")
 	repo.SetPR(id1, 10)
 
 	// closed with PR — should NOT appear
-	id2, _ := repo.Create("Closed", "task", nil, nil)
+	id2, _ := repo.Create("Closed", "task", nil, nil, nil)
 	repo.UpdateStatus(id2, "closed")
 	repo.SetPR(id2, 11)
 
 	// open without PR — should NOT appear
-	id3, _ := repo.Create("No PR", "task", nil, nil)
+	id3, _ := repo.Create("No PR", "task", nil, nil, nil)
 	repo.UpdateStatus(id3, "open")
 
 	result, err := repo.ListWithPRs()
@@ -362,11 +362,11 @@ func TestIssueRepo_ListWithPRs_multipleStatuses(t *testing.T) {
 	repo := setupTestRepo(t)
 
 	// Various non-closed statuses with PRs — all should appear
-	id1, _ := repo.Create("In review", "task", nil, nil)
+	id1, _ := repo.Create("In review", "task", nil, nil, nil)
 	repo.UpdateStatus(id1, "in_review")
 	repo.SetPR(id1, 1)
 
-	id2, _ := repo.Create("Repairing", "task", nil, nil)
+	id2, _ := repo.Create("Repairing", "task", nil, nil, nil)
 	repo.UpdateStatus(id2, "repairing")
 	repo.SetPR(id2, 2)
 
@@ -382,7 +382,7 @@ func TestIssueRepo_ListWithPRs_multipleStatuses(t *testing.T) {
 func TestIssueRepo_Close(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("To close", "task", nil, nil)
+	id, _ := repo.Create("To close", "task", nil, nil, nil)
 
 	if err := repo.Close(id); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -400,7 +400,7 @@ func TestIssueRepo_Close(t *testing.T) {
 func TestIssueRepo_Delete(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("To delete", "task", nil, nil)
+	id, _ := repo.Create("To delete", "task", nil, nil, nil)
 
 	if err := repo.Delete(id); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -415,8 +415,8 @@ func TestIssueRepo_Delete(t *testing.T) {
 func TestIssueRepo_Delete_cascadesDependencies(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id1, _ := repo.Create("Ticket 1", "task", nil, nil)
-	id2, _ := repo.Create("Ticket 2", "task", nil, nil)
+	id1, _ := repo.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := repo.Create("Ticket 2", "task", nil, nil, nil)
 	repo.AddDependency(id2, id1)
 
 	// Delete id1 — dependency row should be removed
@@ -445,7 +445,7 @@ func TestIssueRepo_Delete_notFound(t *testing.T) {
 func TestIssueRepo_SetAssignee(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("Claim ticket", "task", nil, nil)
+	id, _ := repo.Create("Claim ticket", "task", nil, nil, nil)
 	repo.UpdateStatus(id, "in_review")
 
 	if err := repo.SetAssignee(id, "reviewer"); err != nil {
@@ -473,7 +473,7 @@ func TestIssueRepo_SetAssignee_notFound(t *testing.T) {
 func TestIssueRepo_ClearAssignee(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("Claimed ticket", "task", nil, nil)
+	id, _ := repo.Create("Claimed ticket", "task", nil, nil, nil)
 	repo.UpdateStatus(id, "under_review")
 	repo.SetAssignee(id, "reviewer")
 
@@ -502,7 +502,7 @@ func TestIssueRepo_ClearAssignee_notFound(t *testing.T) {
 func TestIssueRepo_UpdateDescription(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	id, _ := repo.Create("My ticket", "task", nil, nil)
+	id, _ := repo.Create("My ticket", "task", nil, nil, nil)
 
 	if err := repo.UpdateDescription(id, "This is a description."); err != nil {
 		t.Fatalf("UpdateDescription: %v", err)
@@ -533,29 +533,29 @@ func TestIssueRepo_ListEpicsWithAllChildrenClosed(t *testing.T) {
 	r := setupTestRepo(t)
 
 	// Epic with all children closed → should be returned.
-	epicID, _ := r.Create("Epic A", "epic", nil, nil)
+	epicID, _ := r.Create("Epic A", "epic", nil, nil, nil)
 	r.UpdateStatus(epicID, "open")
-	child1, _ := r.Create("Task 1", "task", &epicID, nil)
+	child1, _ := r.Create("Task 1", "task", &epicID, nil, nil)
 	r.UpdateStatus(child1, "closed")
-	child2, _ := r.Create("Task 2", "task", &epicID, nil)
+	child2, _ := r.Create("Task 2", "task", &epicID, nil, nil)
 	r.UpdateStatus(child2, "closed")
 
 	// Epic with one open child → should NOT be returned.
-	epic2ID, _ := r.Create("Epic B", "epic", nil, nil)
+	epic2ID, _ := r.Create("Epic B", "epic", nil, nil, nil)
 	r.UpdateStatus(epic2ID, "open")
-	child3, _ := r.Create("Task 3", "task", &epic2ID, nil)
+	child3, _ := r.Create("Task 3", "task", &epic2ID, nil, nil)
 	r.UpdateStatus(child3, "closed")
-	child4, _ := r.Create("Task 4", "task", &epic2ID, nil)
+	child4, _ := r.Create("Task 4", "task", &epic2ID, nil, nil)
 	r.UpdateStatus(child4, "open")
 
 	// Epic with no children → should NOT be returned.
-	epic3ID, _ := r.Create("Epic C", "epic", nil, nil)
+	epic3ID, _ := r.Create("Epic C", "epic", nil, nil, nil)
 	r.UpdateStatus(epic3ID, "open")
 
 	// Already-closed epic with all children closed → should NOT be returned.
-	epic4ID, _ := r.Create("Epic D", "epic", nil, nil)
+	epic4ID, _ := r.Create("Epic D", "epic", nil, nil, nil)
 	r.UpdateStatus(epic4ID, "open")
-	child5, _ := r.Create("Task 5", "task", &epic4ID, nil)
+	child5, _ := r.Create("Task 5", "task", &epic4ID, nil, nil)
 	r.UpdateStatus(child5, "closed")
 	r.UpdateStatus(epic4ID, "closed")
 
@@ -568,5 +568,90 @@ func TestIssueRepo_ListEpicsWithAllChildrenClosed(t *testing.T) {
 	}
 	if epics[0].ID != epicID {
 		t.Errorf("expected epic ID %d, got %d", epicID, epics[0].ID)
+	}
+}
+
+func TestIssueRepo_Create_withPriority(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	p := "P1"
+	id, err := repo.Create("High priority task", "task", nil, nil, &p)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	issue, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !issue.Priority.Valid || issue.Priority.String != "P1" {
+		t.Errorf("expected priority='P1', got %v", issue.Priority)
+	}
+}
+
+func TestIssueRepo_SetPriority(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Task", "task", nil, nil, nil)
+
+	if err := repo.SetPriority(id, "P0"); err != nil {
+		t.Fatalf("SetPriority: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if !issue.Priority.Valid || issue.Priority.String != "P0" {
+		t.Errorf("expected priority='P0', got %v", issue.Priority)
+	}
+}
+
+func TestIssueRepo_SetPriority_notFound(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	err := repo.SetPriority(9999, "P1")
+	if err == nil {
+		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
+
+func TestIssueRepo_Ready_ordersByPriority(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// Create tickets with various priorities
+	id1, _ := repo.Create("No priority", "task", nil, nil, nil)
+	repo.UpdateStatus(id1, "open")
+
+	p0 := "P0"
+	id2, _ := repo.Create("P0 task", "task", nil, nil, &p0)
+	repo.UpdateStatus(id2, "open")
+
+	p2 := "P2"
+	id3, _ := repo.Create("P2 task", "task", nil, nil, &p2)
+	repo.UpdateStatus(id3, "open")
+
+	p1 := "P1"
+	id4, _ := repo.Create("P1 task", "task", nil, nil, &p1)
+	repo.UpdateStatus(id4, "open")
+
+	ready, err := repo.Ready()
+	if err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+
+	if len(ready) != 4 {
+		t.Fatalf("expected 4 ready tickets, got %d", len(ready))
+	}
+
+	// P0 first, then P1, then P2, then nil
+	if ready[0].ID != id2 {
+		t.Errorf("expected P0 ticket first, got id=%d", ready[0].ID)
+	}
+	if ready[1].ID != id4 {
+		t.Errorf("expected P1 ticket second, got id=%d", ready[1].ID)
+	}
+	if ready[2].ID != id3 {
+		t.Errorf("expected P2 ticket third, got id=%d", ready[2].ID)
+	}
+	if ready[3].ID != id1 {
+		t.Errorf("expected no-priority ticket last, got id=%d", ready[3].ID)
 	}
 }

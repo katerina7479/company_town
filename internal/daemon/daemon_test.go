@@ -90,7 +90,7 @@ func withResetCapture(d *Daemon) *[]string {
 func TestHandlePRMerged_closesTicket(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, err := issues.Create("Test ticket", "task", nil, nil)
+	id, err := issues.Create("Test ticket", "task", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestHandlePRMerged_closesTicket(t *testing.T) {
 func TestHandlePRMerged_noopIfAlreadyClosed(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, _ := issues.Create("Already closed", "task", nil, nil)
+	id, _ := issues.Create("Already closed", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "closed")
 	issues.SetPR(id, 99)
 
@@ -140,7 +140,7 @@ func TestHandlePRMerged_freesAssigneeAgent(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	id, _ := issues.Create("Test ticket", "task", nil, nil)
+	id, _ := issues.Create("Test ticket", "task", nil, nil, nil)
 	if err := issues.Assign(id, "obsidian", "prole/obsidian/NC-11"); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestHandlePRMerged_freesAssigneeAgent(t *testing.T) {
 func TestHandlePRMerged_noAssigneeIsOk(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, _ := issues.Create("Unassigned ticket", "task", nil, nil)
+	id, _ := issues.Create("Unassigned ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 55)
 
@@ -189,7 +189,7 @@ func TestHandlePRMerged_resetsProleWorktree(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	id, _ := issues.Create("Add feature", "task", nil, nil)
+	id, _ := issues.Create("Add feature", "task", nil, nil, nil)
 	issues.Assign(id, "quartz", "prole/quartz/NC-42")
 	issues.SetPR(id, 42)
 	agents.SetCurrentIssue("quartz", &id)
@@ -210,7 +210,7 @@ func TestHandlePRMerged_doesNotResetNonProle(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	id, _ := issues.Create("Route tickets", "task", nil, nil)
+	id, _ := issues.Create("Route tickets", "task", nil, nil, nil)
 	issues.Assign(id, "conductor", "conductor/branch")
 	issues.SetPR(id, 99)
 	agents.SetCurrentIssue("conductor", &id)
@@ -227,7 +227,7 @@ func TestHandlePRMerged_noResetWhenNoAssignee(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 	resets := withResetCapture(d)
 
-	id, _ := issues.Create("Unassigned", "task", nil, nil)
+	id, _ := issues.Create("Unassigned", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 7)
 
@@ -242,7 +242,7 @@ func TestHandlePRMerged_noResetWhenNoAssignee(t *testing.T) {
 func TestHandlePRClosed_doesNotCloseTicket(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, _ := issues.Create("Test ticket", "task", nil, nil)
+	id, _ := issues.Create("Test ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 77)
 
@@ -259,7 +259,7 @@ func TestHandlePRClosed_doesNotCloseTicket(t *testing.T) {
 func TestHandlePRClosed_noopIfAlreadyClosed(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, _ := issues.Create("Test ticket", "task", nil, nil)
+	id, _ := issues.Create("Test ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "closed")
 	issues.SetPR(id, 88)
 
@@ -275,7 +275,7 @@ func TestHandleInReviewTickets_nudgesReviewerPerTicket(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{reviewerSession})
 	agents.Register("reviewer", "reviewer", nil)
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -297,11 +297,11 @@ func TestHandleInReviewTickets_batchesMultipleTickets(t *testing.T) {
 	agents.Register("reviewer", "reviewer", nil)
 
 	// Two in_review tickets with PRs — one reviewer → ONE batched message
-	id1, _ := issues.Create("Ticket A", "task", nil, nil)
+	id1, _ := issues.Create("Ticket A", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "in_review")
 	issues.SetPR(id1, 10)
 
-	id2, _ := issues.Create("Ticket B", "task", nil, nil)
+	id2, _ := issues.Create("Ticket B", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "in_review")
 	issues.SetPR(id2, 11)
 
@@ -329,7 +329,7 @@ func TestHandleInReviewTickets_noNudgeWhenReviewerNotRunning(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, nil) // no active sessions
 	agents.Register("reviewer", "reviewer", nil)
 
-	id, _ := issues.Create("Add auth", "task", nil, nil)
+	id, _ := issues.Create("Add auth", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -344,7 +344,7 @@ func TestHandleInReviewTickets_skipsTicketsWithoutPR(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
 	agents.Register("reviewer", "reviewer", nil)
 
-	id, _ := issues.Create("No PR yet", "task", nil, nil)
+	id, _ := issues.Create("No PR yet", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	// No SetPR — ticket has no PR number
 
@@ -360,16 +360,16 @@ func TestHandleInReviewTickets_mixedTickets(t *testing.T) {
 	agents.Register("reviewer", "reviewer", nil)
 
 	// in_review with PR — should nudge
-	id1, _ := issues.Create("Ready for review", "task", nil, nil)
+	id1, _ := issues.Create("Ready for review", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "in_review")
 	issues.SetPR(id1, 7)
 
 	// in_review without PR — should NOT nudge
-	id2, _ := issues.Create("No PR", "task", nil, nil)
+	id2, _ := issues.Create("No PR", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "in_review")
 
 	// open ticket — should NOT nudge
-	id3, _ := issues.Create("Open ticket", "task", nil, nil)
+	id3, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id3, "open")
 	issues.SetPR(id3, 8)
 
@@ -388,11 +388,11 @@ func TestHandleInReviewTickets_distributesTwoTicketsAcrossTwoReviewers(t *testin
 	agents.Register("reviewer-1", "reviewer", nil)
 	agents.Register("reviewer-2", "reviewer", nil)
 
-	id1, _ := issues.Create("Ticket A", "task", nil, nil)
+	id1, _ := issues.Create("Ticket A", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "in_review")
 	issues.SetPR(id1, 10)
 
-	id2, _ := issues.Create("Ticket B", "task", nil, nil)
+	id2, _ := issues.Create("Ticket B", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "in_review")
 	issues.SetPR(id2, 11)
 
@@ -432,7 +432,7 @@ func TestHandleInReviewTickets_threeTicketsTwoReviewers(t *testing.T) {
 	agents.Register("reviewer-2", "reviewer", nil)
 
 	for i, pr := range []int{10, 11, 12} {
-		id, _ := issues.Create(fmt.Sprintf("Ticket %d", i), "task", nil, nil)
+		id, _ := issues.Create(fmt.Sprintf("Ticket %d", i), "task", nil, nil, nil)
 		issues.UpdateStatus(id, "in_review")
 		issues.SetPR(id, pr)
 	}
@@ -452,7 +452,7 @@ func TestHandleInReviewTickets_skipsDeadReviewer(t *testing.T) {
 	agents.Register("reviewer-2", "reviewer", nil)
 	agents.UpdateStatus("reviewer-2", "dead")
 
-	id, _ := issues.Create("Add feature", "task", nil, nil)
+	id, _ := issues.Create("Add feature", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 5)
 
@@ -471,7 +471,7 @@ func TestHandleInReviewTickets_noNudgeWhenNoReviewersRegistered(t *testing.T) {
 	// No reviewer agents registered — even if a session named ct-reviewer exists
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
 
-	id, _ := issues.Create("Ticket", "task", nil, nil)
+	id, _ := issues.Create("Ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 1)
 
@@ -488,7 +488,7 @@ func TestHandleRepairingTickets_nudgesConductor(t *testing.T) {
 	conductorSession := "ct-conductor"
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{conductorSession})
 
-	id, _ := issues.Create("Fix auth bug", "task", nil, nil)
+	id, _ := issues.Create("Fix auth bug", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
 	issues.SetPR(id, 55)
 
@@ -508,7 +508,7 @@ func TestHandleRepairingTickets_nudgesConductor(t *testing.T) {
 func TestHandleRepairingTickets_includesPRNumberWhenPresent(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
 
-	id, _ := issues.Create("Fix lint", "task", nil, nil)
+	id, _ := issues.Create("Fix lint", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
 	issues.SetPR(id, 99)
 
@@ -525,7 +525,7 @@ func TestHandleRepairingTickets_includesPRNumberWhenPresent(t *testing.T) {
 func TestHandleRepairingTickets_worksWithoutPRNumber(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
 
-	id, _ := issues.Create("Fix something", "task", nil, nil)
+	id, _ := issues.Create("Fix something", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
 	// No SetPR — ticket has no PR
 
@@ -552,7 +552,7 @@ func TestHandleRepairingTickets_noNudgeWhenEmpty(t *testing.T) {
 func TestHandleRepairingTickets_noNudgeWhenConductorNotRunning(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
 
-	id, _ := issues.Create("Fix auth bug", "task", nil, nil)
+	id, _ := issues.Create("Fix auth bug", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
 
 	d.handleRepairingTickets()
@@ -565,10 +565,10 @@ func TestHandleRepairingTickets_noNudgeWhenConductorNotRunning(t *testing.T) {
 func TestHandleRepairingTickets_batchesMultipleTickets(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
 
-	id1, _ := issues.Create("Fix A", "task", nil, nil)
+	id1, _ := issues.Create("Fix A", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "repairing")
 
-	id2, _ := issues.Create("Fix B", "task", nil, nil)
+	id2, _ := issues.Create("Fix B", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "repairing")
 	issues.SetPR(id2, 12)
 
@@ -586,16 +586,16 @@ func TestHandleRepairingTickets_ignoresNonRepairingTickets(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
 
 	// repairing — should nudge
-	id1, _ := issues.Create("Needs fix", "task", nil, nil)
+	id1, _ := issues.Create("Needs fix", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "repairing")
 
 	// in_review — should NOT nudge conductor
-	id2, _ := issues.Create("In review", "task", nil, nil)
+	id2, _ := issues.Create("In review", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "in_review")
 	issues.SetPR(id2, 20)
 
 	// open — should NOT nudge
-	id3, _ := issues.Create("Open ticket", "task", nil, nil)
+	id3, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id3, "open")
 
 	d.handleRepairingTickets()
@@ -624,17 +624,17 @@ func TestListWithPRs_onlyReturnsNonClosed(t *testing.T) {
 	_, issues, _ := newTestDaemon(t)
 
 	// Open ticket with PR
-	id1, _ := issues.Create("Open with PR", "task", nil, nil)
+	id1, _ := issues.Create("Open with PR", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "in_review")
 	issues.SetPR(id1, 10)
 
 	// Closed ticket with PR — should NOT appear
-	id2, _ := issues.Create("Closed with PR", "task", nil, nil)
+	id2, _ := issues.Create("Closed with PR", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "closed")
 	issues.SetPR(id2, 11)
 
 	// Open ticket without PR — should NOT appear
-	id3, _ := issues.Create("Open no PR", "task", nil, nil)
+	id3, _ := issues.Create("Open no PR", "task", nil, nil, nil)
 	issues.UpdateStatus(id3, "open")
 
 	result, err := issues.ListWithPRs()
@@ -746,7 +746,7 @@ func TestCooldown_suppressesRepeatNudge(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
 	agents.Register("reviewer", "reviewer", nil)
 
-	id, _ := issues.Create("Add feature", "task", nil, nil)
+	id, _ := issues.Create("Add feature", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 5)
 
@@ -770,7 +770,7 @@ func TestCooldown_allowsNudgeAfterExpiry_withNewTickets(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
 	agents.Register("reviewer", "reviewer", nil)
 
-	id, _ := issues.Create("Add feature", "task", nil, nil)
+	id, _ := issues.Create("Add feature", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 5)
 
@@ -791,7 +791,7 @@ func TestCooldown_allowsNudgeAfterExpiry_withNewTickets(t *testing.T) {
 	}
 
 	// Add a new ticket — digest changes, cooldown already expired → should nudge
-	id2, _ := issues.Create("Another feature", "task", nil, nil)
+	id2, _ := issues.Create("Another feature", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "in_review")
 	issues.SetPR(id2, 6)
 
@@ -808,11 +808,11 @@ func TestCooldown_independentPerHandler(t *testing.T) {
 	agents.Register("reviewer", "reviewer", nil)
 
 	// Repairing ticket for conductor
-	id1, _ := issues.Create("Fix bug", "task", nil, nil)
+	id1, _ := issues.Create("Fix bug", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "repairing")
 
 	// In-review ticket for reviewer
-	id2, _ := issues.Create("Review feature", "task", nil, nil)
+	id2, _ := issues.Create("Review feature", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "in_review")
 	issues.SetPR(id2, 9)
 
@@ -951,7 +951,7 @@ func TestCooldown_disabledWhenZero_dedupsIdenticalTickets(t *testing.T) {
 	agents.Register("reviewer", "reviewer", nil)
 	// nudgeCooldown is 0 (default in test helper) — no time-based suppression
 
-	id, _ := issues.Create("Add feature", "task", nil, nil)
+	id, _ := issues.Create("Add feature", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 5)
 
@@ -972,7 +972,7 @@ func TestHandleOpenTickets_skipsWhenConductorWorking(t *testing.T) {
 	agents.Register("conductor", "conductor", nil)
 	agents.UpdateStatus("conductor", "working")
 
-	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 
 	d.handleOpenTickets()
@@ -987,7 +987,7 @@ func TestHandleOpenTickets_nudgesWhenConductorIdle(t *testing.T) {
 	agents.Register("conductor", "conductor", nil)
 	// status defaults to idle
 
-	id, _ := issues.Create("Open ticket", "task", nil, nil)
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 
 	d.handleOpenTickets()
@@ -1002,7 +1002,7 @@ func TestHandleDraftTickets_skipsWhenArchitectWorking(t *testing.T) {
 	agents.Register("architect", "architect", nil)
 	agents.UpdateStatus("architect", "working")
 
-	id, _ := issues.Create("Draft ticket", "task", nil, nil)
+	id, _ := issues.Create("Draft ticket", "task", nil, nil, nil)
 	_ = id // ticket starts as draft
 
 	d.handleDraftTickets()
@@ -1017,7 +1017,7 @@ func TestHandleRepairingTickets_skipsWhenConductorWorking(t *testing.T) {
 	agents.Register("conductor", "conductor", nil)
 	agents.UpdateStatus("conductor", "working")
 
-	id, _ := issues.Create("Fix bug", "task", nil, nil)
+	id, _ := issues.Create("Fix bug", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
 
 	d.handleRepairingTickets()
@@ -1034,7 +1034,7 @@ func TestHandleInReviewTickets_skipsWorkingReviewer(t *testing.T) {
 	agents.Register("reviewer-2", "reviewer", nil)
 	agents.UpdateStatus("reviewer-1", "working") // busy
 
-	id, _ := issues.Create("Review me", "task", nil, nil)
+	id, _ := issues.Create("Review me", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 42)
 
@@ -1058,7 +1058,7 @@ func TestDigest_suppressesDuplicateNudge(t *testing.T) {
 	now := time.Now()
 	withCooldown(d, 5*time.Minute, now)
 
-	id, _ := issues.Create("Fix bug", "task", nil, nil)
+	id, _ := issues.Create("Fix bug", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
 
 	// First nudge — should send
@@ -1082,7 +1082,7 @@ func TestDigest_nudgesWhenTicketSetChanges(t *testing.T) {
 	now := time.Now()
 	withCooldown(d, 5*time.Minute, now)
 
-	id1, _ := issues.Create("Fix bug A", "task", nil, nil)
+	id1, _ := issues.Create("Fix bug A", "task", nil, nil, nil)
 	issues.UpdateStatus(id1, "repairing")
 
 	// First nudge
@@ -1092,7 +1092,7 @@ func TestDigest_nudgesWhenTicketSetChanges(t *testing.T) {
 	}
 
 	// Add a new repairing ticket — digest changes
-	id2, _ := issues.Create("Fix bug B", "task", nil, nil)
+	id2, _ := issues.Create("Fix bug B", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "repairing")
 
 	// Advance past cooldown so the changed digest can fire
@@ -1154,7 +1154,7 @@ func TestHandleStuckAgents_escalatesToMayor(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
 
 	agents.Register("flint", "prole", nil)
-	id, _ := issues.Create("Implement auth", "task", nil, nil)
+	id, _ := issues.Create("Implement auth", "task", nil, nil, nil)
 	agents.SetCurrentIssue("flint", &id)
 
 	d.stuckAgentThreshold = 30 * time.Minute
@@ -1177,7 +1177,7 @@ func TestHandleStuckAgents_includesTicketInfo(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
 
 	agents.Register("granite", "prole", nil)
-	id, _ := issues.Create("Wire artisan command", "task", nil, nil)
+	id, _ := issues.Create("Wire artisan command", "task", nil, nil, nil)
 	agents.SetCurrentIssue("granite", &id)
 
 	d.stuckAgentThreshold = 30 * time.Minute
@@ -1217,7 +1217,7 @@ func TestHandleStuckAgents_noEscalationWhenBelowThreshold(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
 
 	agents.Register("obsidian", "prole", nil)
-	id, _ := issues.Create("Some task", "task", nil, nil)
+	id, _ := issues.Create("Some task", "task", nil, nil, nil)
 	agents.SetCurrentIssue("obsidian", &id)
 
 	// Threshold is 2 hours but we only advance 30 minutes
@@ -1235,7 +1235,7 @@ func TestHandleStuckAgents_noEscalationWhenMayorNotRunning(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, nil)
 
 	agents.Register("quartz", "prole", nil)
-	id, _ := issues.Create("Some task", "task", nil, nil)
+	id, _ := issues.Create("Some task", "task", nil, nil, nil)
 	agents.SetCurrentIssue("quartz", &id)
 
 	d.stuckAgentThreshold = 30 * time.Minute
@@ -1283,7 +1283,7 @@ func TestHandleStuckAgents_disabledWhenThresholdZero(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
 
 	agents.Register("basalt", "prole", nil)
-	id, _ := issues.Create("Some task", "task", nil, nil)
+	id, _ := issues.Create("Some task", "task", nil, nil, nil)
 	agents.SetCurrentIssue("basalt", &id)
 
 	// stuckAgentThreshold defaults to 0 in test helper — feature disabled
@@ -1300,7 +1300,7 @@ func TestHandleStuckAgents_cooldownSuppressesRepeatEscalation(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
 
 	agents.Register("flint", "prole", nil)
-	id, _ := issues.Create("Some task", "task", nil, nil)
+	id, _ := issues.Create("Some task", "task", nil, nil, nil)
 	agents.SetCurrentIssue("flint", &id)
 
 	base := time.Now()
@@ -1326,8 +1326,8 @@ func TestHandleStuckAgents_cooldownIsPerAgent(t *testing.T) {
 	agents.Register("agent-a", "prole", nil)
 	agents.Register("agent-b", "prole", nil)
 
-	idA, _ := issues.Create("Task A", "task", nil, nil)
-	idB, _ := issues.Create("Task B", "task", nil, nil)
+	idA, _ := issues.Create("Task A", "task", nil, nil, nil)
+	idB, _ := issues.Create("Task B", "task", nil, nil, nil)
 	agents.SetCurrentIssue("agent-a", &idA)
 	agents.SetCurrentIssue("agent-b", &idB)
 
@@ -1404,7 +1404,7 @@ func TestHandleStuckAgents_skipsMayor(t *testing.T) {
 
 	// Mayor itself is working past the threshold
 	agents.Register("mayor", "mayor", nil)
-	id, _ := issues.Create("Some mayor task", "task", nil, nil)
+	id, _ := issues.Create("Some mayor task", "task", nil, nil, nil)
 	agents.SetCurrentIssue("mayor", &id)
 
 	d.stuckAgentThreshold = 30 * time.Minute
@@ -1452,11 +1452,11 @@ func TestHandleStaleWorktrees_respectsInterval(t *testing.T) {
 func TestHandleEpicAutoClose_closesEpicWhenAllChildrenClosed(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	epicID, _ := issues.Create("Epic A", "epic", nil, nil)
+	epicID, _ := issues.Create("Epic A", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
-	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child1, "closed")
-	child2, _ := issues.Create("Task 2", "task", &epicID, nil)
+	child2, _ := issues.Create("Task 2", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child2, "closed")
 
 	d.handleEpicAutoClose()
@@ -1473,11 +1473,11 @@ func TestHandleEpicAutoClose_closesEpicWhenAllChildrenClosed(t *testing.T) {
 func TestHandleEpicAutoClose_noopWhenOpenChildExists(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	epicID, _ := issues.Create("Epic B", "epic", nil, nil)
+	epicID, _ := issues.Create("Epic B", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
-	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child1, "closed")
-	child2, _ := issues.Create("Task 2", "task", &epicID, nil)
+	child2, _ := issues.Create("Task 2", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child2, "open")
 
 	d.handleEpicAutoClose()
@@ -1491,7 +1491,7 @@ func TestHandleEpicAutoClose_noopWhenOpenChildExists(t *testing.T) {
 func TestHandleEpicAutoClose_noopWhenNoChildren(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	epicID, _ := issues.Create("Epic C", "epic", nil, nil)
+	epicID, _ := issues.Create("Epic C", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
 
 	d.handleEpicAutoClose()
@@ -1505,9 +1505,9 @@ func TestHandleEpicAutoClose_noopWhenNoChildren(t *testing.T) {
 func TestHandleEpicAutoClose_noopWhenAlreadyClosed(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	epicID, _ := issues.Create("Epic D", "epic", nil, nil)
+	epicID, _ := issues.Create("Epic D", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
-	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child1, "closed")
 	issues.UpdateStatus(epicID, "closed")
 
@@ -1522,9 +1522,9 @@ func TestHandleEpicAutoClose_noopWhenAlreadyClosed(t *testing.T) {
 func TestHandleEpicAutoClose_notifiesMayor(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
 
-	epicID, _ := issues.Create("Big Feature", "epic", nil, nil)
+	epicID, _ := issues.Create("Big Feature", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
-	child1, _ := issues.Create("Task 1", "task", &epicID, nil)
+	child1, _ := issues.Create("Task 1", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child1, "closed")
 
 	d.handleEpicAutoClose()
@@ -1543,7 +1543,7 @@ func TestHandleEpicAutoClose_notifiesMayor(t *testing.T) {
 func TestHandleBackfillPRNumbers_backfillsMatchingBranch(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, err := issues.Create("My ticket", "task", nil, nil)
+	id, err := issues.Create("My ticket", "task", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -1573,7 +1573,7 @@ func TestHandleBackfillPRNumbers_backfillsMatchingBranch(t *testing.T) {
 func TestHandleBackfillPRNumbers_skipsTicketsWithExistingPR(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, _ := issues.Create("Already has PR", "task", nil, nil)
+	id, _ := issues.Create("Already has PR", "task", nil, nil, nil)
 	issues.Assign(id, "copper", "prole/copper/NC-2")
 	issues.UpdateStatus(id, "in_review")
 	issues.SetPR(id, 99)
@@ -1594,7 +1594,7 @@ func TestHandleBackfillPRNumbers_skipsTicketsWithExistingPR(t *testing.T) {
 func TestHandleBackfillPRNumbers_skipsTicketsWithNullBranch(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, _ := issues.Create("No branch", "task", nil, nil)
+	id, _ := issues.Create("No branch", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "open")
 	// No Assign call — branch remains NULL
 
@@ -1614,7 +1614,7 @@ func TestHandleBackfillPRNumbers_skipsTicketsWithNullBranch(t *testing.T) {
 func TestHandleBackfillPRNumbers_respectsInterval(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	id, _ := issues.Create("Interval test", "task", nil, nil)
+	id, _ := issues.Create("Interval test", "task", nil, nil, nil)
 	issues.Assign(id, "copper", "prole/copper/NC-3")
 	issues.UpdateStatus(id, "in_review")
 

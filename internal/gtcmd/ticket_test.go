@@ -48,7 +48,6 @@ func TestTicketCreate_withoutDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	// Description should remain NULL when not provided.
 	if issue.Description.Valid && issue.Description.String != "" {
 		t.Errorf("expected description to be empty, got %q", issue.Description.String)
 	}
@@ -69,14 +68,14 @@ func TestTicketCreate_descriptionMissingValue(t *testing.T) {
 func TestTicketDescribe(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
-	id, _ := issues.Create("Test ticket", "task", nil, nil)
+	issues.Create("Test ticket", "task", nil, nil, nil)
 
 	err := ticketDescribe(issues, []string{"1", "Updated description."})
 	if err != nil {
 		t.Fatalf("ticketDescribe: %v", err)
 	}
 
-	issue, err := issues.Get(id)
+	issue, err := issues.Get(1)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -113,5 +112,101 @@ func TestTicketDescribe_noArgs(t *testing.T) {
 	err := ticketDescribe(issues, []string{})
 	if err == nil {
 		t.Fatal("expected error when no args provided")
+	}
+}
+
+func TestTicketPrioritize_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := ticketPrioritize(issues, []string{"1", "P1"}); err != nil {
+		t.Fatalf("ticketPrioritize: %v", err)
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !issue.Priority.Valid || issue.Priority.String != "P1" {
+		t.Errorf("expected priority='P1', got %v", issue.Priority)
+	}
+}
+
+func TestTicketPrioritize_allValidPriorities(t *testing.T) {
+	for _, p := range []string{"P0", "P1", "P2", "P3"} {
+		t.Run(p, func(t *testing.T) {
+			issues := setupTicketTestRepo(t)
+
+			_, err := issues.Create("A task", "task", nil, nil, nil)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+
+			if err := ticketPrioritize(issues, []string{"1", p}); err != nil {
+				t.Errorf("ticketPrioritize with %q: unexpected error: %v", p, err)
+			}
+		})
+	}
+}
+
+func TestTicketPrioritize_invalidPriority(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	_, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	err = ticketPrioritize(issues, []string{"1", "P5"})
+	if err == nil {
+		t.Fatal("expected error for invalid priority 'P5', got nil")
+	}
+}
+
+func TestTicketPrioritize_notFound(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketPrioritize(issues, []string{"9999", "P0"})
+	if err == nil {
+		t.Fatal("expected error for non-existent ticket, got nil")
+	}
+}
+
+func TestTicketPrioritize_missingArgs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketPrioritize(issues, []string{})
+	if err == nil {
+		t.Fatal("expected usage error for 0 args, got nil")
+	}
+
+	err = ticketPrioritize(issues, []string{"1"})
+	if err == nil {
+		t.Fatal("expected usage error for 1 arg, got nil")
+	}
+}
+
+func TestTicketPrioritize_prefixedID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := ticketPrioritize(issues, []string{"nc-1", "P2"}); err != nil {
+		t.Fatalf("ticketPrioritize with prefixed id: %v", err)
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !issue.Priority.Valid || issue.Priority.String != "P2" {
+		t.Errorf("expected priority='P2', got %v", issue.Priority)
 	}
 }

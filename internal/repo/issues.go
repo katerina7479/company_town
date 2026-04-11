@@ -17,10 +17,14 @@ type Issue struct {
 	PRNumber    sql.NullInt64
 	Assignee    sql.NullString
 	ParentID    sql.NullInt64
+	Priority    sql.NullString
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	ClosedAt    sql.NullTime
 }
+
+// Valid priority values.
+var ValidPriorities = []string{"P0", "P1", "P2", "P3"}
 
 // Valid issue statuses.
 var ValidStatuses = []string{
@@ -41,7 +45,7 @@ func NewIssueRepo(db *sql.DB) *IssueRepo {
 }
 
 // Create inserts a new issue and returns its ID.
-func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *string) (int, error) {
+func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *string, priority *string) (int, error) {
 	if issueType == "" {
 		issueType = "task"
 	}
@@ -54,10 +58,14 @@ func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *st
 	if specialty != nil {
 		specVal = *specialty
 	}
+	var prioVal interface{}
+	if priority != nil {
+		prioVal = *priority
+	}
 
 	result, err := r.db.Exec(
-		`INSERT INTO issues (title, issue_type, parent_id, specialty) VALUES (?, ?, ?, ?)`,
-		title, issueType, parentVal, specVal,
+		`INSERT INTO issues (title, issue_type, parent_id, specialty, priority) VALUES (?, ?, ?, ?, ?)`,
+		title, issueType, parentVal, specVal, prioVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("creating issue: %w", err)
@@ -75,7 +83,7 @@ func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *st
 func (r *IssueRepo) Get(id int) (*Issue, error) {
 	row := r.db.QueryRow(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
 		 FROM issues WHERE id = ?`, id,
 	)
 	return scanIssue(row)
@@ -89,13 +97,13 @@ func (r *IssueRepo) List(status string) ([]*Issue, error) {
 	if status != "" {
 		rows, err = r.db.Query(
 			`SELECT id, issue_type, status, title, description, specialty, branch,
-			        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+			        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
 			 FROM issues WHERE status = ? ORDER BY id`, status,
 		)
 	} else {
 		rows, err = r.db.Query(
 			`SELECT id, issue_type, status, title, description, specialty, branch,
-			        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+			        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
 			 FROM issues ORDER BY id`,
 		)
 	}
@@ -233,7 +241,7 @@ func (r *IssueRepo) SetPR(id, prNumber int) error {
 func (r *IssueRepo) ListWithPRs() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
 		 FROM issues WHERE pr_number IS NOT NULL AND status != 'closed'
 		 ORDER BY id`,
 	)
@@ -257,7 +265,7 @@ func (r *IssueRepo) ListWithPRs() ([]*Issue, error) {
 func (r *IssueRepo) ListMissingPR() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
 		 FROM issues
 		 WHERE pr_number IS NULL AND branch IS NOT NULL AND status != 'closed'
 		 ORDER BY id`,
@@ -317,11 +325,11 @@ func (r *IssueRepo) GetDependencies(issueID int) ([]int, error) {
 	return deps, rows.Err()
 }
 
-// Ready returns open issues with no unresolved dependencies.
+// Ready returns open issues with no unresolved dependencies, ordered by priority (P0 first, NULL last).
 func (r *IssueRepo) Ready() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
-		        i.branch, i.pr_number, i.assignee, i.parent_id,
+		        i.branch, i.pr_number, i.assignee, i.parent_id, i.priority,
 		        i.created_at, i.updated_at, i.closed_at
 		 FROM issues i
 		 WHERE i.status = 'open'
@@ -331,7 +339,13 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 		     JOIN issues dep ON dep.id = d.depends_on_id
 		     WHERE d.issue_id = i.id AND dep.status != 'closed'
 		   )
-		 ORDER BY i.id`,
+		 ORDER BY CASE
+		   WHEN i.priority = 'P0' THEN 0
+		   WHEN i.priority = 'P1' THEN 1
+		   WHEN i.priority = 'P2' THEN 2
+		   WHEN i.priority = 'P3' THEN 3
+		   ELSE 4
+		 END, i.id`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying ready issues: %w", err)
@@ -354,7 +368,7 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
 		 FROM issues
 		 WHERE issue_type = 'epic'
 		   AND status != 'closed'
@@ -420,12 +434,28 @@ func (r *IssueRepo) ListHierarchy() ([]*IssueNode, error) {
 	return roots, nil
 }
 
+// SetPriority sets the priority on an issue.
+func (r *IssueRepo) SetPriority(id int, priority string) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		priority, id,
+	)
+	if err != nil {
+		return fmt.Errorf("setting issue priority: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
 func scanIssue(row *sql.Row) (*Issue, error) {
 	var i Issue
 	err := row.Scan(
 		&i.ID, &i.IssueType, &i.Status, &i.Title, &i.Description,
 		&i.Specialty, &i.Branch, &i.PRNumber, &i.Assignee, &i.ParentID,
-		&i.CreatedAt, &i.UpdatedAt, &i.ClosedAt,
+		&i.Priority, &i.CreatedAt, &i.UpdatedAt, &i.ClosedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("issue not found")
@@ -441,7 +471,7 @@ func scanIssueRow(rows *sql.Rows) (*Issue, error) {
 	err := rows.Scan(
 		&i.ID, &i.IssueType, &i.Status, &i.Title, &i.Description,
 		&i.Specialty, &i.Branch, &i.PRNumber, &i.Assignee, &i.ParentID,
-		&i.CreatedAt, &i.UpdatedAt, &i.ClosedAt,
+		&i.Priority, &i.CreatedAt, &i.UpdatedAt, &i.ClosedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scanning issue row: %w", err)

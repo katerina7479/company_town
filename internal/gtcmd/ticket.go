@@ -61,6 +61,8 @@ func Ticket(args []string) error {
 		return ticketDepend(issues, cfg.TicketPrefix, args[1:])
 	case "describe":
 		return ticketDescribe(issues, args[1:])
+	case "prioritize":
+		return ticketPrioritize(issues, args[1:])
 	default:
 		return fmt.Errorf("unknown ticket command: %s", args[0])
 	}
@@ -68,13 +70,14 @@ func Ticket(args []string) error {
 
 func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>]")
+		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3>]")
 	}
 
 	title := args[0]
 	var parentID *int
 	var specialty *string
 	var description string
+	var priority *string
 	issueType := "task"
 
 	for i := 1; i < len(args); i++ {
@@ -108,10 +111,20 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 			}
 			i++
 			description = args[i]
+		case "--priority":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--priority requires a value")
+			}
+			i++
+			p := args[i]
+			if !isValidPriority(p) {
+				return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3", p)
+			}
+			priority = &p
 		}
 	}
 
-	id, err := issues.Create(title, issueType, parentID, specialty)
+	id, err := issues.Create(title, issueType, parentID, specialty, priority)
 	if err != nil {
 		return err
 	}
@@ -143,6 +156,9 @@ func ticketShow(issues *repo.IssueRepo, prefix string, args []string) error {
 
 	fmt.Printf("%s-%d  [%s]  %s\n", prefix, issue.ID, issue.Status, issue.Title)
 	fmt.Printf("  type:      %s\n", issue.IssueType)
+	if issue.Priority.Valid {
+		fmt.Printf("  priority:  %s\n", issue.Priority.String)
+	}
 	if issue.Assignee.Valid {
 		fmt.Printf("  assignee:  %s\n", issue.Assignee.String)
 	}
@@ -200,14 +216,19 @@ func ticketList(issues *repo.IssueRepo, prefix string, args []string) error {
 	}
 
 	for _, issue := range list {
+		priority := ""
+		if issue.Priority.Valid {
+			priority = fmt.Sprintf(" [%s]", issue.Priority.String)
+		}
 		assignee := ""
 		if issue.Assignee.Valid {
 			assignee = fmt.Sprintf("  (%s)", issue.Assignee.String)
 		}
-		fmt.Printf("%-8s %-14s %s%s\n",
+		fmt.Printf("%-8s %-14s %s%s%s\n",
 			fmt.Sprintf("%s-%d", prefix, issue.ID),
 			"["+issue.Status+"]",
 			issue.Title,
+			priority,
 			assignee,
 		)
 	}
@@ -395,6 +416,38 @@ func ticketDescribe(issues *repo.IssueRepo, args []string) error {
 	}
 
 	fmt.Printf("Ticket %d description updated.\n", id)
+	return nil
+}
+
+func isValidPriority(p string) bool {
+	for _, v := range repo.ValidPriorities {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+func ticketPrioritize(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket prioritize <id> <P0|P1|P2|P3>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	priority := args[1]
+	if !isValidPriority(priority) {
+		return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3", priority)
+	}
+
+	if err := issues.SetPriority(id, priority); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d priority → %s\n", id, priority)
 	return nil
 }
 
