@@ -139,12 +139,12 @@ func Init(force bool) error {
 	return nil
 }
 
-// writeClaudeMD writes a CLAUDE.md for an agent type from the embedded templates.
+// WriteClaudeMD writes a CLAUDE.md for an agent type from the embedded templates.
 // If force is false and the file exists, it warns but does not overwrite.
-func writeClaudeMD(dir, agentType string, force bool) {
+func WriteClaudeMD(dir, agentType string, force bool) {
 	path := filepath.Join(dir, "CLAUDE.md")
 
-	content, err := loadTemplate(agentType)
+	content, err := LoadTemplate(agentType)
 	if err != nil {
 		fmt.Printf("  error: no template for %s: %v\n", agentType, err)
 		return
@@ -168,9 +168,14 @@ func writeClaudeMD(dir, agentType string, force bool) {
 	fmt.Printf("  created: agents/%s/CLAUDE.md\n", agentType)
 }
 
-// loadTemplate reads a template file from the embedded filesystem
+// writeClaudeMD is an internal alias for WriteClaudeMD used within this package.
+func writeClaudeMD(dir, agentType string, force bool) {
+	WriteClaudeMD(dir, agentType, force)
+}
+
+// LoadTemplate reads a template file from the embedded filesystem
 // and appends the shared commands reference.
-func loadTemplate(agentType string) (string, error) {
+func LoadTemplate(agentType string) (string, error) {
 	filename := fmt.Sprintf("templates/%s-CLAUDE.md", agentType)
 	data, err := templateFS.ReadFile(filename)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/katerina7479/company_town/internal/commands"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
@@ -28,12 +29,13 @@ func Start(args []string) error {
 	agents := repo.NewAgentRepo(conn)
 	name := args[0]
 
-	var agentType, model, agentDir, prompt string
+	var agentType, templateType, model, agentDir, prompt string
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 
 	switch {
 	case name == "architect":
 		agentType = "architect"
+		templateType = "architect"
 		model = cfg.Agents.Architect.Model
 		agentDir = filepath.Join(ctDir, "agents", "architect")
 		prompt = fmt.Sprintf(
@@ -46,6 +48,7 @@ func Start(args []string) error {
 
 	case name == "conductor":
 		agentType = "conductor"
+		templateType = "conductor"
 		model = cfg.Agents.Conductor.Model
 		agentDir = filepath.Join(ctDir, "agents", "conductor")
 		prompt = fmt.Sprintf(
@@ -58,6 +61,7 @@ func Start(args []string) error {
 
 	case name == "reviewer":
 		agentType = "reviewer"
+		templateType = "reviewer"
 		model = cfg.Agents.Conductor.Model // reviewer uses same model class as conductor
 		agentDir = filepath.Join(ctDir, "agents", "reviewer")
 		prompt = fmt.Sprintf(
@@ -79,6 +83,7 @@ func Start(args []string) error {
 			return fmt.Errorf("unknown specialty %q (available in config: %v)", specialty, available)
 		}
 		agentType = "artisan"
+		templateType = "artisan-" + specialty
 		model = artisanCfg.Model
 		agentDir = filepath.Join(ctDir, "agents", "artisan", specialty)
 		prompt = fmt.Sprintf(
@@ -103,6 +108,10 @@ func Start(args []string) error {
 	default:
 		return fmt.Errorf("unknown agent: %s", name)
 	}
+
+	// Re-deploy CLAUDE.md from embedded template on every start so agents always
+	// get the latest instructions after a binary upgrade.
+	commands.WriteClaudeMD(agentDir, templateType, true)
 
 	sessionName := session.SessionName(name)
 
