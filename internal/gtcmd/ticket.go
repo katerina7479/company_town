@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/katerina7479/company_town/internal/assign"
+	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
@@ -57,7 +59,7 @@ func Ticket(args []string) error {
 	case "ready":
 		return ticketReady(issues, cfg.TicketPrefix)
 	case "assign":
-		return ticketAssign(issues, agents, args[1:])
+		return ticketAssign(cfg, issues, agents, args[1:])
 	case "status":
 		return ticketStatus(issues, agents, args[1:])
 	case "close":
@@ -262,7 +264,7 @@ func ticketReady(issues *repo.IssueRepo, prefix string) error {
 	return nil
 }
 
-func ticketAssign(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
+func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: gt ticket assign <ticket_id> <agent_name>")
 	}
@@ -274,16 +276,11 @@ func ticketAssign(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 
 	agentName := args[1]
 
-	issue, err := issues.Get(id)
-	if err != nil {
+	if err := assign.Execute(cfg, issues, agents, id, agentName); err != nil {
 		return err
 	}
 
-	branch := fmt.Sprintf("prole/%s/%d", agentName, issue.ID)
-	if err := issues.Assign(id, agentName, branch); err != nil {
-		return err
-	}
-
+	branch := fmt.Sprintf("prole/%s/%d", agentName, id)
 	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
 
 	// Nudge the agent's tmux session so it picks the work up immediately.

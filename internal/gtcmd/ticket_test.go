@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 )
@@ -259,7 +260,7 @@ func TestTicketAssign_nudgesAgentAndLeavesStatusAlone(t *testing.T) {
 
 	sent := withStubSession(t, map[string]bool{"ct-prole-copper": true})
 
-	if err := ticketAssign(issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
 		t.Fatalf("ticketAssign: %v", err)
 	}
 
@@ -310,7 +311,7 @@ func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
 	// Empty live-session map — nudge should be skipped without erroring.
 	sent := withStubSession(t, map[string]bool{})
 
-	if err := ticketAssign(issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
 		t.Fatalf("ticketAssign should not error when session is gone: %v", err)
 	}
 
