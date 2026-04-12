@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/katerina7479/company_town/internal/eventlog"
 )
 
 type Agent struct {
@@ -21,11 +23,12 @@ type Agent struct {
 }
 
 type AgentRepo struct {
-	db *sql.DB
+	db     *sql.DB
+	events *eventlog.Logger
 }
 
-func NewAgentRepo(db *sql.DB) *AgentRepo {
-	return &AgentRepo{db: db}
+func NewAgentRepo(db *sql.DB, events *eventlog.Logger) *AgentRepo {
+	return &AgentRepo{db: db, events: events}
 }
 
 // Register creates a new agent record.
@@ -41,6 +44,10 @@ func (r *AgentRepo) Register(name, agentType string, specialty *string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("registering agent %s: %w", name, err)
+	}
+
+	if r.events != nil {
+		r.events.AgentRegistered(name, agentType)
 	}
 	return nil
 }
@@ -68,6 +75,11 @@ func (r *AgentRepo) Get(name string) (*Agent, error) {
 
 // UpdateStatus changes an agent's status.
 func (r *AgentRepo) UpdateStatus(name, status string) error {
+	var oldStatus string
+	if r.events != nil {
+		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus)
+	}
+
 	var timeEnded interface{}
 	if status == "dead" {
 		timeEnded = time.Now()
@@ -86,6 +98,10 @@ func (r *AgentRepo) UpdateStatus(name, status string) error {
 	r.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE name = ?`, name).Scan(&count)
 	if count == 0 {
 		return fmt.Errorf("agent %s not found", name)
+	}
+
+	if r.events != nil {
+		r.events.AgentStatus(name, oldStatus, status)
 	}
 	return nil
 }
@@ -110,6 +126,11 @@ func (r *AgentRepo) SetTmuxSession(name, sessionName string) error {
 
 // SetCurrentIssue assigns an issue to an agent.
 func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
+	var oldStatus string
+	if r.events != nil {
+		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus)
+	}
+
 	var val interface{}
 	if issueID != nil {
 		val = *issueID
@@ -119,16 +140,35 @@ func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
 		`UPDATE agents SET current_issue = ?, status = 'working', status_changed_at = ? WHERE name = ?`,
 		val, time.Now(), name,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if r.events != nil {
+		r.events.AgentStatus(name, oldStatus, "working")
+	}
+	return nil
 }
 
 // ClearCurrentIssue marks agent as idle with no assigned issue.
 func (r *AgentRepo) ClearCurrentIssue(name string) error {
+	var oldStatus string
+	if r.events != nil {
+		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus)
+	}
+
 	_, err := r.db.Exec(
 		`UPDATE agents SET current_issue = NULL, status = 'idle', status_changed_at = ? WHERE name = ?`,
 		time.Now(), name,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if r.events != nil {
+		r.events.AgentStatus(name, oldStatus, "idle")
+	}
+	return nil
 }
 
 // ListByStatus returns agents matching a status.

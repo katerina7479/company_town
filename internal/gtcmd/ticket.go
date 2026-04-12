@@ -9,6 +9,7 @@ import (
 	"github.com/katerina7479/company_town/internal/assign"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
+	"github.com/katerina7479/company_town/internal/eventlog"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
 )
@@ -46,8 +47,9 @@ func Ticket(args []string) error {
 	}
 	defer conn.Close()
 
-	issues := repo.NewIssueRepo(conn)
-	agents := repo.NewAgentRepo(conn)
+	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
+	issues := repo.NewIssueRepo(conn, events)
+	agents := repo.NewAgentRepo(conn, events)
 
 	switch args[0] {
 	case "create":

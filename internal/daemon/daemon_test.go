@@ -41,8 +41,8 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		ProjectRoot:  t.TempDir(),
 	}
 
-	issues := repo.NewIssueRepo(conn)
-	agents := repo.NewAgentRepo(conn)
+	issues := repo.NewIssueRepo(conn, nil)
+	agents := repo.NewAgentRepo(conn, nil)
 
 	sessions := make(map[string]bool, len(activeSessions))
 	for _, s := range activeSessions {
@@ -1387,7 +1387,7 @@ func TestHandleStuckAgents_skipsNullStatusChangedAt(t *testing.T) {
 		ProjectRoot:  t.TempDir(),
 	}
 
-	agents := repo.NewAgentRepo(conn)
+	agents := repo.NewAgentRepo(conn, nil)
 	agents.Register("null-ts-agent", "prole", nil)
 	// Set status=working directly without setting status_changed_at, simulating
 	// an agent created before the status_changed_at column was added.
@@ -1398,7 +1398,7 @@ func TestHandleStuckAgents_skipsNullStatusChangedAt(t *testing.T) {
 
 	d := &Daemon{
 		cfg:             cfg,
-		issues:          repo.NewIssueRepo(conn),
+		issues:          repo.NewIssueRepo(conn, nil),
 		agents:          agents,
 		logger:          log.New(io.Discard, "", 0),
 		stop:            make(chan struct{}),

@@ -13,7 +13,7 @@ func setupAgentRepo(t *testing.T) *AgentRepo {
 		t.Fatalf("creating test db: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return NewAgentRepo(conn)
+	return NewAgentRepo(conn, nil)
 }
 
 func TestAgentRepo_Register(t *testing.T) {

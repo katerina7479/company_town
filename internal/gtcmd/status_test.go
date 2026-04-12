@@ -14,7 +14,7 @@ func TestReconcileDeadAgents(t *testing.T) {
 	}
 	defer conn.Close()
 
-	agents := repo.NewAgentRepo(conn)
+	agents := repo.NewAgentRepo(conn, nil)
 
 	// alive prole: tmux session exists, currently working — should stay
 	agents.Register("alive", "prole", nil)

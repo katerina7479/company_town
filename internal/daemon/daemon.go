@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/katerina7479/company_town/internal/config"
+	"github.com/katerina7479/company_town/internal/eventlog"
 	"github.com/katerina7479/company_town/internal/prole"
 	"github.com/katerina7479/company_town/internal/quality"
 	"github.com/katerina7479/company_town/internal/repo"
@@ -70,18 +71,19 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	metrics := repo.NewQualityMetricRepo(db)
 	runner := quality.New(cfg.ProjectRoot)
 	logger := log.New(f, "[DAEMON] ", log.LstdFlags)
-	agentRepo := repo.NewAgentRepo(db)
+	events := eventlog.NewLogger(ctDir)
+	agentRepo := repo.NewAgentRepo(db, events)
 
 	return &Daemon{
 		cfg:           cfg,
-		issues:        repo.NewIssueRepo(db),
+		issues:        repo.NewIssueRepo(db, events),
 		agents:        agentRepo,
 		logger:        logger,
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
 		sessionExists: session.Exists,
 		resetWorktree: func(name string) error {
-			return prole.Reset(name, cfg, repo.NewAgentRepo(db))
+			return prole.Reset(name, cfg, repo.NewAgentRepo(db, events))
 		},
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
@@ -93,7 +95,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		},
 		qualityInterval: time.Duration(cfg.Quality.BaselineIntervalSeconds) * time.Second,
 		pruneStaleWorktrees: func() error {
-			pruned, err := prole.PruneDeadWorktrees(cfg, repo.NewAgentRepo(db), logger)
+			pruned, err := prole.PruneDeadWorktrees(cfg, repo.NewAgentRepo(db, events), logger)
 			for _, name := range pruned {
 				logger.Printf("pruned stale worktree for dead prole %s", name)
 			}

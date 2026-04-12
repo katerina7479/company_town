@@ -16,7 +16,7 @@ func setupPRTestRepo(t *testing.T) *repo.IssueRepo {
 		t.Fatalf("creating test db: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return repo.NewIssueRepo(conn)
+	return repo.NewIssueRepo(conn, nil)
 }
 
 func testCfg() *config.Config {

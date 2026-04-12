@@ -13,7 +13,7 @@ func setupTestRepo(t *testing.T) *IssueRepo {
 		t.Fatalf("creating test db: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return NewIssueRepo(conn)
+	return NewIssueRepo(conn, nil)
 }
 
 func TestIssueRepo_Create(t *testing.T) {

@@ -16,7 +16,7 @@ func setupRepos(t *testing.T) (*repo.IssueRepo, *repo.AgentRepo) {
 		t.Fatalf("creating test db: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return repo.NewIssueRepo(conn), repo.NewAgentRepo(conn)
+	return repo.NewIssueRepo(conn, nil), repo.NewAgentRepo(conn, nil)
 }
 
 func TestExecute_existingProle(t *testing.T) {
