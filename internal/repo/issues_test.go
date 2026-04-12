@@ -294,14 +294,30 @@ func TestIssueRepo_Assign(t *testing.T) {
 	}
 
 	issue, _ := repo.Get(id)
-	if issue.Status != "in_progress" {
-		t.Errorf("expected status='in_progress', got %q", issue.Status)
-	}
 	if !issue.Assignee.Valid || issue.Assignee.String != "obsidian" {
 		t.Errorf("expected assignee='obsidian', got %v", issue.Assignee)
 	}
 	if !issue.Branch.Valid || issue.Branch.String != "prole/obsidian/NC-24" {
 		t.Errorf("expected branch='prole/obsidian/NC-24', got %v", issue.Branch)
+	}
+}
+
+func TestIssueRepo_Assign_preservesStatus(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Work item", "task", nil, nil, nil)
+	repo.UpdateStatus(id, "open")
+
+	if err := repo.Assign(id, "iron", "prole/iron/42"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Status != "open" {
+		t.Errorf("Assign must not change status: expected 'open', got %q", issue.Status)
+	}
+	if !issue.Assignee.Valid || issue.Assignee.String != "iron" {
+		t.Errorf("expected assignee='iron', got %v", issue.Assignee)
 	}
 }
 
@@ -496,6 +512,103 @@ func TestIssueRepo_ClearAssignee_notFound(t *testing.T) {
 	err := repo.ClearAssignee(9999)
 	if err == nil {
 		t.Fatal("expected error for non-existent issue, got nil")
+	}
+}
+
+func TestIssueRepo_ClearAssigneeByAgent_openTicket(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Open ticket", "task", nil, nil, nil)
+	repo.UpdateStatus(id, "open")
+	repo.Assign(id, "iron", "prole/iron/1")
+
+	n, err := repo.ClearAssigneeByAgent("iron")
+	if err != nil {
+		t.Fatalf("ClearAssigneeByAgent: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row affected, got %d", n)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected status='open' (unchanged), got %q", issue.Status)
+	}
+}
+
+func TestIssueRepo_ClearAssigneeByAgent_inProgressTicket(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("In-progress ticket", "task", nil, nil, nil)
+	repo.UpdateStatus(id, "open")
+	repo.Assign(id, "iron", "prole/iron/2")
+	repo.UpdateStatus(id, "in_progress")
+
+	n, err := repo.ClearAssigneeByAgent("iron")
+	if err != nil {
+		t.Fatalf("ClearAssigneeByAgent: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row affected, got %d", n)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected status='open' (reverted from in_progress), got %q", issue.Status)
+	}
+}
+
+func TestIssueRepo_ClearAssigneeByAgent_leavesOtherStatuses(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	for _, status := range []string{"in_review", "pr_open", "repairing"} {
+		id, _ := repo.Create("Ticket "+status, "task", nil, nil, nil)
+		repo.UpdateStatus(id, status)
+		repo.SetAssignee(id, "iron")
+	}
+
+	n, err := repo.ClearAssigneeByAgent("iron")
+	if err != nil {
+		t.Fatalf("ClearAssigneeByAgent: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 rows affected (non-open/in_progress statuses skipped), got %d", n)
+	}
+}
+
+func TestIssueRepo_ClearAssigneeByAgent_returnsCount(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	for i := 0; i < 3; i++ {
+		id, _ := repo.Create("Ticket", "task", nil, nil, nil)
+		repo.UpdateStatus(id, "open")
+		repo.Assign(id, "iron", "prole/iron/99")
+	}
+
+	n, err := repo.ClearAssigneeByAgent("iron")
+	if err != nil {
+		t.Fatalf("ClearAssigneeByAgent: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("expected count=3, got %d", n)
+	}
+}
+
+func TestIssueRepo_ClearAssigneeByAgent_noMatches(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	n, err := repo.ClearAssigneeByAgent("nonexistent-agent")
+	if err != nil {
+		t.Fatalf("ClearAssigneeByAgent: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected count=0 for unknown agent, got %d", n)
 	}
 }
 

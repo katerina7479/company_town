@@ -93,15 +93,20 @@ func TestIssueRepo_EmitsAssign(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
+	// Assign no longer transitions status — only sets assignee+branch.
+	// The prole explicitly acknowledges with UpdateStatus("in_progress").
 	if err := issues.Assign(id, "copper", "prole/copper/NC-17"); err != nil {
 		t.Fatalf("Assign: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
 	}
 
 	events, err := reader.ReadAll()
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
-	// 1 created + 1 assign transition
+	// 1 created + 1 explicit in_progress transition
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
 	}

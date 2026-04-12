@@ -160,15 +160,12 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	return nil
 }
 
-// Assign sets the assignee and branch on an issue.
+// Assign sets the assignee and branch on an issue. It does NOT change the
+// ticket status — the prole must explicitly acknowledge with
+// `gt ticket status <id> in_progress` to claim the work.
 func (r *IssueRepo) Assign(id int, assignee, branch string) error {
-	var oldStatus string
-	if r.events != nil {
-		r.db.QueryRow(`SELECT status FROM issues WHERE id = ?`, id).Scan(&oldStatus)
-	}
-
 	result, err := r.db.Exec(
-		`UPDATE issues SET assignee = ?, branch = ?, status = 'in_progress',
+		`UPDATE issues SET assignee = ?, branch = ?,
 		        updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		assignee, branch, id,
 	)
@@ -179,10 +176,6 @@ func (r *IssueRepo) Assign(id int, assignee, branch string) error {
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("issue %d not found", id)
-	}
-
-	if r.events != nil && oldStatus != "in_progress" {
-		r.events.TicketStatus(id, oldStatus, "in_progress")
 	}
 	return nil
 }
@@ -234,6 +227,28 @@ func (r *IssueRepo) ClearAssignee(id int) error {
 		return fmt.Errorf("issue %d not found", id)
 	}
 	return nil
+}
+
+// ClearAssigneeByAgent clears the assignee on every open or in_progress
+// issue currently assigned to `name`, and reverts any in_progress issues
+// back to open so they become selectable again. Used during dead-prole
+// reconcile — the prole row is about to be deleted, its work needs to
+// return to the pool.
+func (r *IssueRepo) ClearAssigneeByAgent(name string) (int, error) {
+	result, err := r.db.Exec(
+		`UPDATE issues
+		 SET assignee = NULL,
+		     status = CASE WHEN status = 'in_progress' THEN 'open' ELSE status END,
+		     updated_at = CURRENT_TIMESTAMP
+		 WHERE assignee = ?
+		   AND status IN ('open', 'in_progress')`,
+		name,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("clearing assignee for %s: %w", name, err)
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
 }
 
 // UpdateDescription sets the description on an issue.

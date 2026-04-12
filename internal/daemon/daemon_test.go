@@ -1943,3 +1943,94 @@ func TestHandleInReviewTickets_skipsReviewerWithActiveSession(t *testing.T) {
 		t.Errorf("expected no restart when active reviewer session exists, got %v", *restarted)
 	}
 }
+
+// --- Dead-prole orphaned assignment reconcile tests ---
+
+func TestHandleDeadSessions_clearsOrphanedOpenTicket(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	agents.Register("iron", "prole", nil)
+	agents.SetTmuxSession("iron", "ct-iron")
+
+	id, _ := issues.Create("Orphaned task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.Assign(id, "iron", "prole/iron/44")
+
+	d.handleDeadSessions()
+
+	// prole row must be gone
+	if _, err := agents.Get("iron"); err == nil {
+		t.Errorf("expected prole 'iron' to be deleted, still present")
+	}
+
+	// ticket must be open with NULL assignee
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get ticket: %v", err)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected ticket status='open', got %q", issue.Status)
+	}
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+}
+
+func TestHandleDeadSessions_clearsOrphanedInProgressTicket(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	agents.Register("iron", "prole", nil)
+	agents.SetTmuxSession("iron", "ct-iron")
+
+	id, _ := issues.Create("In-progress task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetAssignee(id, "iron")
+
+	d.handleDeadSessions()
+
+	if _, err := agents.Get("iron"); err == nil {
+		t.Errorf("expected prole 'iron' to be deleted, still present")
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get ticket: %v", err)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected ticket status='open' (reverted from in_progress), got %q", issue.Status)
+	}
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+}
+
+func TestHandleDeadSessions_leavesPROpenTicket(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	agents.Register("iron", "prole", nil)
+	agents.SetTmuxSession("iron", "ct-iron")
+
+	id, _ := issues.Create("PR open task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetAssignee(id, "iron")
+	issues.SetPR(id, 77)
+
+	d.handleDeadSessions()
+
+	// prole row must be gone
+	if _, err := agents.Get("iron"); err == nil {
+		t.Errorf("expected prole 'iron' to be deleted, still present")
+	}
+
+	// ticket must be untouched — pr_open is outside the reconcile scope
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get ticket: %v", err)
+	}
+	if issue.Status != "pr_open" {
+		t.Errorf("expected ticket status='pr_open' (untouched), got %q", issue.Status)
+	}
+	if !issue.Assignee.Valid || issue.Assignee.String != "iron" {
+		t.Errorf("expected assignee='iron' (untouched), got %v", issue.Assignee)
+	}
+}

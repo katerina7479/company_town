@@ -509,6 +509,11 @@ func (d *Daemon) handleDeadSessions() {
 		}
 		if agent.Type == "prole" {
 			d.logger.Printf("prole %s has no live tmux session — deleting", agent.Name)
+			if n, err := d.issues.ClearAssigneeByAgent(agent.Name); err != nil {
+				d.logger.Printf("error clearing orphaned assignments for %s: %v", agent.Name, err)
+			} else if n > 0 {
+				d.logger.Printf("prole %s: cleared %d orphaned assignment(s) back to open", agent.Name, n)
+			}
 			if err := d.agents.Delete(agent.Name); err != nil {
 				d.logger.Printf("error deleting prole %s: %v", agent.Name, err)
 			}
