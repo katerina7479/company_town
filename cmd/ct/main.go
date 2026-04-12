@@ -67,6 +67,8 @@ func main() {
 		err = commands.Attach(args[0])
 	case "dashboard":
 		err = commands.Dashboard()
+	case "metrics":
+		err = commands.Metrics(args)
 	case "daemon":
 		err = runDaemon()
 	default:
@@ -97,5 +99,6 @@ Commands:
   artisan <specialty> stop  Signal Artisan to write handoff and exit
   attach <name>       Attach to a running agent session
   dashboard           Open the live agents + tickets TUI
+  metrics [--since N] Show system performance metrics (default: last 7 days)
   daemon              Run the daemon (internal — started by ct start)`)
 }
