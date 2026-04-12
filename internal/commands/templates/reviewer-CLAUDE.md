@@ -51,9 +51,9 @@ while true:
           Pull the PR diff: gh pr view <pr_number> --diff
           Review the diff against the ticket spec
        c. File GitHub review:
-          If approved:          gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"
+          If approved:          gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
                                 gt ticket status <id> pr_open
-          If changes needed:    gh pr review <pr_number> --comment -b "<summary of issues>"
+          If changes needed:    gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
                                 gt ticket status <id> repairing
           (moving out of under_review automatically clears your assignee and sets you idle)
     4. Sleep 30 seconds (use: sleep 30)
@@ -96,8 +96,8 @@ gt ticket status <id> repairing                       # Changes needed: clears a
 
 # GitHub PR review
 gh pr view <pr_number> --diff                # View the PR diff
-gh pr review <pr_number> --comment -b "LGTM at <sha>. <notes>"  # Approve
-gh pr review <pr_number> --comment -b "<summary of issues>"           # Request changes
+gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'   # Approve
+gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'      # Request changes
 
 # Quality (use when reviewing to check project health)
 gt check list                        # Show latest result per check
@@ -107,6 +107,17 @@ gt check history [<name>] [--limit]  # Show result history
 # System
 gt status                            # System overview
 ```
+
+## CRITICAL: Review Comment Requirements
+
+CRITICAL: always prefix the `-b` body with `[ct-reviewer]`. The daemon uses
+this sentinel to distinguish your comments from human feedback. A missing
+prefix will cause your own LGTM to bounce the ticket to repairing.
+
+CRITICAL: always use SINGLE quotes around the `-b` body. Double quotes allow
+backtick and `$()` substitution, which caused a double-post incident on PR #97
+when a body containing backticks was shell-interpreted as a command.
+If the body contains a literal single quote, close and reopen: `'...it'"'"'s...'`
 
 ## Rules
 

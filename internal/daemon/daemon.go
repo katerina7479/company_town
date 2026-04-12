@@ -56,6 +56,9 @@ type Daemon struct {
 	lastRestartedAt   map[string]time.Time
 	restartCooldown   time.Duration
 	restartDeadAgents bool
+
+	// Review comment fetching (injectable for tests)
+	getReviewCommentsFn func(prNum int) ([]prComment, error)
 }
 
 // New creates a new Daemon.
@@ -111,6 +114,14 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		lastRestartedAt:    make(map[string]time.Time),
 		restartAgent:       makeRestartFn(cfg, agentRepo, logger),
 	}, nil
+}
+
+// reviewComments calls getReviewCommentsFn if set, otherwise the real implementation.
+func (d *Daemon) reviewComments(prNum int) ([]prComment, error) {
+	if d.getReviewCommentsFn != nil {
+		return d.getReviewCommentsFn(prNum)
+	}
+	return d.getReviewComments(prNum)
 }
 
 // agentStartPrompt returns the startup prompt for an agent type.
@@ -686,22 +697,6 @@ func (d *Daemon) restartDeadReviewers() {
 	}
 }
 
-// reviewerAgentNames returns a set of all registered reviewer agent names.
-func (d *Daemon) reviewerAgentNames() map[string]bool {
-	allAgents, err := d.agents.ListAll()
-	if err != nil {
-		d.logger.Printf("error listing reviewer agent names: %v", err)
-		return nil
-	}
-	names := make(map[string]bool)
-	for _, a := range allAgents {
-		if a.Type == "reviewer" {
-			names[a.Name] = true
-		}
-	}
-	return names
-}
-
 
 // handlePREvents checks GitHub for PR state changes.
 func (d *Daemon) handlePREvents() {
@@ -797,20 +792,21 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 }
 
 func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
-	if issue.Status == "repairing" {
-		return // already in repair flow
+	// Only act when the ticket is in pr_open. During under_review the AI reviewer
+	// owns the ticket — any review posted in that window is its own work.
+	if issue.Status != "pr_open" {
+		return
 	}
 
-	comments, err := d.getReviewComments(prNum)
+	comments, err := d.reviewComments(prNum)
 	if err != nil {
 		d.logger.Printf("error checking comments on PR #%d: %v", prNum, err)
 		return
 	}
 
-	// Look for human comments (not from bots or any registered reviewer agent).
-	reviewerNames := d.reviewerAgentNames()
 	for _, c := range comments {
-		if c.IsBot || reviewerNames[c.Author] {
+		// Skip bot accounts and comments from the AI reviewer (sentinel prefix).
+		if c.IsBot || strings.HasPrefix(strings.TrimSpace(c.Body), "[ct-reviewer]") {
 			continue
 		}
 
@@ -822,15 +818,15 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 			return
 		}
 
-		// Conductor handles repairing tickets via handleRepairingTickets
 		return // only need one human comment to trigger repair
 	}
 }
 
-// PRState from GitHub API
+// prComment holds data from a GitHub PR review.
 type prComment struct {
 	Author string
 	IsBot  bool
+	Body   string
 }
 
 func (d *Daemon) getPRState(prNum int) (state string, merged bool, err error) {
@@ -855,7 +851,7 @@ func (d *Daemon) getPRState(prNum int) (state string, merged bool, err error) {
 func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
 	cmd := exec.Command("gh", "api",
 		fmt.Sprintf("repos/{owner}/{repo}/pulls/%d/reviews", prNum),
-		"--jq", ".[] | {author: .user.login, authorType: .user.type, state: .state}")
+		"--jq", ".[] | {author: .user.login, authorType: .user.type, state: .state, body: .body}")
 	cmd.Dir = d.cfg.ProjectRoot
 	out, err := cmd.Output()
 	if err != nil {
@@ -868,19 +864,28 @@ func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
 
 	var comments []prComment
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		var review struct {
-			Author     string `json:"author"`
-			AuthorType string `json:"authorType"`
-			State      string `json:"state"`
+		if c, ok := parseReviewLine([]byte(line)); ok {
+			comments = append(comments, c)
 		}
-		if err := json.Unmarshal([]byte(line), &review); err != nil {
-			continue
-		}
-		comments = append(comments, prComment{
-			Author: review.Author,
-			IsBot:  review.AuthorType == "Bot",
-		})
 	}
 
 	return comments, nil
+}
+
+// parseReviewLine parses one JSONL line from the GitHub reviews API into a prComment.
+func parseReviewLine(line []byte) (prComment, bool) {
+	var review struct {
+		Author     string `json:"author"`
+		AuthorType string `json:"authorType"`
+		State      string `json:"state"`
+		Body       string `json:"body"`
+	}
+	if err := json.Unmarshal(line, &review); err != nil {
+		return prComment{}, false
+	}
+	return prComment{
+		Author: review.Author,
+		IsBot:  review.AuthorType == "Bot",
+		Body:   review.Body,
+	}, true
 }

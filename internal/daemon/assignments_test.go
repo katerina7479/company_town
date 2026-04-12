@@ -27,8 +27,8 @@ func newAssignmentDaemon(t *testing.T) (*Daemon, *repo.IssueRepo, *repo.AgentRep
 		ProjectRoot:  t.TempDir(),
 		MaxProles:    3,
 	}
-	issues := repo.NewIssueRepo(conn)
-	agents := repo.NewAgentRepo(conn)
+	issues := repo.NewIssueRepo(conn, nil)
+	agents := repo.NewAgentRepo(conn, nil)
 
 	// Stub ProleCreator so tests do not spawn real sessions or worktrees.
 	origProleCreator := assign.ProleCreator
