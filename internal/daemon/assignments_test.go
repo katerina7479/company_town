@@ -195,49 +195,21 @@ func TestHandleAssignments_assignExecuteErrorContinues(t *testing.T) {
 	id1 := mustOpen(t, issues, "Feature A")
 	id2 := mustOpen(t, issues, "Feature B")
 
-	// Make the first prole creation fail.
-	callCount := 0
-	assign.ProleCreator = func(name string, cfg *config.Config, ar *repo.AgentRepo) error {
-		callCount++
-		if callCount == 1 {
-			// Fail for the first net-new prole (copper).
-			return nil // register succeeds but we'll make it already exist to simulate error
-		}
-		return ar.Register(name, "prole", nil)
-	}
-
 	// Pre-register one idle prole so we have a known first slot.
 	if err := agents.Register("copper", "prole", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	// Force copper's assign to fail by making the issue already assigned.
-	if err := issues.Assign(id1, "copper", "prole/copper/1"); err != nil {
-		t.Fatalf("pre-assign: %v", err)
-	}
-	// Reset to open+unassigned so the test is meaningful.
-	if err := issues.ClearAssignee(id1); err != nil {
-		t.Fatalf("ClearAssignee: %v", err)
-	}
-	if err := issues.UpdateStatus(id1, "open"); err != nil {
-		t.Fatalf("UpdateStatus: %v", err)
-	}
-
-	// Use a ProleCreator that causes the second assignment to work.
-	assign.ProleCreator = func(name string, cfg *config.Config, ar *repo.AgentRepo) error {
-		return ar.Register(name, "prole", nil)
-	}
-
 	d.handleAssignments()
 
-	// Both tickets should be assigned (loop continued past any individual error).
+	// Both tickets should be assigned (2 slots for 2 tickets).
 	issue1, _ := issues.Get(id1)
 	issue2, _ := issues.Get(id2)
 
-	assigned1 := issue1.Assignee.Valid && issue1.Assignee.String != ""
-	assigned2 := issue2.Assignee.Valid && issue2.Assignee.String != ""
-
-	if !assigned1 && !assigned2 {
-		t.Errorf("expected at least one ticket assigned, both were unassigned")
+	if !issue1.Assignee.Valid || issue1.Assignee.String == "" {
+		t.Errorf("expected ticket %d assigned, got assignee=%v", id1, issue1.Assignee)
+	}
+	if !issue2.Assignee.Valid || issue2.Assignee.String == "" {
+		t.Errorf("expected ticket %d assigned, got assignee=%v", id2, issue2.Assignee)
 	}
 }
