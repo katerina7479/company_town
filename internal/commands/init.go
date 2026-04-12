@@ -64,7 +64,7 @@ func Init(force bool) error {
 		if err := os.MkdirAll(memDir, 0755); err != nil {
 			return fmt.Errorf("creating agent dir %s: %w", agent, err)
 		}
-		writeClaudeMD(agentDir, agent, force)
+		WriteClaudeMD(agentDir, agent, force)
 	}
 
 	// 3. Create artisan subdirectories
@@ -72,7 +72,7 @@ func Init(force bool) error {
 	if err := os.MkdirAll(artisanBase, 0755); err != nil {
 		return fmt.Errorf("creating artisan base: %w", err)
 	}
-	writeClaudeMD(artisanBase, "artisan", force)
+	WriteClaudeMD(artisanBase, "artisan", force)
 
 	for _, specialty := range artisanTypes {
 		specDir := filepath.Join(artisanBase, specialty)
@@ -80,7 +80,7 @@ func Init(force bool) error {
 		if err := os.MkdirAll(memDir, 0755); err != nil {
 			return fmt.Errorf("creating artisan/%s: %w", specialty, err)
 		}
-		writeClaudeMD(specDir, "artisan-"+specialty, force)
+		WriteClaudeMD(specDir, "artisan-"+specialty, force)
 	}
 
 	// 4. Write config.json if missing
@@ -166,11 +166,6 @@ func WriteClaudeMD(dir, agentType string, force bool) {
 		return
 	}
 	fmt.Printf("  created: agents/%s/CLAUDE.md\n", agentType)
-}
-
-// writeClaudeMD is an internal alias for WriteClaudeMD used within this package.
-func writeClaudeMD(dir, agentType string, force bool) {
-	WriteClaudeMD(dir, agentType, force)
 }
 
 // LoadTemplate reads a template file from the embedded filesystem
