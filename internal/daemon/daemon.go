@@ -116,14 +116,6 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 // agentStartPrompt returns the startup prompt for an agent type.
 func agentStartPrompt(agentType, ticketPrefix string) string {
 	switch agentType {
-	case "conductor":
-		return fmt.Sprintf(
-			"You are the Conductor. Ticket prefix: %s. "+
-				"Read your CLAUDE.md for instructions. "+
-				"Check memory/handoff.md to resume previous work. "+
-				"Begin coordinating proles: check ready tickets and assign them.",
-			ticketPrefix,
-		)
 	case "reviewer":
 		return fmt.Sprintf(
 			"You are the Reviewer. Ticket prefix: %s. "+
@@ -140,8 +132,8 @@ func agentStartPrompt(agentType, ticketPrefix string) string {
 // agentModel returns the model string for an agent type.
 func agentModel(agentType string, cfg *config.Config) string {
 	switch agentType {
-	case "conductor", "reviewer":
-		return cfg.Agents.Conductor.Model
+	case "reviewer":
+		return cfg.Agents.Reviewer.Model
 	default:
 		return ""
 	}
@@ -150,7 +142,7 @@ func agentModel(agentType string, cfg *config.Config) string {
 // makeRestartFn creates the production restartAgent implementation.
 func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logger) func(*repo.Agent) error {
 	return func(agent *repo.Agent) error {
-		if agent.Type != "conductor" && agent.Type != "reviewer" {
+		if agent.Type != "reviewer" {
 			return fmt.Errorf("restartAgent: unsupported agent type %q", agent.Type)
 		}
 
@@ -310,9 +302,8 @@ func (d *Daemon) poll() {
 	d.handleStaleWorktrees()
 	d.handleBackfillPRNumbers()
 	d.handleDraftTickets()
-	d.handleOpenTickets()
+	d.handleAssignments()
 	d.handleInReviewTickets()
-	d.handleRepairingTickets()
 	d.handlePREvents()
 	d.handleEpicAutoClose()
 	d.handleQualityBaseline()
@@ -525,75 +516,6 @@ func (d *Daemon) handleDeadSessions() {
 	}
 }
 
-// handleOpenTickets nudges the Conductor when ready tickets are waiting for assignment.
-func (d *Daemon) handleOpenTickets() {
-	ready, err := d.issues.Ready()
-	if err != nil {
-		d.logger.Printf("error listing ready tickets: %v", err)
-		return
-	}
-
-	// Filter to unassigned tickets only.
-	var unassigned []*repo.Issue
-	for _, issue := range ready {
-		if !issue.Assignee.Valid || issue.Assignee.String == "" {
-			unassigned = append(unassigned, issue)
-		}
-	}
-
-	if len(unassigned) == 0 {
-		return
-	}
-
-	conductorSession := session.SessionName("conductor")
-	if !d.sessionExists(conductorSession) {
-		// Conductor not running — attempt restart if enabled and off cooldown.
-		if d.restartDeadAgents && d.restartAgent != nil && d.shouldRestart("conductor") {
-			conductor, err := d.agents.Get("conductor")
-			if err == nil && (conductor.Status == "dead" || conductor.Status == "idle") {
-				if err := d.restartAgent(conductor); err != nil {
-					d.logger.Printf("error restarting conductor: %v", err)
-				} else {
-					d.recordRestart("conductor")
-				}
-			}
-		}
-		return
-	}
-
-	if d.isAgentWorking("conductor") {
-		return // Conductor is already working — don't pile on
-	}
-
-	ticketIDs := make([]int, len(unassigned))
-	for i, issue := range unassigned {
-		ticketIDs[i] = issue.ID
-	}
-	digest := ticketDigest(ticketIDs)
-
-	if !d.digestChanged("open", digest) || !d.shouldNudge("open") {
-		return
-	}
-
-	ids := make([]string, len(unassigned))
-	for i, issue := range unassigned {
-		ids[i] = fmt.Sprintf("%s-%d", d.cfg.TicketPrefix, issue.ID)
-	}
-
-	msg := fmt.Sprintf(
-		"%d unassigned ticket(s) ready for assignment: %s. "+
-			"Run `gt ticket list --status open` and assign them to idle agents.",
-		len(unassigned), strings.Join(ids, ", "),
-	)
-
-	if err := d.sendKeys(conductorSession, msg); err != nil {
-		d.logger.Printf("error nudging conductor: %v", err)
-	} else {
-		d.logger.Printf("nudged conductor: %d ready ticket(s) unassigned (%s)",
-			len(unassigned), strings.Join(ids, ", "))
-		d.recordNudge("open", digest)
-	}
-}
 
 // handleDraftTickets prompts the Architect to pick up draft tickets.
 func (d *Daemon) handleDraftTickets() {
@@ -780,57 +702,6 @@ func (d *Daemon) reviewerAgentNames() map[string]bool {
 	return names
 }
 
-// handleRepairingTickets prompts the Conductor to assign a prole to fix review comments.
-func (d *Daemon) handleRepairingTickets() {
-	tickets, err := d.issues.List("repairing")
-	if err != nil {
-		d.logger.Printf("error listing repairing tickets: %v", err)
-		return
-	}
-
-	if len(tickets) == 0 {
-		return
-	}
-
-	conductorSession := session.SessionName("conductor")
-	if !d.sessionExists(conductorSession) {
-		return // Conductor not running
-	}
-
-	if d.isAgentWorking("conductor") {
-		return // Conductor is already working — don't pile on
-	}
-
-	repairIDs := make([]int, len(tickets))
-	for i, issue := range tickets {
-		repairIDs[i] = issue.ID
-	}
-	digest := ticketDigest(repairIDs)
-
-	if !d.digestChanged("repairing", digest) || !d.shouldNudge("repairing") {
-		return
-	}
-
-	parts := make([]string, len(tickets))
-	for i, issue := range tickets {
-		entry := fmt.Sprintf("%s-%d (%s)", d.cfg.TicketPrefix, issue.ID, issue.Title)
-		if issue.PRNumber.Valid {
-			entry += fmt.Sprintf(" PR #%d", issue.PRNumber.Int64)
-		}
-		parts[i] = entry
-	}
-
-	msg := fmt.Sprintf("%d ticket(s) need repair: %s. "+
-		"Assign an available prole to address the review comments.",
-		len(tickets), strings.Join(parts, "; "))
-
-	if err := d.sendKeys(conductorSession, msg); err != nil {
-		d.logger.Printf("error nudging Conductor for repairing tickets: %v", err)
-	} else {
-		d.logger.Printf("nudged Conductor: %d repairing ticket(s)", len(tickets))
-		d.recordNudge("repairing", digest)
-	}
-}
 
 // handlePREvents checks GitHub for PR state changes.
 func (d *Daemon) handlePREvents() {

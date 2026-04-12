@@ -387,6 +387,64 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 	return issues, rows.Err()
 }
 
+// Selectable returns unassigned tickets that are ready for daemon-driven
+// assignment. Selection includes:
+//   - repairing tickets with no assignee (orphaned — prole died before fixing)
+//   - open tickets with no unmet dependencies and no assignee
+//
+// Ordering (strict): repairing before open, bugs before tasks before other
+// types, P0→P1→P2→P3→null, then lower ID first.
+//
+// Note: once nc-41 lands (proles stay assigned through repairing), the
+// repairing branch returns nothing for tickets whose prole is still alive.
+// Selectable() only catches orphaned repairing tickets.
+func (r *IssueRepo) Selectable() ([]*Issue, error) {
+	rows, err := r.db.Query(
+		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
+		        i.branch, i.pr_number, i.assignee, i.parent_id, i.priority,
+		        i.created_at, i.updated_at, i.closed_at
+		 FROM issues i
+		 WHERE i.issue_type != 'epic'
+		   AND (
+		         i.status = 'repairing'
+		      OR (
+		           i.status = 'open'
+		           AND NOT EXISTS (
+		             SELECT 1 FROM issue_dependencies d
+		             JOIN issues dep ON dep.id = d.depends_on_id
+		             WHERE d.issue_id = i.id AND dep.status != 'closed'
+		           )
+		         )
+		   )
+		   AND (i.assignee IS NULL OR i.assignee = '')
+		 ORDER BY
+		   CASE i.status WHEN 'repairing' THEN 0 ELSE 1 END,
+		   CASE i.issue_type WHEN 'bug' THEN 0 WHEN 'task' THEN 1 ELSE 2 END,
+		   CASE i.priority
+		     WHEN 'P0' THEN 0
+		     WHEN 'P1' THEN 1
+		     WHEN 'P2' THEN 2
+		     WHEN 'P3' THEN 3
+		     ELSE 4
+		   END,
+		   i.id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying selectable issues: %w", err)
+	}
+	defer rows.Close()
+
+	var issues []*Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
 // ListEpicsWithAllChildrenClosed returns epics that are not closed but have at
 // least one child and all children are closed.
 func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
