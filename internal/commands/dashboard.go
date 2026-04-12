@@ -14,6 +14,18 @@ import (
 	"github.com/katerina7479/company_town/internal/session"
 )
 
+// defaultRestartAgent re-launches an agent by type: proles use `gt prole create`,
+// all other agents use `gt start`. The command is started non-blocking.
+func defaultRestartAgent(name, agentType string) error {
+	var cmd *exec.Cmd
+	if agentType == "prole" {
+		cmd = exec.Command("gt", "prole", "create", name)
+	} else {
+		cmd = exec.Command("gt", "start", name)
+	}
+	return cmd.Start()
+}
+
 // refreshInterval controls how often the dashboard polls the database.
 const refreshInterval = 5 * time.Second
 
@@ -118,6 +130,7 @@ type dashboardModel struct {
 	killSession   func(name string) error
 	sessionExists func(name string) bool
 	sendKeys      func(name, msg string) error
+	restartAgent  func(name, agentType string) error
 
 	data dashboardData
 
@@ -129,6 +142,12 @@ type dashboardModel struct {
 	ticketCursor int
 
 	statusMsg string // transient feedback from agent actions
+
+	// Input mode — active when the user is typing a message (e.g. for nudge).
+	inputMode   bool
+	inputBuffer string
+	inputAction string // "nudge"
+	inputTarget string // agent name receiving the nudge
 }
 
 func newDashboardModel() (*dashboardModel, error) {
@@ -143,6 +162,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		killSession:   session.Kill,
 		sessionExists: session.Exists,
 		sendKeys:      session.SendKeys,
+		restartAgent:  defaultRestartAgent,
 	}, nil
 }
 
@@ -174,6 +194,40 @@ func (m dashboardModel) Init() tea.Cmd {
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.inputMode {
+			switch msg.String() {
+			case "enter":
+				if m.inputAction == "nudge" && m.inputBuffer != "" {
+					sname := session.SessionName(m.inputTarget)
+					if m.sessionExists(sname) {
+						if err := m.sendKeys(sname, m.inputBuffer); err != nil {
+							m.statusMsg = "nudge failed: " + err.Error()
+						}
+					}
+				}
+				m.inputMode = false
+				m.inputBuffer = ""
+				return m, func() tea.Msg { return m.fetch() }
+
+			case "esc":
+				m.inputMode = false
+				m.inputBuffer = ""
+				return m, nil
+
+			case "backspace":
+				if len(m.inputBuffer) > 0 {
+					m.inputBuffer = m.inputBuffer[:len(m.inputBuffer)-1]
+				}
+				return m, nil
+
+			default:
+				if len(msg.String()) == 1 {
+					m.inputBuffer += msg.String()
+				}
+				return m, nil
+			}
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.conn.Close()
@@ -234,6 +288,24 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
 				agent := m.data.agents[m.agentCursor]
 				return m, m.stopAgentCmd(agent)
+			}
+
+		case "R":
+			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
+				agent := m.data.agents[m.agentCursor]
+				return m, m.restartAgentCmd(agent)
+			}
+
+		case "n":
+			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
+				agent := m.data.agents[m.agentCursor]
+				sname := session.SessionName(agent.Name)
+				if m.sessionExists(sname) {
+					m.inputMode = true
+					m.inputAction = "nudge"
+					m.inputTarget = agent.Name
+					m.inputBuffer = ""
+				}
 			}
 		}
 
@@ -304,6 +376,20 @@ func (m dashboardModel) stopAgentCmd(a *repo.Agent) tea.Cmd {
 	}
 }
 
+// restartAgentCmd kills the agent's session then re-launches it via defaultRestartAgent.
+func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
+	return func() tea.Msg {
+		sname := session.SessionName(a.Name)
+		if err := m.killSession(sname); err != nil {
+			return actionResultMsg{err: fmt.Errorf("kill session for %s: %w", a.Name, err)}
+		}
+		if err := m.restartAgent(a.Name, a.Type); err != nil {
+			return actionResultMsg{err: fmt.Errorf("restart %s: %w", a.Name, err)}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Restarted %s", a.Name)}
+	}
+}
+
 // flatTickets returns the flat ordered list of visible ticket nodes (same order as rendered).
 func (m dashboardModel) flatTickets() []flatNode {
 	cutoff := time.Now().Add(-4 * time.Hour)
@@ -342,15 +428,22 @@ func (m dashboardModel) View() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, agentsPanel, "  ", ticketsPanel)
 
-	var footerParts []string
-	footerParts = append(footerParts, fmt.Sprintf(
-		" q quit  r refresh  tab switch panel  j/k navigate  a attach  x kill  s stop  (auto-refresh every %s)",
-		refreshInterval,
-	))
-	if m.statusMsg != "" {
-		footerParts = append(footerParts, "  "+m.statusMsg)
+	var footer string
+	if m.inputMode {
+		label := "nudge " + m.inputTarget
+		footer = boldStyle.Render(fmt.Sprintf(" [%s] > %s█", label, m.inputBuffer))
+	} else {
+		hint := " q quit  r refresh  tab switch panel  j/k navigate"
+		if m.focusedPanel == 0 {
+			hint += "  a attach  x kill  s stop  R restart  n nudge"
+		}
+		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
+		parts := []string{hint}
+		if m.statusMsg != "" {
+			parts = append(parts, "  "+m.statusMsg)
+		}
+		footer = footerStyle.Render(strings.Join(parts, ""))
 	}
-	footer := footerStyle.Render(strings.Join(footerParts, ""))
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }
