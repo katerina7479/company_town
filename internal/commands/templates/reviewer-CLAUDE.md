@@ -43,21 +43,37 @@ when there is more work.**
 ```
 while true:
     1. Check for tickets in `in_review` status
-    2. If none: sleep 30 seconds, GO BACK TO STEP 1
-    3. Take the FIRST ticket only:
-       a. Claim: gt ticket status <id> under_review --agent reviewer
-          (sets your agent status to working and assignee on the ticket)
+    2. If none:
+       - gt agent status reviewer idle
+       - sleep 30 seconds
+       - GO BACK TO STEP 1
+    3. gt agent status reviewer working
+    4. Take the FIRST ticket only:
+       a. Claim: gt ticket status <id> under_review
+          (plain status transition — no --agent, the prole stays the ticket assignee)
        b. Get PR number: gt ticket show <id>  (look for pr_number)
           Pull the PR diff: gh pr view <pr_number> --diff
           Review the diff against the ticket spec
-       c. File GitHub review:
-          If approved:          gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
-                                gt ticket status <id> pr_open
-          If changes needed:    gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
-                                gt ticket status <id> repairing
-          (moving out of under_review automatically clears your assignee and sets you idle)
-    4. Sleep 30 seconds (use: sleep 30)
-    5. GO BACK TO STEP 1
+       c. File GitHub review AND submit verdict via `gt ticket review`:
+
+          If approved:
+              gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
+              gt ticket review <id> approve
+
+          If changes needed:
+              gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
+              gt ticket review <id> request-changes
+
+          CRITICAL: always prefix the -b body with `[ct-reviewer]` — the daemon
+          uses this sentinel to distinguish your comments from human feedback.
+          (See nc-42 for the daemon-side logic.)
+
+          CRITICAL: always use SINGLE quotes around the -b body. Double quotes
+          allow backtick and $() substitution, which caused a double-post
+          incident on PR #97. If the body needs a literal single quote, close
+          and reopen: '...it'"'"'s...'
+    5. Sleep 30 seconds (use: sleep 30)
+    6. GO BACK TO STEP 1
 ```
 
 ## Review Checklist
@@ -89,15 +105,15 @@ how to fix it, or don't comment.
 
 ```bash
 # Tickets
-gt ticket show <id>                                   # Get PR number and ticket spec
-gt ticket status <id> under_review --agent reviewer   # Claim: sets you working + assignee
-gt ticket status <id> pr_open                         # Approved: clears assignee, sets you idle
-gt ticket status <id> repairing                       # Changes needed: clears assignee, sets you idle
+gt ticket show <id>                            # Get PR number and ticket spec
+gt ticket status <id> under_review             # Claim ticket for review (prole stays assignee)
+gt ticket review <id> approve                  # Approved: status → pr_open
+gt ticket review <id> request-changes          # Changes needed: status → repairing
 
 # GitHub PR review
-gh pr view <pr_number> --diff                # View the PR diff
-gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'   # Approve
-gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'      # Request changes
+gh pr view <pr_number> --diff                                            # View the PR diff
+gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'  # Approve
+gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'     # Request changes
 
 # Quality (use when reviewing to check project health)
 gt check list                        # Show latest result per check
@@ -119,6 +135,13 @@ backtick and `$()` substitution, which caused a double-post incident on PR #97
 when a body containing backticks was shell-interpreted as a command.
 If the body contains a literal single quote, close and reopen: `'...it'"'"'s...'`
 
+## Status Management
+
+Keep your agent status accurate at all times:
+- Set `working` when you enter an iteration that has a ticket to review: `gt agent status reviewer working`
+- Set `idle` when the iteration finishes OR when the loop finds no `in_review` tickets: `gt agent status reviewer idle`
+- **Never leave your status as `working` when you are sleeping between patrol iterations.**
+
 ## Rules
 
 - Never push to main
@@ -138,6 +161,7 @@ gt ticket show <id>
 gt ticket list [--status <status>]
 gt ticket assign <ticket_id> <agent_name>
 gt ticket status <id> <status>
+gt ticket review <id> <approve|request-changes>
 gt ticket close <id>
 gt agent register <name> <type> [--specialty <s>]
 gt agent status <name> <idle|working|dead> [--issue <id>]

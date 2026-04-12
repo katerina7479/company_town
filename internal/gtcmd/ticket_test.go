@@ -208,6 +208,149 @@ func TestTicketPrioritize_notFound(t *testing.T) {
 	}
 }
 
+func TestTicketReview_ApproveFromUnderReview(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("auth ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "under_review"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	if err := ticketReview(issues, []string{fmt.Sprintf("%d", id), "approve"}); err != nil {
+		t.Fatalf("ticketReview approve: %v", err)
+	}
+
+	got, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "pr_open" {
+		t.Errorf("status: got %q, want pr_open", got.Status)
+	}
+	if !got.Assignee.Valid || got.Assignee.String != "iron" {
+		t.Errorf("assignee: got %v %q, want iron", got.Assignee.Valid, got.Assignee.String)
+	}
+}
+
+func TestTicketReview_RequestChangesFromUnderReview(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("auth ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "under_review"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	if err := ticketReview(issues, []string{fmt.Sprintf("%d", id), "request-changes"}); err != nil {
+		t.Fatalf("ticketReview request-changes: %v", err)
+	}
+
+	got, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "repairing" {
+		t.Errorf("status: got %q, want repairing", got.Status)
+	}
+	if !got.Assignee.Valid || got.Assignee.String != "iron" {
+		t.Errorf("assignee: got %v %q, want iron", got.Assignee.Valid, got.Assignee.String)
+	}
+}
+
+func TestTicketReview_RejectsNonUnderReview(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	for _, status := range []string{"open", "in_progress", "in_review", "pr_open", "repairing"} {
+		if err := issues.UpdateStatus(id, status); err != nil {
+			t.Fatalf("UpdateStatus(%s): %v", status, err)
+		}
+		err := ticketReview(issues, []string{fmt.Sprintf("%d", id), "approve"})
+		if err == nil {
+			t.Errorf("status %q: expected error, got nil", status)
+		} else if !strings.Contains(err.Error(), "not under_review") {
+			t.Errorf("status %q: unexpected error: %v", status, err)
+		}
+	}
+}
+
+func TestTicketReview_RejectsUnknownVerdict(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "under_review"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	err = ticketReview(issues, []string{fmt.Sprintf("%d", id), "lgtm"})
+	if err == nil {
+		t.Fatal("expected error for unknown verdict, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown verdict") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	// Move to under_review — assignee must remain "iron"
+	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
+		t.Fatalf("ticketStatus under_review: %v", err)
+	}
+	got, _ := issues.Get(id)
+	if !got.Assignee.Valid || got.Assignee.String != "iron" {
+		t.Errorf("after under_review: assignee=%v %q, want iron", got.Assignee.Valid, got.Assignee.String)
+	}
+
+	// Move to pr_open — assignee must remain "iron"
+	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "pr_open"}); err != nil {
+		t.Fatalf("ticketStatus pr_open: %v", err)
+	}
+	got, _ = issues.Get(id)
+	if !got.Assignee.Valid || got.Assignee.String != "iron" {
+		t.Errorf("after pr_open: assignee=%v %q, want iron", got.Assignee.Valid, got.Assignee.String)
+	}
+
+	// Move to repairing from a fresh under_review — assignee must remain "iron"
+	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
+		t.Fatalf("ticketStatus under_review (2): %v", err)
+	}
+	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "repairing"}); err != nil {
+		t.Fatalf("ticketStatus repairing: %v", err)
+	}
+	got, _ = issues.Get(id)
+	if !got.Assignee.Valid || got.Assignee.String != "iron" {
+		t.Errorf("after repairing: assignee=%v %q, want iron", got.Assignee.Valid, got.Assignee.String)
+	}
+}
+
 func TestTicketPrioritize_missingArgs(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 

@@ -62,8 +62,10 @@ func Ticket(args []string) error {
 		return ticketReady(issues, cfg.TicketPrefix)
 	case "assign":
 		return ticketAssign(cfg, issues, agents, args[1:])
+	case "review":
+		return ticketReview(issues, args[1:])
 	case "status":
-		return ticketStatus(issues, agents, args[1:])
+		return ticketStatus(issues, args[1:])
 	case "close":
 		return ticketClose(issues, agents, args[1:])
 	case "delete":
@@ -308,9 +310,9 @@ func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.Agent
 	return nil
 }
 
-func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
+func ticketStatus(issues *repo.IssueRepo, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: gt ticket status <id> <status> [--agent <name>]")
+		return fmt.Errorf("usage: gt ticket status <id> <status>")
 	}
 
 	id, err := parseTicketID(args[0])
@@ -320,54 +322,47 @@ func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 
 	status := args[1]
 
-	var agentName string
-	for i := 2; i < len(args); i++ {
-		if args[i] == "--agent" {
-			if i+1 >= len(args) {
-				return fmt.Errorf("--agent requires a value")
-			}
-			i++
-			agentName = args[i]
-		}
-	}
-
-	// For exit from under_review, capture the current assignee before updating status.
-	var prevAssignee string
-	if status == "pr_open" || status == "repairing" {
-		issue, err := issues.Get(id)
-		if err != nil {
-			return err
-		}
-		if issue.Status == "under_review" && issue.Assignee.Valid {
-			prevAssignee = issue.Assignee.String
-		}
-	}
-
 	if err := issues.UpdateStatus(id, status); err != nil {
 		return err
 	}
 
-	// Claiming for review: bind the agent to this ticket.
-	if status == "under_review" && agentName != "" {
-		if err := issues.SetAssignee(id, agentName); err != nil {
-			fmt.Printf("Warning: could not set issue assignee: %v\n", err)
-		}
-		if err := agents.SetCurrentIssue(agentName, &id); err != nil {
-			fmt.Printf("Warning: could not set agent current issue: %v\n", err)
-		}
-	}
-
-	// Releasing from review: free the agent.
-	if prevAssignee != "" {
-		if err := issues.ClearAssignee(id); err != nil {
-			fmt.Printf("Warning: could not clear issue assignee: %v\n", err)
-		}
-		if err := agents.ClearCurrentIssue(prevAssignee); err != nil {
-			fmt.Printf("Warning: could not clear agent current issue: %v\n", err)
-		}
-	}
-
 	fmt.Printf("Ticket %d → %s\n", id, status)
+	return nil
+}
+
+func ticketReview(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket review <id> <approve|request-changes>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+	verdict := args[1]
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+	if issue.Status != "under_review" {
+		return fmt.Errorf("ticket %d is in %q, not under_review — cannot submit review verdict", id, issue.Status)
+	}
+
+	var newStatus string
+	switch verdict {
+	case "approve":
+		newStatus = "pr_open"
+	case "request-changes":
+		newStatus = "repairing"
+	default:
+		return fmt.Errorf("unknown verdict %q (expected: approve | request-changes)", verdict)
+	}
+
+	if err := issues.UpdateStatus(id, newStatus); err != nil {
+		return err
+	}
+	fmt.Printf("Ticket %d reviewed: %s → %s\n", id, verdict, newStatus)
 	return nil
 }
 
