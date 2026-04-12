@@ -67,10 +67,9 @@ type timedTransition struct {
 }
 
 type timedAgentTransition struct {
-	from    string
-	to      string
-	at      time.Time
-	issueID string // entity_id from the event at the time agent was working
+	from string
+	to   string
+	at   time.Time
 }
 
 func avgDuration(durations []time.Duration) time.Duration {
