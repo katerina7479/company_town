@@ -166,6 +166,9 @@ type dashboardModel struct {
 
 	statusMsg string // transient feedback from agent actions
 
+	// expanded holds ticket IDs that have been expanded to show full details.
+	expanded map[int]bool
+
 	// Input mode — active when the user is typing a message (e.g. for nudge).
 	inputMode   bool
 	inputBuffer string
@@ -187,6 +190,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		sendKeys:      session.SendKeys,
 		restartAgent:  defaultRestartAgent,
 		sleepFn:       time.Sleep,
+		expanded:      make(map[int]bool),
 	}, nil
 }
 
@@ -283,6 +287,15 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				if m.ticketCursor > 0 {
 					m.ticketCursor--
+				}
+			}
+
+		case "enter":
+			if m.focusedPanel == 1 {
+				flat := m.flatTickets()
+				if len(flat) > 0 {
+					id := flat[m.ticketCursor].node.ID
+					m.expanded[id] = !m.expanded[id]
 				}
 			}
 
@@ -462,6 +475,8 @@ func (m dashboardModel) View() string {
 		hint := " q quit  r refresh  tab switch panel  j/k navigate"
 		if m.focusedPanel == 0 {
 			hint += "  a attach  x kill  s stop  R restart  n nudge"
+		} else {
+			hint += "  enter expand/collapse"
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
 		parts := []string{hint}
@@ -531,6 +546,9 @@ func (m dashboardModel) renderTickets(width, height int) string {
 				line = selectedStyle.Width(rowWidth).Render(line)
 			}
 			sb.WriteString(line + "\n")
+			if m.expanded[fn.node.ID] {
+				sb.WriteString(renderTicketDetails(fn.node, fn.depth, width))
+			}
 		}
 	}
 
@@ -611,6 +629,63 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	return fmt.Sprintf("%s %s %s %s %s %s %s",
 		prefix, idStr, coloredStatus, pri, prStr, age, title,
 	)
+}
+
+// renderTicketDetails renders the expanded detail lines for a ticket.
+// Returns a string (may be empty) to append after the ticket row.
+func renderTicketDetails(node *repo.IssueNode, depth int, width int) string {
+	var sb strings.Builder
+	detailIndent := strings.Repeat("  ", depth+1)
+
+	if node.Description.Valid && node.Description.String != "" {
+		wrapped := wordWrap(node.Description.String, width-len(detailIndent)-4)
+		for _, line := range strings.Split(wrapped, "\n") {
+			sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent, footerStyle.Render(line)))
+		}
+	}
+
+	if node.Assignee.Valid {
+		sb.WriteString(fmt.Sprintf("%s  assignee: %s\n", detailIndent, footerStyle.Render(node.Assignee.String)))
+	}
+
+	if node.PRNumber.Valid {
+		sb.WriteString(fmt.Sprintf("%s  PR: %s\n", detailIndent, footerStyle.Render(fmt.Sprintf("#%d", node.PRNumber.Int64))))
+	}
+
+	if node.Branch.Valid {
+		sb.WriteString(fmt.Sprintf("%s  branch: %s\n", detailIndent, footerStyle.Render(node.Branch.String)))
+	}
+
+	sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent,
+		footerStyle.Render(fmt.Sprintf("created: %s  updated: %s",
+			node.CreatedAt.Format("2006-01-02 15:04"),
+			node.UpdatedAt.Format("2006-01-02 15:04"),
+		)),
+	))
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// wordWrap wraps s to fit within width characters per line.
+func wordWrap(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	var result strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		for len(line) > width {
+			i := strings.LastIndex(line[:width], " ")
+			if i < 0 {
+				i = width
+			}
+			result.WriteString(line[:i])
+			result.WriteByte('\n')
+			line = strings.TrimSpace(line[i:])
+		}
+		result.WriteString(line)
+		result.WriteByte('\n')
+	}
+	return strings.TrimRight(result.String(), "\n")
 }
 
 // Dashboard implements `ct dashboard` — opens the live TUI.
