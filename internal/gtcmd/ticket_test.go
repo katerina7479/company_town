@@ -17,7 +17,7 @@ func setupTicketTestRepo(t *testing.T) *repo.IssueRepo {
 		t.Fatalf("creating test db: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return repo.NewIssueRepo(conn)
+	return repo.NewIssueRepo(conn, nil)
 }
 
 func setupTicketTestRepos(t *testing.T) (*repo.IssueRepo, *repo.AgentRepo) {

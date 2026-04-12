@@ -9,6 +9,7 @@ import (
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
+	"github.com/katerina7479/company_town/internal/eventlog"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
 )
@@ -63,7 +64,8 @@ func Start() error {
 	}
 	defer conn.Close()
 
-	agents := repo.NewAgentRepo(conn)
+	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
+	agents := repo.NewAgentRepo(conn, events)
 
 	// Register daemon in DB if not already present.
 	if _, err := agents.Get("daemon"); err != nil {
@@ -123,7 +125,8 @@ func Architect() error {
 	}
 	defer conn.Close()
 
-	agents := repo.NewAgentRepo(conn)
+	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
+	agents := repo.NewAgentRepo(conn, events)
 	prompt := fmt.Sprintf(
 		"You are the Architect. Ticket prefix: %s. "+
 			"Read your CLAUDE.md for instructions. "+
@@ -155,7 +158,8 @@ func Artisan(specialty string) error {
 		return fmt.Errorf("unknown specialty %q (available in config: %v)", specialty, available)
 	}
 
-	agents := repo.NewAgentRepo(conn)
+	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
+	agents := repo.NewAgentRepo(conn, events)
 	name := fmt.Sprintf("artisan-%s", specialty)
 
 	prompt := fmt.Sprintf(
@@ -296,7 +300,8 @@ func Stop(clean bool) error {
 	conn, _, connErr := db.OpenFromWorkingDir()
 	var updateStatus func(string, string) error
 	if connErr == nil {
-		updateStatus = repo.NewAgentRepo(conn).UpdateStatus
+		stopEvents := eventlog.NewLogger(ctDir)
+		updateStatus = repo.NewAgentRepo(conn, stopEvents).UpdateStatus
 		defer conn.Close()
 	}
 
@@ -398,7 +403,8 @@ func Nuke() error {
 
 	var updateStatus func(string, string) error
 	if connErr == nil {
-		agents := repo.NewAgentRepo(conn)
+		nukeEvents := eventlog.NewLogger(ctDir)
+		agents := repo.NewAgentRepo(conn, nukeEvents)
 		updateStatus = agents.UpdateStatus
 		defer conn.Close()
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/katerina7479/company_town/internal/commands"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
+	"github.com/katerina7479/company_town/internal/eventlog"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
 )
@@ -26,11 +27,12 @@ func Start(args []string) error {
 	}
 	defer conn.Close()
 
-	agents := repo.NewAgentRepo(conn)
+	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
+	events := eventlog.NewLogger(ctDir)
+	agents := repo.NewAgentRepo(conn, events)
 	name := args[0]
 
 	var agentType, templateType, model, agentDir, prompt string
-	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 
 	switch {
 	case name == "architect":
@@ -186,12 +188,13 @@ func Stop(args []string) error {
 	cmd := exec.Command("tmux", "send-keys", "-t", sessionName, "System is shutting down. Write handoff.md and exit cleanly.", "Enter")
 	cmd.Run()
 
-	conn, _, err := db.OpenFromWorkingDir()
+	conn, stopCfg, err := db.OpenFromWorkingDir()
 	if err != nil {
 		fmt.Printf("warning: could not open db to update agent status: %v\n", err)
 	} else {
 		defer conn.Close()
-		agents := repo.NewAgentRepo(conn)
+		stopEvents := eventlog.NewLogger(config.CompanyTownDir(stopCfg.ProjectRoot))
+		agents := repo.NewAgentRepo(conn, stopEvents)
 		if err := agents.UpdateStatus(name, "idle"); err != nil {
 			fmt.Printf("warning: could not update agent status: %v\n", err)
 		}

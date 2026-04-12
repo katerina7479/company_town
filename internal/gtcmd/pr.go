@@ -25,7 +25,7 @@ func PR(args []string) error {
 	}
 	defer conn.Close()
 
-	issues := repo.NewIssueRepo(conn)
+	issues := repo.NewIssueRepo(conn, nil)
 
 	switch args[0] {
 	case "create":

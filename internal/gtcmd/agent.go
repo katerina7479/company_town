@@ -21,7 +21,7 @@ func Agent(args []string) error {
 	}
 	defer conn.Close()
 
-	agents := repo.NewAgentRepo(conn)
+	agents := repo.NewAgentRepo(conn, nil)
 
 	switch args[0] {
 	case "register":
