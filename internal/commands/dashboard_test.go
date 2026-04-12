@@ -183,8 +183,8 @@ func TestFilterStaleClosedNodes(t *testing.T) {
 	})
 }
 
-// newTestModel creates a dashboardModel with a real test DB and injectable session stubs.
-func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string) bool, sendKeysFn func(string, string) error) (*dashboardModel, *repo.AgentRepo) {
+// newTestModel creates a dashboardModel with a real test DB and all injectable stubs.
+func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string) bool, sendKeysFn func(string, string) error, restartFn func(string, string) error) (*dashboardModel, *repo.AgentRepo) {
 	t.Helper()
 	conn, err := db.NewTestDB()
 	if err != nil {
@@ -200,16 +200,9 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 		killSession:   killFn,
 		sessionExists: existsFn,
 		sendKeys:      sendKeysFn,
-		restartAgent:  func(string, string) error { return nil },
+		restartAgent:  restartFn,
+		sleepFn:       func(time.Duration) {}, // no-op in tests
 	}
-	return m, agents
-}
-
-// newTestModelWithRestart creates a dashboardModel with all injectables including restartAgent.
-func newTestModelWithRestart(t *testing.T, killFn func(string) error, existsFn func(string) bool, sendKeysFn func(string, string) error, restartFn func(string, string) error) (*dashboardModel, *repo.AgentRepo) {
-	t.Helper()
-	m, agents := newTestModel(t, killFn, existsFn, sendKeysFn)
-	m.restartAgent = restartFn
 	return m, agents
 }
 
@@ -220,6 +213,7 @@ func TestKillAgentCmd_success(t *testing.T) {
 	m, agents := newTestModel(t,
 		func(name string) error { killed = name; return nil },
 		func(string) bool { return true },
+		func(string, string) error { return nil },
 		func(string, string) error { return nil },
 	)
 
@@ -255,6 +249,7 @@ func TestKillAgentCmd_killSessionFails(t *testing.T) {
 		func(string) error { return fmt.Errorf("tmux error") },
 		func(string) bool { return true },
 		func(string, string) error { return nil },
+		func(string, string) error { return nil },
 	)
 	agents.Register("quartz", "prole", nil)
 
@@ -275,6 +270,7 @@ func TestKillAgentCmd_partialFailureMessage(t *testing.T) {
 	m, _ := newTestModel(t,
 		func(string) error { return nil }, // kill succeeds
 		func(string) bool { return true },
+		func(string, string) error { return nil },
 		func(string, string) error { return nil },
 	)
 	// Do NOT register the agent — UpdateStatus will fail.
@@ -300,6 +296,7 @@ func TestStopAgentCmd_success(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return true }, // session exists
 		func(name, msg string) error { sentTo = name; sentMsg = msg; return nil },
+		func(string, string) error { return nil },
 	)
 
 	agent := &repo.Agent{Name: "conductor"}
@@ -325,6 +322,7 @@ func TestStopAgentCmd_noSessionError(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return false }, // session does not exist
 		func(string, string) error { return nil },
+		func(string, string) error { return nil },
 	)
 
 	agent := &repo.Agent{Name: "conductor"}
@@ -344,6 +342,7 @@ func TestStopAgentCmd_sendKeysFails(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return true },
 		func(string, string) error { return fmt.Errorf("tmux send error") },
+		func(string, string) error { return nil },
 	)
 
 	agent := &repo.Agent{Name: "conductor"}
@@ -362,6 +361,7 @@ func TestDataMsg_clearsStatusMsg(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return false },
 		func(string, string) error { return nil },
+		func(string, string) error { return nil },
 	)
 	m.statusMsg = "previous status"
 
@@ -376,7 +376,7 @@ func TestDataMsg_clearsStatusMsg(t *testing.T) {
 
 func TestRestartAgentCmd_success(t *testing.T) {
 	var killed, restartedName, restartedType string
-	m, agents := newTestModelWithRestart(t,
+	m, agents := newTestModel(t,
 		func(name string) error { killed = name; return nil },
 		func(string) bool { return true },
 		func(string, string) error { return nil },
@@ -386,13 +386,11 @@ func TestRestartAgentCmd_success(t *testing.T) {
 	agents.Register("copper", "prole", nil)
 	agent := &repo.Agent{Name: "copper", Type: "prole"}
 	cmd := m.restartAgentCmd(agent)
-	msg := cmd().(actionResultMsg)
+	// restartAgentCmd returns dataMsg (a DB fetch) on success, not actionResultMsg.
+	msg := cmd().(dataMsg)
 
 	if msg.err != nil {
-		t.Fatalf("expected no error, got %v", msg.err)
-	}
-	if msg.text != "Restarted copper" {
-		t.Errorf("expected 'Restarted copper', got %q", msg.text)
+		t.Fatalf("expected no error in fetched data, got %v", msg.err)
 	}
 	if killed != "ct-copper" {
 		t.Errorf("expected killSession called with 'ct-copper', got %q", killed)
@@ -403,7 +401,7 @@ func TestRestartAgentCmd_success(t *testing.T) {
 }
 
 func TestRestartAgentCmd_killFails(t *testing.T) {
-	m, _ := newTestModelWithRestart(t,
+	m, _ := newTestModel(t,
 		func(string) error { return fmt.Errorf("tmux error") },
 		func(string) bool { return true },
 		func(string, string) error { return nil },
@@ -420,7 +418,7 @@ func TestRestartAgentCmd_killFails(t *testing.T) {
 }
 
 func TestRestartAgentCmd_restartFails(t *testing.T) {
-	m, _ := newTestModelWithRestart(t,
+	m, _ := newTestModel(t,
 		func(string) error { return nil },
 		func(string) bool { return true },
 		func(string, string) error { return nil },
@@ -448,6 +446,7 @@ func makeModelWithAgents(t *testing.T, sessionLive bool) (*dashboardModel, *[]st
 			*sent = append(*sent, struct{ session, msg string }{name, msg})
 			return nil
 		},
+		func(string, string) error { return nil },
 	)
 	agents.Register("copper", "prole", nil)
 	m.data.agents = []*repo.Agent{{Name: "copper", Type: "prole"}}

@@ -131,6 +131,7 @@ type dashboardModel struct {
 	sessionExists func(name string) bool
 	sendKeys      func(name, msg string) error
 	restartAgent  func(name, agentType string) error
+	sleepFn       func(time.Duration)
 
 	data dashboardData
 
@@ -163,6 +164,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		sessionExists: session.Exists,
 		sendKeys:      session.SendKeys,
 		restartAgent:  defaultRestartAgent,
+		sleepFn:       time.Sleep,
 	}, nil
 }
 
@@ -376,7 +378,8 @@ func (m dashboardModel) stopAgentCmd(a *repo.Agent) tea.Cmd {
 	}
 }
 
-// restartAgentCmd kills the agent's session then re-launches it via defaultRestartAgent.
+// restartAgentCmd kills the agent's session, re-launches it, then sleeps briefly
+// so the new tmux session has time to start before refreshing the dashboard.
 func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 	return func() tea.Msg {
 		sname := session.SessionName(a.Name)
@@ -386,7 +389,8 @@ func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 		if err := m.restartAgent(a.Name, a.Type); err != nil {
 			return actionResultMsg{err: fmt.Errorf("restart %s: %w", a.Name, err)}
 		}
-		return actionResultMsg{text: fmt.Sprintf("Restarted %s", a.Name)}
+		m.sleepFn(2 * time.Second)
+		return m.fetch()
 	}
 }
 
