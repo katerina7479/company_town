@@ -64,7 +64,7 @@ func Init(force bool) error {
 		if err := os.MkdirAll(memDir, 0755); err != nil {
 			return fmt.Errorf("creating agent dir %s: %w", agent, err)
 		}
-		writeClaudeMD(agentDir, agent, force)
+		WriteClaudeMD(agentDir, agent, force)
 	}
 
 	// 3. Create artisan subdirectories
@@ -72,7 +72,7 @@ func Init(force bool) error {
 	if err := os.MkdirAll(artisanBase, 0755); err != nil {
 		return fmt.Errorf("creating artisan base: %w", err)
 	}
-	writeClaudeMD(artisanBase, "artisan", force)
+	WriteClaudeMD(artisanBase, "artisan", force)
 
 	for _, specialty := range artisanTypes {
 		specDir := filepath.Join(artisanBase, specialty)
@@ -80,7 +80,7 @@ func Init(force bool) error {
 		if err := os.MkdirAll(memDir, 0755); err != nil {
 			return fmt.Errorf("creating artisan/%s: %w", specialty, err)
 		}
-		writeClaudeMD(specDir, "artisan-"+specialty, force)
+		WriteClaudeMD(specDir, "artisan-"+specialty, force)
 	}
 
 	// 4. Write config.json if missing
@@ -139,12 +139,12 @@ func Init(force bool) error {
 	return nil
 }
 
-// writeClaudeMD writes a CLAUDE.md for an agent type from the embedded templates.
+// WriteClaudeMD writes a CLAUDE.md for an agent type from the embedded templates.
 // If force is false and the file exists, it warns but does not overwrite.
-func writeClaudeMD(dir, agentType string, force bool) {
+func WriteClaudeMD(dir, agentType string, force bool) {
 	path := filepath.Join(dir, "CLAUDE.md")
 
-	content, err := loadTemplate(agentType)
+	content, err := LoadTemplate(agentType)
 	if err != nil {
 		fmt.Printf("  error: no template for %s: %v\n", agentType, err)
 		return
@@ -168,9 +168,9 @@ func writeClaudeMD(dir, agentType string, force bool) {
 	fmt.Printf("  created: agents/%s/CLAUDE.md\n", agentType)
 }
 
-// loadTemplate reads a template file from the embedded filesystem
+// LoadTemplate reads a template file from the embedded filesystem
 // and appends the shared commands reference.
-func loadTemplate(agentType string) (string, error) {
+func LoadTemplate(agentType string) (string, error) {
 	filename := fmt.Sprintf("templates/%s-CLAUDE.md", agentType)
 	data, err := templateFS.ReadFile(filename)
 	if err != nil {
