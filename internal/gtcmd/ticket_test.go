@@ -279,8 +279,9 @@ func TestTicketAssign_nudgesAgentAndLeavesStatusAlone(t *testing.T) {
 	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
 		t.Errorf("expected ticket assignee='copper', got %v", issue.Assignee)
 	}
-	if issue.Status != "in_progress" {
-		t.Errorf("expected ticket status='in_progress', got %q", issue.Status)
+	if issue.Status != "draft" {
+		// Assign no longer transitions status; prole acknowledges explicitly.
+		t.Errorf("expected ticket status unchanged ('draft'), got %q", issue.Status)
 	}
 
 	if len(*sent) != 1 {
@@ -324,7 +325,8 @@ func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
 	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
 		t.Errorf("expected ticket assignee='copper', got %v", issue.Assignee)
 	}
-	if issue.Status != "in_progress" {
-		t.Errorf("expected ticket status='in_progress', got %q", issue.Status)
+	if issue.Status != "draft" {
+		// Assign no longer transitions status; prole acknowledges explicitly.
+		t.Errorf("expected ticket status unchanged ('draft'), got %q", issue.Status)
 	}
 }
