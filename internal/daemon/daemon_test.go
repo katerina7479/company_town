@@ -1692,3 +1692,119 @@ func TestHandleDeadSessions_leavesPROpenTicket(t *testing.T) {
 		t.Errorf("expected assignee='iron' (untouched), got %v", issue.Assignee)
 	}
 }
+
+// --- Architect restart tests (NC-34) ---
+
+func TestHandleDraftTickets_RestartsDeadArchitect(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("architect", "architect", nil)
+	agents.UpdateStatus("architect", "dead")
+
+	// A draft ticket exists — triggers restart path
+	issues.Create("Draft spec", "task", nil, nil, nil)
+
+	d.handleDraftTickets()
+
+	if len(*restarted) != 1 || (*restarted)[0] != "architect" {
+		t.Errorf("expected architect restart, got %v", *restarted)
+	}
+}
+
+func TestHandleDraftTickets_RestartsIdleArchitectWithNoSession(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+
+	agents.Register("architect", "architect", nil)
+	// status is idle (default), no session recorded
+
+	issues.Create("Draft spec", "task", nil, nil, nil)
+
+	d.handleDraftTickets()
+
+	if len(*restarted) != 1 || (*restarted)[0] != "architect" {
+		t.Errorf("expected architect restart for idle architect with no session, got %v", *restarted)
+	}
+}
+
+func TestHandleDraftTickets_NoRestartWhenDisabled(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = false // disabled
+
+	agents.Register("architect", "architect", nil)
+	agents.UpdateStatus("architect", "dead")
+
+	issues.Create("Draft spec", "task", nil, nil, nil)
+
+	d.handleDraftTickets()
+
+	if len(*restarted) != 0 {
+		t.Errorf("expected no restart when restartDeadAgents=false, got %v", *restarted)
+	}
+}
+
+func TestHandleDraftTickets_NoRestartOnCooldown(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+	restarted := withRestartCapture(d)
+	d.restartDeadAgents = true
+	d.restartCooldown = 5 * time.Minute
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+
+	agents.Register("architect", "architect", nil)
+	agents.UpdateStatus("architect", "dead")
+
+	issues.Create("Draft spec", "task", nil, nil, nil)
+
+	// First call: restart happens
+	d.handleDraftTickets()
+	if len(*restarted) != 1 {
+		t.Fatalf("expected 1 restart on first call, got %d", len(*restarted))
+	}
+
+	// Second call within cooldown: no restart
+	d.handleDraftTickets()
+	if len(*restarted) != 1 {
+		t.Errorf("expected no restart within cooldown, got %d restarts", len(*restarted))
+	}
+
+	// After cooldown: restart again
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleDraftTickets()
+	if len(*restarted) != 2 {
+		t.Errorf("expected 2 restarts after cooldown elapsed, got %d", len(*restarted))
+	}
+}
+
+func TestMakeRestartFn_AcceptsArchitect(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	cfg := &config.Config{
+		ProjectRoot:  t.TempDir(),
+		TicketPrefix: "NC",
+		Agents: config.AgentsConfig{
+			Architect: config.AgentConfig{Model: "claude-opus-4-5"},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+	logger := log.New(io.Discard, "", 0)
+
+	fn := makeRestartFn(cfg, agents, logger)
+
+	agent := &repo.Agent{Name: "architect", Type: "architect", Status: "dead"}
+	err = fn(agent)
+	// The function will fail at session.CreateInteractive (no real tmux in tests),
+	// but it must NOT fail with "unsupported agent type".
+	if err != nil && strings.Contains(err.Error(), "unsupported agent type") {
+		t.Errorf("makeRestartFn rejected architect agent type: %v", err)
+	}
+}
