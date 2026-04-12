@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"database/sql"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -46,6 +47,13 @@ var (
 
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 
+	priorityStyles = map[string]lipgloss.Style{
+		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true),  // bright red bold
+		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),           // orange
+		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),             // yellow
+		"P3": lipgloss.NewStyle().Foreground(lipgloss.Color("242")),           // medium gray
+	}
+
 	statusStyles = map[string]lipgloss.Style{
 		// Agent statuses
 		"working": lipgloss.NewStyle().Foreground(lipgloss.Color("2")),  // green
@@ -72,6 +80,20 @@ func colorStatus(status string) string {
 		return s.Render(status)
 	}
 	return status
+}
+
+// priorityCell returns a fixed 5-visible-char cell for the priority column.
+// e.g. "[P1] " or "     " when NULL.
+func priorityCell(p sql.NullString) string {
+	const width = 5
+	if !p.Valid || p.String == "" {
+		return strings.Repeat(" ", width)
+	}
+	label := fmt.Sprintf("[%s]", p.String) // e.g. "[P0]"
+	if s, ok := priorityStyles[p.String]; ok {
+		return s.Render(label) + " "
+	}
+	return fmt.Sprintf("%-*s", width, label)
 }
 
 // formatDuration formats a duration as a compact human-readable string.
@@ -574,17 +596,20 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 		prStr = fmt.Sprintf("%-6s", fmt.Sprintf("#%d", node.PRNumber.Int64))
 	}
 
+	const priorityWidth = 5 // visible chars: "[P0] " or "     "
+	pri := priorityCell(node.Priority)
+
 	// Truncate title so the row fits inside the panel.
-	// prefix + space + id + space + status + space + pr + space + age + space + title
-	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + len(prStr) + 1 + len(ageRaw) + 1
+	// prefix + space + id + space + status + space + priority + space + pr + space + age + space + title
+	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
 	titleMax := width - fixedLen - 2
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	return fmt.Sprintf("%s %s %s %s %s %s",
-		prefix, idStr, coloredStatus, prStr, age, title,
+	return fmt.Sprintf("%s %s %s %s %s %s %s",
+		prefix, idStr, coloredStatus, pri, prStr, age, title,
 	)
 }
 
