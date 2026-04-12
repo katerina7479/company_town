@@ -123,7 +123,7 @@ func Start(args []string) error {
 		}
 	}
 
-	if err := agents.UpdateStatus(name, "working"); err != nil {
+	if err := agents.UpdateStatus(name, "idle"); err != nil {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
 
