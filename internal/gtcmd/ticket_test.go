@@ -1,9 +1,11 @@
 package gtcmd
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 )
@@ -16,6 +18,36 @@ func setupTicketTestRepo(t *testing.T) *repo.IssueRepo {
 	}
 	t.Cleanup(func() { conn.Close() })
 	return repo.NewIssueRepo(conn, nil)
+}
+
+func setupTicketTestRepos(t *testing.T) (*repo.IssueRepo, *repo.AgentRepo) {
+	t.Helper()
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("creating test db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return repo.NewIssueRepo(conn, nil), repo.NewAgentRepo(conn, nil)
+}
+
+// withStubSession swaps the tmux helpers used by ticketAssign for in-memory
+// fakes and restores them after the test. Returns a pointer to the slice of
+// captured sendKeys calls.
+func withStubSession(t *testing.T, liveSessions map[string]bool) *[]struct{ session, msg string } {
+	t.Helper()
+	origExists := assignSessionExists
+	origSend := assignSendKeys
+	sent := &[]struct{ session, msg string }{}
+	assignSessionExists = func(name string) bool { return liveSessions[name] }
+	assignSendKeys = func(name, msg string) error {
+		*sent = append(*sent, struct{ session, msg string }{name, msg})
+		return nil
+	}
+	t.Cleanup(func() {
+		assignSessionExists = origExists
+		assignSendKeys = origSend
+	})
+	return sent
 }
 
 func TestTicketCreate_withDescription(t *testing.T) {
@@ -208,5 +240,91 @@ func TestTicketPrioritize_prefixedID(t *testing.T) {
 	}
 	if !issue.Priority.Valid || issue.Priority.String != "P2" {
 		t.Errorf("expected priority='P2', got %v", issue.Priority)
+	}
+}
+
+func TestTicketAssign_nudgesAgentAndLeavesStatusAlone(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.SetTmuxSession("copper", "ct-prole-copper"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+	// Prole starts idle — ticketAssign must NOT flip it to working.
+	id, err := issues.Create("Build thing", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sent := withStubSession(t, map[string]bool{"ct-prole-copper": true})
+
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+		t.Fatalf("ticketAssign: %v", err)
+	}
+
+	agent, err := agents.Get("copper")
+	if err != nil {
+		t.Fatalf("Get agent: %v", err)
+	}
+	if agent.Status != "idle" {
+		t.Errorf("expected agent status 'idle' (prole owns its own status), got %q", agent.Status)
+	}
+	if agent.CurrentIssue.Valid {
+		t.Errorf("expected current_issue NULL (prole sets it on pickup), got %d", agent.CurrentIssue.Int64)
+	}
+
+	issue, _ := issues.Get(id)
+	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
+		t.Errorf("expected ticket assignee='copper', got %v", issue.Assignee)
+	}
+	if issue.Status != "in_progress" {
+		t.Errorf("expected ticket status='in_progress', got %q", issue.Status)
+	}
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 sendKeys call, got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-prole-copper" {
+		t.Errorf("expected nudge to ct-prole-copper, got %q", (*sent)[0].session)
+	}
+	if !strings.Contains((*sent)[0].msg, fmt.Sprintf("ticket %d", id)) {
+		t.Errorf("expected nudge msg to mention ticket %d, got %q", id, (*sent)[0].msg)
+	}
+}
+
+func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.SetTmuxSession("copper", "ct-prole-copper"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+	id, err := issues.Create("Build thing", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Empty live-session map — nudge should be skipped without erroring.
+	sent := withStubSession(t, map[string]bool{})
+
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+		t.Fatalf("ticketAssign should not error when session is gone: %v", err)
+	}
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 sendKeys calls, got %d", len(*sent))
+	}
+
+	// Ticket should still be properly assigned even though nudge failed.
+	issue, _ := issues.Get(id)
+	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
+		t.Errorf("expected ticket assignee='copper', got %v", issue.Assignee)
+	}
+	if issue.Status != "in_progress" {
+		t.Errorf("expected ticket status='in_progress', got %q", issue.Status)
 	}
 }

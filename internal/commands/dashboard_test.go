@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 )
@@ -181,8 +183,8 @@ func TestFilterStaleClosedNodes(t *testing.T) {
 	})
 }
 
-// newTestModel creates a dashboardModel with a real test DB and injectable session stubs.
-func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string) bool, sendKeysFn func(string, string) error) (*dashboardModel, *repo.AgentRepo) {
+// newTestModel creates a dashboardModel with a real test DB and all injectable stubs.
+func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string) bool, sendKeysFn func(string, string) error, restartFn func(string, string) error) (*dashboardModel, *repo.AgentRepo) {
 	t.Helper()
 	conn, err := db.NewTestDB()
 	if err != nil {
@@ -198,6 +200,8 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 		killSession:   killFn,
 		sessionExists: existsFn,
 		sendKeys:      sendKeysFn,
+		restartAgent:  restartFn,
+		sleepFn:       func(time.Duration) {}, // no-op in tests
 	}
 	return m, agents
 }
@@ -209,6 +213,7 @@ func TestKillAgentCmd_success(t *testing.T) {
 	m, agents := newTestModel(t,
 		func(name string) error { killed = name; return nil },
 		func(string) bool { return true },
+		func(string, string) error { return nil },
 		func(string, string) error { return nil },
 	)
 
@@ -244,6 +249,7 @@ func TestKillAgentCmd_killSessionFails(t *testing.T) {
 		func(string) error { return fmt.Errorf("tmux error") },
 		func(string) bool { return true },
 		func(string, string) error { return nil },
+		func(string, string) error { return nil },
 	)
 	agents.Register("quartz", "prole", nil)
 
@@ -264,6 +270,7 @@ func TestKillAgentCmd_partialFailureMessage(t *testing.T) {
 	m, _ := newTestModel(t,
 		func(string) error { return nil }, // kill succeeds
 		func(string) bool { return true },
+		func(string, string) error { return nil },
 		func(string, string) error { return nil },
 	)
 	// Do NOT register the agent — UpdateStatus will fail.
@@ -289,6 +296,7 @@ func TestStopAgentCmd_success(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return true }, // session exists
 		func(name, msg string) error { sentTo = name; sentMsg = msg; return nil },
+		func(string, string) error { return nil },
 	)
 
 	agent := &repo.Agent{Name: "conductor"}
@@ -314,6 +322,7 @@ func TestStopAgentCmd_noSessionError(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return false }, // session does not exist
 		func(string, string) error { return nil },
+		func(string, string) error { return nil },
 	)
 
 	agent := &repo.Agent{Name: "conductor"}
@@ -333,6 +342,7 @@ func TestStopAgentCmd_sendKeysFails(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return true },
 		func(string, string) error { return fmt.Errorf("tmux send error") },
+		func(string, string) error { return nil },
 	)
 
 	agent := &repo.Agent{Name: "conductor"}
@@ -351,6 +361,7 @@ func TestDataMsg_clearsStatusMsg(t *testing.T) {
 		func(string) error { return nil },
 		func(string) bool { return false },
 		func(string, string) error { return nil },
+		func(string, string) error { return nil },
 	)
 	m.statusMsg = "previous status"
 
@@ -358,6 +369,242 @@ func TestDataMsg_clearsStatusMsg(t *testing.T) {
 	dm := updated.(dashboardModel)
 	if dm.statusMsg != "" {
 		t.Errorf("expected statusMsg cleared on dataMsg, got %q", dm.statusMsg)
+	}
+}
+
+// --- restartAgentCmd tests ---
+
+func TestRestartAgentCmd_success(t *testing.T) {
+	var killed, restartedName, restartedType string
+	m, agents := newTestModel(t,
+		func(name string) error { killed = name; return nil },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+		func(name, agentType string) error { restartedName = name; restartedType = agentType; return nil },
+	)
+
+	agents.Register("copper", "prole", nil)
+	agent := &repo.Agent{Name: "copper", Type: "prole"}
+	cmd := m.restartAgentCmd(agent)
+	// restartAgentCmd returns dataMsg (a DB fetch) on success, not actionResultMsg.
+	msg := cmd().(dataMsg)
+
+	if msg.err != nil {
+		t.Fatalf("expected no error in fetched data, got %v", msg.err)
+	}
+	if killed != "ct-copper" {
+		t.Errorf("expected killSession called with 'ct-copper', got %q", killed)
+	}
+	if restartedName != "copper" || restartedType != "prole" {
+		t.Errorf("expected restartAgent('copper', 'prole'), got (%q, %q)", restartedName, restartedType)
+	}
+}
+
+func TestRestartAgentCmd_killFails(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return fmt.Errorf("tmux error") },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+		func(string, string) error { t.Error("restartAgent should not be called after kill failure"); return nil },
+	)
+
+	agent := &repo.Agent{Name: "copper", Type: "prole"}
+	cmd := m.restartAgentCmd(agent)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected error when kill fails")
+	}
+}
+
+func TestRestartAgentCmd_restartFails(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+		func(string, string) error { return fmt.Errorf("launch error") },
+	)
+
+	agent := &repo.Agent{Name: "copper", Type: "prole"}
+	cmd := m.restartAgentCmd(agent)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected error when restart fails")
+	}
+}
+
+// --- nudge / input mode tests ---
+
+func makeModelWithAgents(t *testing.T, sessionLive bool) (*dashboardModel, *[]struct{ session, msg string }) {
+	t.Helper()
+	sent := &[]struct{ session, msg string }{}
+	m, agents := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return sessionLive },
+		func(name, msg string) error {
+			*sent = append(*sent, struct{ session, msg string }{name, msg})
+			return nil
+		},
+		func(string, string) error { return nil },
+	)
+	agents.Register("copper", "prole", nil)
+	m.data.agents = []*repo.Agent{{Name: "copper", Type: "prole"}}
+	m.focusedPanel = 0
+	return m, sent
+}
+
+func TestNudge_entersInputMode(t *testing.T) {
+	m, _ := makeModelWithAgents(t, true)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	if !dm.inputMode {
+		t.Fatal("expected inputMode=true after pressing n")
+	}
+	if dm.inputAction != "nudge" {
+		t.Errorf("expected inputAction=nudge, got %q", dm.inputAction)
+	}
+	if dm.inputTarget != "copper" {
+		t.Errorf("expected inputTarget=copper, got %q", dm.inputTarget)
+	}
+	if dm.inputBuffer != "" {
+		t.Errorf("expected empty inputBuffer, got %q", dm.inputBuffer)
+	}
+}
+
+func TestNudge_typeAndEnterCallsSendKeys(t *testing.T) {
+	m, sent := makeModelWithAgents(t, true)
+
+	// Enter input mode
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	// Type "hello"
+	for _, ch := range "hello" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	if dm.inputBuffer != "hello" {
+		t.Fatalf("expected inputBuffer='hello', got %q", dm.inputBuffer)
+	}
+
+	// Press Enter to send
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+	if dm.inputBuffer != "" {
+		t.Error("expected inputBuffer cleared after Enter")
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 sendKeys call, got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-copper" {
+		t.Errorf("expected sendKeys to 'ct-copper', got %q", (*sent)[0].session)
+	}
+	if (*sent)[0].msg != "hello" {
+		t.Errorf("expected message 'hello', got %q", (*sent)[0].msg)
+	}
+}
+
+func TestNudge_escapeClears(t *testing.T) {
+	m, sent := makeModelWithAgents(t, true)
+
+	// Enter input mode
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	// Type something, then Escape
+	upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("a")})
+	dm = upd.(dashboardModel)
+
+	upd, _ = dm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Escape")
+	}
+	if dm.inputBuffer != "" {
+		t.Error("expected inputBuffer cleared after Escape")
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no sendKeys calls on cancel, got %d", len(*sent))
+	}
+}
+
+func TestNudge_backspaceDeletesChar(t *testing.T) {
+	m, _ := makeModelWithAgents(t, true)
+
+	// Enter input mode and type
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	for _, ch := range "hi" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	// Backspace once
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	dm = upd.(dashboardModel)
+
+	if dm.inputBuffer != "h" {
+		t.Errorf("expected inputBuffer='h' after backspace, got %q", dm.inputBuffer)
+	}
+}
+
+func TestNudge_inputModeIsolatesNavKeys(t *testing.T) {
+	m, _ := makeModelWithAgents(t, true)
+	m.data.agents = append(m.data.agents, &repo.Agent{Name: "zinc", Type: "prole"})
+
+	// Enter input mode
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	// Press "j" — should be captured as text, NOT move cursor
+	cursorBefore := dm.agentCursor
+	upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("j")})
+	dm = upd.(dashboardModel)
+
+	if dm.agentCursor != cursorBefore {
+		t.Errorf("j should be text in input mode, not navigation (cursor moved from %d to %d)",
+			cursorBefore, dm.agentCursor)
+	}
+	if dm.inputBuffer != "j" {
+		t.Errorf("expected inputBuffer='j', got %q", dm.inputBuffer)
+	}
+}
+
+func TestNudge_noopOnDeadAgent(t *testing.T) {
+	// Session does NOT exist — pressing n should NOT enter input mode.
+	m, _ := makeModelWithAgents(t, false)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false for agent with no live session")
+	}
+}
+
+func TestNudge_emptyBufferEnterDoesNotSendKeys(t *testing.T) {
+	m, sent := makeModelWithAgents(t, true)
+
+	// Enter input mode, press Enter immediately without typing
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no sendKeys on empty buffer, got %d", len(*sent))
+	}
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
 	}
 }
 

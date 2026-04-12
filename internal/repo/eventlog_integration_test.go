@@ -16,20 +16,12 @@ func setupRepoWithLogger(t *testing.T) (*IssueRepo, *AgentRepo, *eventlog.Reader
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	logPath := filepath.Join(t.TempDir(), "events.jsonl")
-	logger := &eventlog.Logger{}
-	// Use NewLogger via a temp dir so the writer points to our controlled path.
-	// We construct it directly via the exported constructor.
 	ctDir := t.TempDir()
-	logger = eventlog.NewLogger(ctDir)
-	logPath = filepath.Join(ctDir, "logs", "events.jsonl")
-
+	logger := eventlog.NewLogger(ctDir)
+	logPath := filepath.Join(ctDir, "logs", "events.jsonl")
 	issues := NewIssueRepo(conn, logger)
 	agents := NewAgentRepo(conn, logger)
 	reader := eventlog.NewReader(logPath)
-
-	_ = issues
-	_ = agents
 	return issues, agents, reader
 }
 

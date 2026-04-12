@@ -77,20 +77,22 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
 
 ## Lifecycle
 
-1. **Receive ticket** — Conductor assigns you a ticket
-2. **Move to in_progress**: `gt ticket status <id> in_progress`
-3. **Create branch**: `prole/{{NAME}}/<TICKET_PREFIX>-<id>`
-4. **Implement the work** — commit and push after every change
-5. **Run quality gates** — tests, lint, vet (all must pass)
-6. **File a PR**: `gt pr create <ticket_id>`
-7. **Go idle**: `gt agent status {{NAME}} idle`
+1. **Receive ticket** — you are nudged with an assignment
+2. **Claim the work**: `gt agent status {{NAME}} working --issue <id>` (sets your status AND current_issue)
+3. **Move to in_progress**: `gt ticket status <id> in_progress`
+4. **Create branch**: `prole/{{NAME}}/<TICKET_PREFIX>-<id>`
+5. **Implement the work** — commit and push after every change
+6. **Run quality gates** — tests, lint, vet (all must pass)
+7. **File a PR**: `gt pr create <ticket_id>`
+8. **Go idle**: `gt agent status {{NAME}} idle`
 
 ## Startup Protocol
 
-1. Check your assigned ticket
+1. Check your assigned ticket — look for a ticket whose assignee is `{{NAME}}`
 2. Read the ticket spec: understand what to build
-3. Create your branch and start working
-4. If NO assigned ticket: signal idle and wait
+3. Claim the work: `gt agent status {{NAME}} working --issue <id>`
+4. Create your branch and start working
+5. If NO assigned ticket: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged
 
 ## Key Commands
 
