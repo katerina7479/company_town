@@ -13,6 +13,8 @@ var ProleCreator = prole.Create
 
 // Execute assigns a ticket to a prole, creating the prole if it does not exist.
 // Branch naming: "prole/<name>/<id>".
+// Agent status and current_issue are intentionally left alone — proles own
+// their own status and set it when they pick up work.
 func Execute(cfg *config.Config, issues *repo.IssueRepo, agents *repo.AgentRepo, ticketID int, proleName string) error {
 	if _, err := agents.Get(proleName); err != nil {
 		if err := ProleCreator(proleName, cfg, agents); err != nil {
@@ -22,12 +24,6 @@ func Execute(cfg *config.Config, issues *repo.IssueRepo, agents *repo.AgentRepo,
 	branch := fmt.Sprintf("prole/%s/%d", proleName, ticketID)
 	if err := issues.Assign(ticketID, proleName, branch); err != nil {
 		return fmt.Errorf("assigning ticket %d: %w", ticketID, err)
-	}
-	if err := agents.SetCurrentIssue(proleName, &ticketID); err != nil {
-		return fmt.Errorf("setting current issue on %s: %w", proleName, err)
-	}
-	if err := agents.UpdateStatus(proleName, "working"); err != nil {
-		return fmt.Errorf("setting %s to working: %w", proleName, err)
 	}
 	return nil
 }

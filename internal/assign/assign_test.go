@@ -59,16 +59,16 @@ func TestExecute_existingProle(t *testing.T) {
 		t.Errorf("expected branch=%q, got %v", wantBranch, issue.Branch)
 	}
 
-	// Assert agent is working with current_issue set.
+	// Agent status and current_issue are left alone — proles own their own status.
 	agent, err := agents.Get("copper")
 	if err != nil {
 		t.Fatalf("getting agent: %v", err)
 	}
-	if agent.Status != "working" {
-		t.Errorf("expected status=working, got %q", agent.Status)
+	if agent.Status != "idle" {
+		t.Errorf("expected status unchanged (idle), got %q", agent.Status)
 	}
-	if !agent.CurrentIssue.Valid || int(agent.CurrentIssue.Int64) != ticketID {
-		t.Errorf("expected current_issue=%d, got %v", ticketID, agent.CurrentIssue)
+	if agent.CurrentIssue.Valid {
+		t.Errorf("expected current_issue unchanged (NULL), got %d", agent.CurrentIssue.Int64)
 	}
 }
 
@@ -106,15 +106,16 @@ func TestExecute_newProle(t *testing.T) {
 		t.Errorf("expected assignee=zinc, got %v", issue.Assignee)
 	}
 
+	// Agent status and current_issue are left alone — proles own their own status.
 	agent, err := agents.Get("zinc")
 	if err != nil {
 		t.Fatalf("getting agent: %v", err)
 	}
-	if agent.Status != "working" {
-		t.Errorf("expected status=working, got %q", agent.Status)
+	if agent.Status != "idle" {
+		t.Errorf("expected status unchanged (idle), got %q", agent.Status)
 	}
-	if !agent.CurrentIssue.Valid || int(agent.CurrentIssue.Int64) != ticketID {
-		t.Errorf("expected current_issue=%d, got %v", ticketID, agent.CurrentIssue)
+	if agent.CurrentIssue.Valid {
+		t.Errorf("expected current_issue unchanged (NULL), got %d", agent.CurrentIssue.Int64)
 	}
 }
 
