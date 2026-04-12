@@ -17,7 +17,7 @@ import (
 // Start launches a named agent in a tmux session.
 func Start(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gt start <architect|conductor|reviewer|artisan-SPECIALTY>")
+		return fmt.Errorf("usage: gt start <architect|reviewer|artisan-SPECIALTY>")
 	}
 
 	conn, cfg, err := db.OpenFromWorkingDir()
@@ -47,22 +47,15 @@ func Start(args []string) error {
 		)
 
 	case name == "conductor":
-		agentType = "conductor"
-		templateType = "conductor"
-		model = cfg.Agents.Conductor.Model
-		agentDir = filepath.Join(ctDir, "agents", "conductor")
-		prompt = fmt.Sprintf(
-			"You are the Conductor. Ticket prefix: %s. "+
-				"Read your CLAUDE.md for instructions. "+
-				"Check memory/handoff.md to resume previous work. "+
-				"Begin coordinating proles: check ready tickets and assign them.",
-			cfg.TicketPrefix,
-		)
+		fmt.Println("The conductor has been decommissioned.")
+		fmt.Println("Ticket assignment is now handled directly by the daemon (NC-28/NC-30).")
+		fmt.Println("No persistent conductor session is needed — nothing to start.")
+		return nil
 
 	case name == "reviewer":
 		agentType = "reviewer"
 		templateType = "reviewer"
-		model = cfg.Agents.Conductor.Model // reviewer uses same model class as conductor
+		model = cfg.Agents.Reviewer.Model
 		agentDir = filepath.Join(ctDir, "agents", "reviewer")
 		prompt = fmt.Sprintf(
 			"You are the Reviewer. Ticket prefix: %s. "+

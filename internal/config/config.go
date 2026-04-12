@@ -24,7 +24,7 @@ type AgentsConfig struct {
 	Mayor     AgentConfig   `json:"mayor"`
 	Architect AgentConfig   `json:"architect"`
 	Artisan   ArtisanConfig `json:"artisan"`
-	Conductor AgentConfig   `json:"conductor"`
+	Reviewer  AgentConfig   `json:"reviewer"`
 	Prole     AgentConfig   `json:"prole"`
 }
 
@@ -117,8 +117,8 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		Agents: AgentsConfig{
 			Mayor:     AgentConfig{Model: "claude-opus-4-5"},
 			Architect: AgentConfig{Model: "claude-opus-4-5"},
-			Artisan: ArtisanConfig{}, // User-defined in config.json
-			Conductor: AgentConfig{Model: "claude-sonnet-4-5"},
+			Artisan:   ArtisanConfig{}, // User-defined in config.json
+			Reviewer:  AgentConfig{Model: "claude-sonnet-4-5"},
 			Prole:     AgentConfig{Model: "claude-sonnet-4-5"},
 		},
 		PollingIntervalSeconds:       30,
