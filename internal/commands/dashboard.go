@@ -138,8 +138,8 @@ func newDashboardModel() (*dashboardModel, error) {
 	}
 	return &dashboardModel{
 		conn:          conn,
-		agents:        repo.NewAgentRepo(conn),
-		issues:        repo.NewIssueRepo(conn),
+		agents:        repo.NewAgentRepo(conn, nil),
+		issues:        repo.NewIssueRepo(conn, nil),
 		killSession:   session.Kill,
 		sessionExists: session.Exists,
 		sendKeys:      session.SendKeys,

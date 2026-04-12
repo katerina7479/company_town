@@ -16,8 +16,8 @@ func Status() error {
 	}
 	defer conn.Close()
 
-	agents := repo.NewAgentRepo(conn)
-	issues := repo.NewIssueRepo(conn)
+	agents := repo.NewAgentRepo(conn, nil)
+	issues := repo.NewIssueRepo(conn, nil)
 
 	if err := reconcileDeadAgents(agents, session.Exists); err != nil {
 		return err

@@ -13,6 +13,70 @@ import (
 	"time"
 )
 
+// Logger wraps a Writer with convenience methods for domain events.
+// A nil *Logger is safe to use — all methods become no-ops.
+type Logger struct {
+	w *Writer
+}
+
+// NewLogger creates a Logger that writes to <ctDir>/logs/events.jsonl.
+func NewLogger(ctDir string) *Logger {
+	return &Logger{w: NewWriter(filepath.Join(ctDir, "logs", "events.jsonl"))}
+}
+
+// TicketStatus records a ticket status transition.
+func (l *Logger) TicketStatus(id int, from, to string) {
+	if l == nil {
+		return
+	}
+	_ = l.w.Write(Event{
+		Kind:       KindTicketStatusChanged,
+		EntityID:   fmt.Sprintf("%d", id),
+		FromStatus: from,
+		ToStatus:   to,
+	})
+}
+
+// TicketCreated records a new ticket being created with its title.
+func (l *Logger) TicketCreated(id int, title string) {
+	if l == nil {
+		return
+	}
+	_ = l.w.Write(Event{
+		Kind:       KindTicketStatusChanged,
+		EntityID:   fmt.Sprintf("%d", id),
+		EntityName: title,
+		ToStatus:   "open",
+	})
+}
+
+// AgentStatus records an agent status transition.
+func (l *Logger) AgentStatus(name, from, to string) {
+	if l == nil {
+		return
+	}
+	_ = l.w.Write(Event{
+		Kind:       KindAgentStatusChanged,
+		EntityID:   name,
+		EntityName: name,
+		FromStatus: from,
+		ToStatus:   to,
+	})
+}
+
+// AgentRegistered records a new agent being registered.
+func (l *Logger) AgentRegistered(name, agentType string) {
+	if l == nil {
+		return
+	}
+	_ = l.w.Write(Event{
+		Kind:       KindAgentStatusChanged,
+		EntityID:   name,
+		EntityName: agentType,
+		ToStatus:   "idle",
+	})
+}
+
 // Kind identifies the type of event.
 type Kind string
 

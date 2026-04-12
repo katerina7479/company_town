@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/katerina7479/company_town/internal/eventlog"
 )
 
 type Issue struct {
@@ -37,11 +39,12 @@ var ValidStatuses = []string{
 var ValidTypes = []string{"task", "epic", "bug", "refactor"}
 
 type IssueRepo struct {
-	db *sql.DB
+	db     *sql.DB
+	events *eventlog.Logger
 }
 
-func NewIssueRepo(db *sql.DB) *IssueRepo {
-	return &IssueRepo{db: db}
+func NewIssueRepo(db *sql.DB, events *eventlog.Logger) *IssueRepo {
+	return &IssueRepo{db: db, events: events}
 }
 
 // Create inserts a new issue and returns its ID.
@@ -76,6 +79,9 @@ func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *st
 		return 0, fmt.Errorf("getting issue id: %w", err)
 	}
 
+	if r.events != nil {
+		r.events.TicketCreated(int(id), title)
+	}
 	return int(id), nil
 }
 
@@ -125,6 +131,11 @@ func (r *IssueRepo) List(status string) ([]*Issue, error) {
 
 // UpdateStatus changes an issue's status.
 func (r *IssueRepo) UpdateStatus(id int, status string) error {
+	var oldStatus string
+	if r.events != nil {
+		r.db.QueryRow(`SELECT status FROM issues WHERE id = ?`, id).Scan(&oldStatus)
+	}
+
 	var closedAt interface{}
 	if status == "closed" {
 		closedAt = time.Now()
@@ -142,11 +153,20 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	if n == 0 {
 		return fmt.Errorf("issue %d not found", id)
 	}
+
+	if r.events != nil {
+		r.events.TicketStatus(id, oldStatus, status)
+	}
 	return nil
 }
 
 // Assign sets the assignee and branch on an issue.
 func (r *IssueRepo) Assign(id int, assignee, branch string) error {
+	var oldStatus string
+	if r.events != nil {
+		r.db.QueryRow(`SELECT status FROM issues WHERE id = ?`, id).Scan(&oldStatus)
+	}
+
 	result, err := r.db.Exec(
 		`UPDATE issues SET assignee = ?, branch = ?, status = 'in_progress',
 		        updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -159,6 +179,10 @@ func (r *IssueRepo) Assign(id int, assignee, branch string) error {
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("issue %d not found", id)
+	}
+
+	if r.events != nil && oldStatus != "in_progress" {
+		r.events.TicketStatus(id, oldStatus, "in_progress")
 	}
 	return nil
 }

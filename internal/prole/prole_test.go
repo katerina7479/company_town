@@ -22,7 +22,7 @@ func setupAgentRepo(t *testing.T) *repo.AgentRepo {
 		t.Fatalf("creating test db: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	return repo.NewAgentRepo(conn)
+	return repo.NewAgentRepo(conn, nil)
 }
 
 func TestCreate_MaxProlesEnforced(t *testing.T) {
@@ -168,7 +168,7 @@ func setupPruneEnv(t *testing.T) (cfg *config.Config, agents *repo.AgentRepo, ba
 		t.Fatalf("test db: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	agents = repo.NewAgentRepo(conn)
+	agents = repo.NewAgentRepo(conn, nil)
 
 	// addWorktree creates a new worktree from the bare repo with a tracking branch.
 	addWorktree = func(name string) string {

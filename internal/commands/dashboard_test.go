@@ -190,11 +190,11 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	agents := repo.NewAgentRepo(conn)
+	agents := repo.NewAgentRepo(conn, nil)
 	m := &dashboardModel{
 		conn:          conn,
 		agents:        agents,
-		issues:        repo.NewIssueRepo(conn),
+		issues:        repo.NewIssueRepo(conn, nil),
 		killSession:   killFn,
 		sessionExists: existsFn,
 		sendKeys:      sendKeysFn,
