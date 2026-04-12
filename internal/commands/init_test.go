@@ -17,14 +17,14 @@ func TestWriteClaudeMDForce(t *testing.T) {
 	}
 
 	// force=true must overwrite with the embedded template
-	WriteClaudeMD(dir, "conductor", true)
+	WriteClaudeMD(dir, "reviewer", true)
 
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading CLAUDE.md after WriteClaudeMD: %v", err)
 	}
 
-	expected, err := LoadTemplate("conductor")
+	expected, err := LoadTemplate("reviewer")
 	if err != nil {
 		t.Fatalf("LoadTemplate: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestWriteClaudeMDNoForce(t *testing.T) {
 	}
 
 	// force=false must NOT overwrite when file already exists
-	WriteClaudeMD(dir, "conductor", false)
+	WriteClaudeMD(dir, "reviewer", false)
 
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestWriteClaudeMDCreatesFile(t *testing.T) {
 }
 
 func TestLoadTemplateAllAgentTypes(t *testing.T) {
-	types := []string{"mayor", "architect", "conductor", "reviewer", "artisan",
+	types := []string{"mayor", "architect", "reviewer", "artisan",
 		"artisan-frontend", "artisan-backend", "artisan-qa_coder"}
 	for _, agentType := range types {
 		content, err := LoadTemplate(agentType)

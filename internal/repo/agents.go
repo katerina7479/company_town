@@ -244,6 +244,26 @@ func (r *AgentRepo) Delete(name string) error {
 	return nil
 }
 
+var metalNames = []string{
+	"copper", "iron", "tin", "zinc", "lead",
+	"nickel", "silver", "gold", "brass", "bronze",
+}
+
+// FirstAvailableMetalName returns the first metal name not already present in
+// the agents table. Returns empty string if all names are taken.
+func (r *AgentRepo) FirstAvailableMetalName() (string, error) {
+	for _, name := range metalNames {
+		var count int
+		if err := r.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE name = ?`, name).Scan(&count); err != nil {
+			return "", fmt.Errorf("checking agent name %s: %w", name, err)
+		}
+		if count == 0 {
+			return name, nil
+		}
+	}
+	return "", nil
+}
+
 // CountByType returns the number of agents of a given type.
 func (r *AgentRepo) CountByType(agentType string) (int, error) {
 	var count int

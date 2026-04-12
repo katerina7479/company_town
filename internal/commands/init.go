@@ -18,7 +18,6 @@ var templateFS embed.FS
 var agentTypes = []string{
 	"mayor",
 	"architect",
-	"conductor",
 	"reviewer",
 	"prole",
 }

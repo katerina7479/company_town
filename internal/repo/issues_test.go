@@ -655,3 +655,249 @@ func TestIssueRepo_Ready_ordersByPriority(t *testing.T) {
 		t.Errorf("expected no-priority ticket last, got id=%d", ready[3].ID)
 	}
 }
+
+// --- Selectable() tests ---
+
+func TestSelectable_OrderStatusRepairingFirst(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// open P1 task (lower id)
+	openID, _ := r.Create("Open task", "task", nil, nil, p1Ptr())
+	r.UpdateStatus(openID, "open")
+
+	// repairing P1 task (higher id, but should come first)
+	repairID, _ := r.Create("Repairing task", "task", nil, nil, p1Ptr())
+	r.UpdateStatus(repairID, "repairing")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	if result[0].ID != repairID {
+		t.Errorf("expected repairing ticket first (id=%d), got id=%d", repairID, result[0].ID)
+	}
+}
+
+func TestSelectable_OrderBugBeforeTask(t *testing.T) {
+	r := setupTestRepo(t)
+
+	taskID, _ := r.Create("P1 task", "task", nil, nil, p1Ptr())
+	r.UpdateStatus(taskID, "open")
+
+	bugID, _ := r.Create("P1 bug", "bug", nil, nil, p1Ptr())
+	r.UpdateStatus(bugID, "open")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	if result[0].ID != bugID {
+		t.Errorf("expected bug first (id=%d), got id=%d", bugID, result[0].ID)
+	}
+}
+
+func TestSelectable_OrderPriority(t *testing.T) {
+	r := setupTestRepo(t)
+
+	p3 := "P3"
+	p0 := "P0"
+	p2 := "P2"
+	p1 := "P1"
+
+	id3, _ := r.Create("P3 task", "task", nil, nil, &p3)
+	r.UpdateStatus(id3, "open")
+	id0, _ := r.Create("P0 task", "task", nil, nil, &p0)
+	r.UpdateStatus(id0, "open")
+	id2, _ := r.Create("P2 task", "task", nil, nil, &p2)
+	r.UpdateStatus(id2, "open")
+	id1, _ := r.Create("P1 task", "task", nil, nil, &p1)
+	r.UpdateStatus(id1, "open")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(result))
+	}
+	order := []int{id0, id1, id2, id3}
+	for i, expected := range order {
+		if result[i].ID != expected {
+			t.Errorf("position %d: expected id=%d, got id=%d", i, expected, result[i].ID)
+		}
+	}
+}
+
+func TestSelectable_OrderIDTiebreaker(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id1, _ := r.Create("First P1 task", "task", nil, nil, p1Ptr())
+	r.UpdateStatus(id1, "open")
+	id2, _ := r.Create("Second P1 task", "task", nil, nil, p1Ptr())
+	r.UpdateStatus(id2, "open")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	if result[0].ID != id1 {
+		t.Errorf("expected lower id first (id=%d), got id=%d", id1, result[0].ID)
+	}
+}
+
+func TestSelectable_SkipsEpics(t *testing.T) {
+	r := setupTestRepo(t)
+
+	epicID, _ := r.Create("Big epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 results (epic excluded), got %d", len(result))
+	}
+}
+
+func TestSelectable_SkipsBlockedOpen(t *testing.T) {
+	r := setupTestRepo(t)
+
+	blockerID, _ := r.Create("Blocker", "task", nil, nil, nil)
+	r.UpdateStatus(blockerID, "open")
+
+	blockedID, _ := r.Create("Blocked task", "task", nil, nil, nil)
+	r.UpdateStatus(blockedID, "open")
+	r.AddDependency(blockedID, blockerID) // blockedID depends on blockerID (still open)
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	// Only the blocker (no deps) should be selectable; blocked is excluded.
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result (blocked ticket excluded), got %d", len(result))
+	}
+	if result[0].ID != blockerID {
+		t.Errorf("expected blocker id=%d, got id=%d", blockerID, result[0].ID)
+	}
+}
+
+func TestSelectable_IncludesRepairingWithOpenDependency(t *testing.T) {
+	r := setupTestRepo(t)
+
+	blockerID, _ := r.Create("Open blocker", "task", nil, nil, nil)
+	r.UpdateStatus(blockerID, "open")
+
+	repairID, _ := r.Create("Repairing with dep", "task", nil, nil, nil)
+	r.UpdateStatus(repairID, "repairing")
+	r.AddDependency(repairID, blockerID) // repairing ticket depends on an open ticket
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	// repairing ticket bypasses dependency filter; both should be selectable.
+	// blocker is open+unblocked, repairing is in repair flow.
+	ids := make(map[int]bool)
+	for _, i := range result {
+		ids[i.ID] = true
+	}
+	if !ids[repairID] {
+		t.Errorf("expected repairing ticket (id=%d) included despite open dependency", repairID)
+	}
+}
+
+func TestSelectable_SkipsAssigned(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id, _ := r.Create("Already assigned", "task", nil, nil, nil)
+	r.UpdateStatus(id, "open")
+	r.Assign(id, "iron", "prole/iron/1")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 results (assigned ticket excluded), got %d", len(result))
+	}
+}
+
+func TestSelectable_SkipsAssignedRepairing(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id, _ := r.Create("Assigned repairing", "task", nil, nil, nil)
+	r.UpdateStatus(id, "repairing")
+	r.SetAssignee(id, "iron")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 results (assigned repairing excluded), got %d", len(result))
+	}
+}
+
+func TestSelectable_FullOrderingLex(t *testing.T) {
+	r := setupTestRepo(t)
+
+	p0 := "P0"
+	p1s := "P1"
+
+	// Six tickets covering every tiebreaker dimension.
+	// Ordering: repairing < open, then bug < task, then P0 < P1, then lower id.
+	// So all repairing tickets come first (sorted by type then priority),
+	// then all open tickets (sorted by type then priority).
+	// Expected: repairBugP0, repairTaskP0, openBugP0, openBugP1, openTaskP0, openTaskP1
+	repairBugP0, _ := r.Create("Repair bug P0", "bug", nil, nil, &p0)
+	r.UpdateStatus(repairBugP0, "repairing")
+
+	repairTaskP0, _ := r.Create("Repair task P0", "task", nil, nil, &p0)
+	r.UpdateStatus(repairTaskP0, "repairing")
+
+	openBugP0, _ := r.Create("Open bug P0", "bug", nil, nil, &p0)
+	r.UpdateStatus(openBugP0, "open")
+
+	openTaskP0, _ := r.Create("Open task P0", "task", nil, nil, &p0)
+	r.UpdateStatus(openTaskP0, "open")
+
+	openBugP1, _ := r.Create("Open bug P1", "bug", nil, nil, &p1s)
+	r.UpdateStatus(openBugP1, "open")
+
+	openTaskP1, _ := r.Create("Open task P1", "task", nil, nil, &p1s)
+	r.UpdateStatus(openTaskP1, "open")
+
+	// type takes priority over priority level: all bugs come before all tasks
+	expected := []int{repairBugP0, repairTaskP0, openBugP0, openBugP1, openTaskP0, openTaskP1}
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	if len(result) != len(expected) {
+		t.Fatalf("expected %d results, got %d", len(expected), len(result))
+	}
+	for i, exp := range expected {
+		if result[i].ID != exp {
+			t.Errorf("position %d: expected id=%d (ordering %v), got id=%d %q",
+				i, exp, expected, result[i].ID, result[i].Title)
+		}
+	}
+}
+
+// p1Ptr returns a pointer to "P1" for use in Create calls.
+func p1Ptr() *string {
+	p := "P1"
+	return &p
+}

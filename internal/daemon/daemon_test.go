@@ -208,20 +208,20 @@ func TestHandlePRMerged_doesNotResetNonProle(t *testing.T) {
 	d, issues, agents := newTestDaemon(t)
 	resets := withResetCapture(d)
 
-	if err := agents.Register("conductor", "conductor", nil); err != nil {
+	if err := agents.Register("reviewer", "reviewer", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
 	id, _ := issues.Create("Route tickets", "task", nil, nil, nil)
-	issues.Assign(id, "conductor", "conductor/branch")
+	issues.Assign(id, "reviewer", "reviewer/branch")
 	issues.SetPR(id, 99)
-	agents.SetCurrentIssue("conductor", &id)
+	agents.SetCurrentIssue("reviewer", &id)
 
 	issue, _ := issues.Get(id)
 	d.handlePRMerged(issue)
 
 	if len(*resets) != 0 {
-		t.Errorf("expected no worktree reset for conductor, got %v", *resets)
+		t.Errorf("expected no worktree reset for reviewer, got %v", *resets)
 	}
 }
 
@@ -486,127 +486,6 @@ func TestHandleInReviewTickets_noNudgeWhenNoReviewersRegistered(t *testing.T) {
 
 // --- Repairing ticket tests ---
 
-func TestHandleRepairingTickets_nudgesConductor(t *testing.T) {
-	conductorSession := "ct-conductor"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{conductorSession})
-
-	id, _ := issues.Create("Fix auth bug", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "repairing")
-	issues.SetPR(id, 55)
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 nudge, got %d", len(*sent))
-	}
-	if (*sent)[0].session != conductorSession {
-		t.Errorf("expected message to %q, got %q", conductorSession, (*sent)[0].session)
-	}
-	if !containsAll((*sent)[0].msg, "NC-"+itoa(id), "PR #55") {
-		t.Errorf("nudge message missing ticket/PR info: %q", (*sent)[0].msg)
-	}
-}
-
-func TestHandleRepairingTickets_includesPRNumberWhenPresent(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-
-	id, _ := issues.Create("Fix lint", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "repairing")
-	issues.SetPR(id, 99)
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 nudge, got %d", len(*sent))
-	}
-	if !containsAll((*sent)[0].msg, "PR #99") {
-		t.Errorf("expected PR number in nudge: %q", (*sent)[0].msg)
-	}
-}
-
-func TestHandleRepairingTickets_worksWithoutPRNumber(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-
-	id, _ := issues.Create("Fix something", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "repairing")
-	// No SetPR — ticket has no PR
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 nudge even without PR, got %d", len(*sent))
-	}
-	if !containsAll((*sent)[0].msg, "NC-"+itoa(id)) {
-		t.Errorf("nudge message missing ticket info: %q", (*sent)[0].msg)
-	}
-}
-
-func TestHandleRepairingTickets_noNudgeWhenEmpty(t *testing.T) {
-	d, _, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 0 {
-		t.Errorf("expected 0 nudges (no repairing tickets), got %d", len(*sent))
-	}
-}
-
-func TestHandleRepairingTickets_noNudgeWhenConductorNotRunning(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
-
-	id, _ := issues.Create("Fix auth bug", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "repairing")
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 0 {
-		t.Errorf("expected 0 nudges (conductor not running), got %d", len(*sent))
-	}
-}
-
-func TestHandleRepairingTickets_batchesMultipleTickets(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-
-	id1, _ := issues.Create("Fix A", "task", nil, nil, nil)
-	issues.UpdateStatus(id1, "repairing")
-
-	id2, _ := issues.Create("Fix B", "task", nil, nil, nil)
-	issues.UpdateStatus(id2, "repairing")
-	issues.SetPR(id2, 12)
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 batched nudge, got %d", len(*sent))
-	}
-	if !containsAll((*sent)[0].msg, "NC-"+itoa(id1), "NC-"+itoa(id2)) {
-		t.Errorf("batched nudge missing ticket info: %q", (*sent)[0].msg)
-	}
-}
-
-func TestHandleRepairingTickets_ignoresNonRepairingTickets(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-
-	// repairing — should nudge
-	id1, _ := issues.Create("Needs fix", "task", nil, nil, nil)
-	issues.UpdateStatus(id1, "repairing")
-
-	// in_review — should NOT nudge conductor
-	id2, _ := issues.Create("In review", "task", nil, nil, nil)
-	issues.UpdateStatus(id2, "in_review")
-	issues.SetPR(id2, 20)
-
-	// open — should NOT nudge
-	id3, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id3, "open")
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 1 {
-		t.Errorf("expected 1 nudge, got %d", len(*sent))
-	}
-}
-
 // helpers
 
 func containsAll(s string, substrings ...string) bool {
@@ -821,33 +700,36 @@ func TestCooldown_allowsNudgeAfterExpiry_withNewTickets(t *testing.T) {
 }
 
 func TestCooldown_independentPerHandler(t *testing.T) {
-	conductorSession := "ct-conductor"
 	reviewerSession := "ct-reviewer"
-	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{conductorSession, reviewerSession})
+	architectSession := "ct-architect"
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{reviewerSession, architectSession})
 	agents.Register("reviewer", "reviewer", nil)
+	agents.Register("architect", "architect", nil)
 
-	// Repairing ticket for conductor
-	id1, _ := issues.Create("Fix bug", "task", nil, nil, nil)
-	issues.UpdateStatus(id1, "repairing")
+	// Draft ticket for architect
+	id1, _ := issues.Create("Spec new feature", "task", nil, nil, nil)
+	// ticket is draft by default
 
 	// In-review ticket for reviewer
 	id2, _ := issues.Create("Review feature", "task", nil, nil, nil)
 	issues.UpdateStatus(id2, "in_review")
 	issues.SetPR(id2, 9)
 
+	_ = id1 // used implicitly — ticket starts as draft
+
 	now := time.Now()
 	withCooldown(d, 5*time.Minute, now)
 
 	// Both fire on first call
+	d.handleDraftTickets()
 	d.handleInReviewTickets()
-	d.handleRepairingTickets()
 	if len(*sent) != 2 {
 		t.Fatalf("expected 2 nudges on first call, got %d", len(*sent))
 	}
 
-	// Second call — both suppressed independently
+	// Second call — both suppressed independently by their own cooldown keys
+	d.handleDraftTickets()
 	d.handleInReviewTickets()
-	d.handleRepairingTickets()
 	if len(*sent) != 2 {
 		t.Errorf("expected no additional nudges within cooldown, got %d total", len(*sent))
 	}
@@ -986,36 +868,6 @@ func TestCooldown_disabledWhenZero_dedupsIdenticalTickets(t *testing.T) {
 
 // --- Working agent suppression tests ---
 
-func TestHandleOpenTickets_skipsWhenConductorWorking(t *testing.T) {
-	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "working")
-
-	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "open")
-
-	d.handleOpenTickets()
-
-	if len(*sent) != 0 {
-		t.Errorf("expected 0 nudges (conductor is working), got %d", len(*sent))
-	}
-}
-
-func TestHandleOpenTickets_nudgesWhenConductorIdle(t *testing.T) {
-	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-	agents.Register("conductor", "conductor", nil)
-	// status defaults to idle
-
-	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "open")
-
-	d.handleOpenTickets()
-
-	if len(*sent) != 1 {
-		t.Errorf("expected 1 nudge (conductor is idle), got %d", len(*sent))
-	}
-}
-
 func TestHandleDraftTickets_skipsWhenArchitectWorking(t *testing.T) {
 	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-architect"})
 	agents.Register("architect", "architect", nil)
@@ -1028,21 +880,6 @@ func TestHandleDraftTickets_skipsWhenArchitectWorking(t *testing.T) {
 
 	if len(*sent) != 0 {
 		t.Errorf("expected 0 nudges (architect is working), got %d", len(*sent))
-	}
-}
-
-func TestHandleRepairingTickets_skipsWhenConductorWorking(t *testing.T) {
-	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "working")
-
-	id, _ := issues.Create("Fix bug", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "repairing")
-
-	d.handleRepairingTickets()
-
-	if len(*sent) != 0 {
-		t.Errorf("expected 0 nudges (conductor is working), got %d", len(*sent))
 	}
 }
 
@@ -1065,60 +902,6 @@ func TestHandleInReviewTickets_skipsWorkingReviewer(t *testing.T) {
 	}
 	if (*sent)[0].session != "ct-reviewer-2" {
 		t.Errorf("expected nudge to ct-reviewer-2, got %q", (*sent)[0].session)
-	}
-}
-
-// --- Digest dedup tests ---
-
-func TestDigest_suppressesDuplicateNudge(t *testing.T) {
-	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-	agents.Register("conductor", "conductor", nil)
-
-	now := time.Now()
-	withCooldown(d, 5*time.Minute, now)
-
-	id, _ := issues.Create("Fix bug", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "repairing")
-
-	// First nudge — should send
-	d.handleRepairingTickets()
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 nudge on first call, got %d", len(*sent))
-	}
-
-	// Advance past cooldown — same tickets → should NOT re-send
-	d.nowFn = func() time.Time { return now.Add(10 * time.Minute) }
-	d.handleRepairingTickets()
-	if len(*sent) != 1 {
-		t.Errorf("expected no re-nudge for same ticket set, got %d total", len(*sent))
-	}
-}
-
-func TestDigest_nudgesWhenTicketSetChanges(t *testing.T) {
-	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-	agents.Register("conductor", "conductor", nil)
-
-	now := time.Now()
-	withCooldown(d, 5*time.Minute, now)
-
-	id1, _ := issues.Create("Fix bug A", "task", nil, nil, nil)
-	issues.UpdateStatus(id1, "repairing")
-
-	// First nudge
-	d.handleRepairingTickets()
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 nudge, got %d", len(*sent))
-	}
-
-	// Add a new repairing ticket — digest changes
-	id2, _ := issues.Create("Fix bug B", "task", nil, nil, nil)
-	issues.UpdateStatus(id2, "repairing")
-
-	// Advance past cooldown so the changed digest can fire
-	d.nowFn = func() time.Time { return now.Add(10 * time.Minute) }
-	d.handleRepairingTickets()
-	if len(*sent) != 2 {
-		t.Errorf("expected 2 nudges (ticket set changed + cooldown expired), got %d", len(*sent))
 	}
 }
 
@@ -1680,131 +1463,6 @@ func withRestartCapture(d *Daemon) *[]string {
 		return nil
 	}
 	return &restarted
-}
-
-func TestHandleOpenTickets_restartsConductorWhenDeadAndTicketsReady(t *testing.T) {
-	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
-	restarted := withRestartCapture(d)
-	d.restartDeadAgents = true
-
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "dead")
-
-	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "open")
-
-	d.handleOpenTickets()
-
-	if len(*restarted) != 1 || (*restarted)[0] != "conductor" {
-		t.Errorf("expected conductor restart, got %v", *restarted)
-	}
-}
-
-func TestHandleOpenTickets_restartsConductorWhenIdleNoSession(t *testing.T) {
-	d, issues, agents, _ := newTestDaemonWithSessions(t, nil) // no active sessions
-	restarted := withRestartCapture(d)
-	d.restartDeadAgents = true
-
-	agents.Register("conductor", "conductor", nil)
-	// status is idle (default), no session
-
-	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "open")
-
-	d.handleOpenTickets()
-
-	if len(*restarted) != 1 || (*restarted)[0] != "conductor" {
-		t.Errorf("expected conductor restart for idle conductor with no session, got %v", *restarted)
-	}
-}
-
-func TestHandleOpenTickets_noRestartWhenDisabled(t *testing.T) {
-	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
-	restarted := withRestartCapture(d)
-	d.restartDeadAgents = false // disabled
-
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "dead")
-
-	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "open")
-
-	d.handleOpenTickets()
-
-	if len(*restarted) != 0 {
-		t.Errorf("expected no restart when restartDeadAgents=false, got %v", *restarted)
-	}
-}
-
-func TestHandleOpenTickets_noRestartWhenNoTickets(t *testing.T) {
-	d, _, agents, _ := newTestDaemonWithSessions(t, nil)
-	restarted := withRestartCapture(d)
-	d.restartDeadAgents = true
-
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "dead")
-
-	// no open tickets
-	d.handleOpenTickets()
-
-	if len(*restarted) != 0 {
-		t.Errorf("expected no restart when no open tickets, got %v", *restarted)
-	}
-}
-
-func TestHandleOpenTickets_noRestartWhenConductorWorking(t *testing.T) {
-	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-conductor"})
-	restarted := withRestartCapture(d)
-	d.restartDeadAgents = true
-
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "working")
-	agents.SetTmuxSession("conductor", "ct-conductor")
-
-	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "open")
-
-	d.handleOpenTickets()
-
-	// Session exists and conductor is working — no restart, just skip nudge
-	if len(*restarted) != 0 {
-		t.Errorf("expected no restart when conductor session active, got %v", *restarted)
-	}
-}
-
-func TestHandleOpenTickets_restartCooldownPreventsSpam(t *testing.T) {
-	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
-	restarted := withRestartCapture(d)
-	d.restartDeadAgents = true
-	d.restartCooldown = 5 * time.Minute
-
-	base := time.Now()
-	d.nowFn = func() time.Time { return base }
-
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "dead")
-
-	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "open")
-
-	// First call: restart happens
-	d.handleOpenTickets()
-	if len(*restarted) != 1 {
-		t.Fatalf("expected 1 restart on first call, got %d", len(*restarted))
-	}
-
-	// Second call within cooldown: no restart
-	d.handleOpenTickets()
-	if len(*restarted) != 1 {
-		t.Errorf("expected no restart within cooldown, got %d restarts", len(*restarted))
-	}
-
-	// After cooldown: restart again
-	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
-	d.handleOpenTickets()
-	if len(*restarted) != 2 {
-		t.Errorf("expected 2 restarts after cooldown elapsed, got %d", len(*restarted))
-	}
 }
 
 func TestHandleInReviewTickets_restartsDeadReviewerWhenTicketsReady(t *testing.T) {
