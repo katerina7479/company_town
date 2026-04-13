@@ -119,6 +119,56 @@ func TestExecute_newProle(t *testing.T) {
 	}
 }
 
+func TestExecute_preservesBranchOnReassignment(t *testing.T) {
+	// Re-assigning a ticket that already has a branch (e.g. after reviewer
+	// sends it back for repairs) must leave the branch column untouched so
+	// the existing PR continues to track incoming commits.
+	issues, agents := setupRepos(t)
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("registering iron: %v", err)
+	}
+	if err := agents.Register("tin", "prole", nil); err != nil {
+		t.Fatalf("registering tin: %v", err)
+	}
+
+	ticketID, err := issues.Create("test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+
+	// First assignment: iron picks up the ticket.
+	cfg := &config.Config{TicketPrefix: "nc"}
+	if err := Execute(cfg, issues, agents, ticketID, "iron"); err != nil {
+		t.Fatalf("first Execute (iron): %v", err)
+	}
+
+	issue, err := issues.Get(ticketID)
+	if err != nil {
+		t.Fatalf("Get after first assign: %v", err)
+	}
+	firstBranch := issue.Branch.String // "prole/iron/1"
+
+	// Re-assignment: ticket sent back (repairing), now assigned to tin.
+	if err := Execute(cfg, issues, agents, ticketID, "tin"); err != nil {
+		t.Fatalf("second Execute (tin): %v", err)
+	}
+
+	issue, err = issues.Get(ticketID)
+	if err != nil {
+		t.Fatalf("Get after second assign: %v", err)
+	}
+
+	// Assignee must be updated to the new prole.
+	if !issue.Assignee.Valid || issue.Assignee.String != "tin" {
+		t.Errorf("expected assignee=tin, got %v", issue.Assignee)
+	}
+	// Branch must be preserved — not overwritten with "prole/tin/1".
+	if !issue.Branch.Valid || issue.Branch.String != firstBranch {
+		t.Errorf("expected branch=%q (preserved), got %v", firstBranch, issue.Branch)
+	}
+}
+
 func TestExecute_proleCreateFails(t *testing.T) {
 	issues, agents := setupRepos(t)
 

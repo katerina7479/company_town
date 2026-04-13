@@ -154,6 +154,18 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// runGitOut runs a git command, fails the test on error, and returns trimmed stdout.
+func runGitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // setupPruneEnv creates a bare repo + worktree environment for PruneDeadWorktrees tests.
 // Returns:
 //   - cfg: config pointing at tempRoot (BareRepoPath = tempRoot/.company_town/repo.git)
@@ -225,6 +237,84 @@ func silentLogger() *log.Logger {
 func capturingLogger() (*log.Logger, *bytes.Buffer) {
 	var buf bytes.Buffer
 	return log.New(&buf, "", 0), &buf
+}
+
+// --- addWorktreeForProle tests ---
+
+func TestAddWorktreeForProle_freshBranch(t *testing.T) {
+	_, _, bareDir, _ := setupPruneEnv(t)
+	wtPath := filepath.Join(t.TempDir(), "fresh-wt")
+
+	err := addWorktreeForProle(bareDir, "prole/fresh/standby", wtPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		t.Error("expected worktree directory to be created")
+	}
+	// Branch must exist in the bare repo as a real ref.
+	runGit(t, bareDir, "show-ref", "--verify", "refs/heads/prole/fresh/standby")
+}
+
+func TestAddWorktreeForProle_staleBranchReused(t *testing.T) {
+	_, _, bareDir, addWorktree := setupPruneEnv(t)
+
+	// Create an initial worktree (simulates a previous prole incarnation).
+	stalePath := addWorktree("reuse")
+	// Advance the standby branch to a non-origin/main commit so we can prove
+	// it gets reset rather than merely reused at its stale pointer.
+	runGit(t, stalePath, "config", "user.email", "test@test.com")
+	runGit(t, stalePath, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(stalePath, "stale.txt"), []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, stalePath, "add", ".")
+	runGit(t, stalePath, "commit", "-m", "stale commit")
+	// Remove the worktree but leave the branch (now one commit ahead) behind.
+	runGit(t, bareDir, "worktree", "remove", "--force", stalePath)
+	// Confirm the branch still exists and is ahead of origin/main.
+	runGit(t, bareDir, "show-ref", "--verify", "refs/heads/prole/reuse/standby")
+
+	originMainSHA := runGitOut(t, bareDir, "rev-parse", "origin/main")
+
+	// Re-create a worktree using the same branch name — should succeed.
+	newPath := filepath.Join(t.TempDir(), "new-wt")
+	err := addWorktreeForProle(bareDir, "prole/reuse/standby", newPath)
+	if err != nil {
+		t.Fatalf("expected success reusing stale standby branch, got: %v", err)
+	}
+	if _, err := os.Stat(newPath); os.IsNotExist(err) {
+		t.Error("expected new worktree directory to be created")
+	}
+	// The standby branch must have been reset to origin/main, not left at the stale commit.
+	standbySHA := runGitOut(t, bareDir, "rev-parse", "prole/reuse/standby")
+	if standbySHA != originMainSHA {
+		t.Errorf("standby branch not reset: got %s, want origin/main %s", standbySHA, originMainSHA)
+	}
+}
+
+func TestAddWorktreeForProle_leavesFeatureBranchAlone(t *testing.T) {
+	_, _, bareDir, addWorktree := setupPruneEnv(t)
+
+	// Simulate a previous prole incarnation: create and remove the standby worktree.
+	stalePath := addWorktree("foo")
+	runGit(t, bareDir, "worktree", "remove", "--force", stalePath)
+
+	// Seed a feature branch at origin/main (represents real in-flight work).
+	runGit(t, bareDir, "branch", "prole/foo/NC-99", "origin/main")
+	featureSHABefore := runGitOut(t, bareDir, "rev-parse", "prole/foo/NC-99")
+
+	// Recycle foo — must reset /standby but must never touch /NC-99.
+	newPath := filepath.Join(t.TempDir(), "new-wt")
+	if err := addWorktreeForProle(bareDir, "prole/foo/standby", newPath); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Feature branch must still exist and point at the same commit.
+	featureSHAAfter := runGitOut(t, bareDir, "rev-parse", "prole/foo/NC-99")
+	if featureSHAAfter != featureSHABefore {
+		t.Errorf("feature branch was modified: before=%s after=%s", featureSHABefore, featureSHAAfter)
+	}
 }
 
 func TestPruneDeadWorktrees_skipsNonProleAgents(t *testing.T) {

@@ -60,12 +60,13 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		logger:        log.New(io.Discard, "", 0),
 		stop:          make(chan struct{}),
 		sessionExists: func(s string) bool { return sessions[s] },
+		killSession:   func(string) error { return nil },
 		sendKeys: func(s, msg string) error {
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
 		runQualityBaseline:      func() error { return nil },
-		pruneStaleWorktrees:     func() error { return nil },
+		pruneStaleWorktrees:     func() (int, error) { return 0, nil },
 		resetIdleProleWorktrees: func() error { return nil },
 		lastNudged:              make(map[string]time.Time),
 		lastNudgeDigest:         make(map[string]string),
@@ -574,6 +575,143 @@ func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
 	}
 }
 
+// --- Tick summary tests ---
+
+func TestPoll_LogsTickSummary(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	// Capture logger output into a buffer.
+	var buf strings.Builder
+	d.logger = log.New(&buf, "", 0)
+
+	// Seed one open ticket so the assign= candidate count is non-zero.
+	id, err := issues.Create("work item", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	d.poll()
+
+	output := buf.String()
+
+	// There must be exactly one tick: summary line per poll.
+	var tickLine string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if strings.HasPrefix(line, "tick: ") {
+			if tickLine != "" {
+				t.Errorf("multiple tick: lines found; want exactly one:\n%s", output)
+			}
+			tickLine = line
+		}
+	}
+	if tickLine == "" {
+		t.Fatalf("no tick: summary line found in output:\n%s", output)
+	}
+
+	// All nine key=value tokens must be present in the fixed field order.
+	requiredTokens := []string{"dead=", "worktrees=", "prBackfill=", "drafts=", "assign=", "inReview=", "prEvents=", "epics=", "quality="}
+	for _, tok := range requiredTokens {
+		if !strings.Contains(tickLine, tok) {
+			t.Errorf("tick line missing %s token: %s", tok, tickLine)
+		}
+	}
+
+	// assign= must be "1/0/0": 1 candidate (the open ticket), 0 slots (no proles registered), 0 paired.
+	if !strings.Contains(tickLine, "assign=1/0/0") {
+		t.Errorf("expected assign=1/0/0 (1 candidate, 0 slots), got: %s", tickLine)
+	}
+
+	// quality=skip: qualityInterval=0 (disabled) sets qualitySkip=true.
+	if !strings.Contains(tickLine, "quality=skip") {
+		t.Errorf("expected quality=skip (interval=0 → disabled), got: %s", tickLine)
+	}
+}
+
+func TestHandleDeadSessions_deletesDeadStatusProleEvenWithLiveSession(t *testing.T) {
+	// A prole already marked dead in the DB should be cleaned up even if its
+	// tmux session is still technically alive — and the zombie session must be killed.
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-dead-prole"})
+
+	var kills []string
+	d.killSession = func(s string) error {
+		kills = append(kills, s)
+		return nil
+	}
+
+	agents.Register("dead-prole", "prole", nil)
+	agents.SetTmuxSession("dead-prole", "ct-dead-prole")
+	agents.UpdateStatus("dead-prole", "dead")
+
+	// Assign an orphaned ticket to verify ClearAssigneeByAgent runs on zombie path.
+	id, _ := issues.Create("Orphaned task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetAssignee(id, "dead-prole")
+
+	d.handleDeadSessions()
+
+	// Prole row must be gone.
+	if _, err := agents.Get("dead-prole"); err == nil {
+		t.Errorf("expected dead-status prole to be deleted, still present")
+	}
+
+	// Zombie session must have been killed.
+	if len(kills) != 1 || kills[0] != "ct-dead-prole" {
+		t.Errorf("expected killSession called with %q, got %v", "ct-dead-prole", kills)
+	}
+
+	// Orphaned ticket must be returned to open with NULL assignee.
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get ticket: %v", err)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected ticket status='open' (reverted from in_progress), got %q", issue.Status)
+	}
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+}
+
+func TestHandleDeadSessions_killSessionFailureStillCleansRow(t *testing.T) {
+	// Even when killSession returns an error, the agent row must be deleted
+	// and orphaned tickets must be cleared — kill failure must not block cleanup.
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-zombie"})
+
+	d.killSession = func(string) error {
+		return fmt.Errorf("tmux: session not found")
+	}
+
+	agents.Register("zombie", "prole", nil)
+	agents.SetTmuxSession("zombie", "ct-zombie")
+	agents.UpdateStatus("zombie", "dead")
+
+	id, _ := issues.Create("Stuck task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetAssignee(id, "zombie")
+
+	d.handleDeadSessions()
+
+	// Row must still be deleted despite kill error.
+	if _, err := agents.Get("zombie"); err == nil {
+		t.Errorf("expected prole 'zombie' to be deleted even after kill error, still present")
+	}
+
+	// Orphaned ticket must still be cleared.
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get ticket: %v", err)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected ticket status='open' (reverted from in_progress), got %q", issue.Status)
+	}
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+}
+
 // --- Cooldown tests ---
 
 // withCooldown returns a copy of d with the given cooldown duration and a fixed now function.
@@ -853,9 +991,9 @@ func TestHandleStaleWorktrees_callsPruneFunction(t *testing.T) {
 	d, _, _ := newTestDaemon(t)
 
 	var calls int
-	d.pruneStaleWorktrees = func() error {
+	d.pruneStaleWorktrees = func() (int, error) {
 		calls++
-		return nil
+		return 0, nil
 	}
 
 	d.handleStaleWorktrees()
@@ -868,8 +1006,8 @@ func TestHandleStaleWorktrees_callsPruneFunction(t *testing.T) {
 func TestHandleStaleWorktrees_logsErrorWithoutPanicking(t *testing.T) {
 	d, _, _ := newTestDaemon(t)
 
-	d.pruneStaleWorktrees = func() error {
-		return fmt.Errorf("git worktree remove failed")
+	d.pruneStaleWorktrees = func() (int, error) {
+		return 0, fmt.Errorf("git worktree remove failed")
 	}
 
 	// Should not panic
@@ -880,9 +1018,9 @@ func TestHandleStaleWorktrees_calledEachPollCycle(t *testing.T) {
 	d, _, _ := newTestDaemon(t)
 
 	var calls int
-	d.pruneStaleWorktrees = func() error {
+	d.pruneStaleWorktrees = func() (int, error) {
 		calls++
-		return nil
+		return 0, nil
 	}
 
 	d.poll()
@@ -1167,9 +1305,9 @@ func TestHandleStaleWorktrees_respectsInterval(t *testing.T) {
 	d.worktreeInterval = 5 * time.Minute
 
 	var calls int
-	d.pruneStaleWorktrees = func() error {
+	d.pruneStaleWorktrees = func() (int, error) {
 		calls++
-		return nil
+		return 0, nil
 	}
 
 	// First call: interval not elapsed — should run (zero time → always run first time)

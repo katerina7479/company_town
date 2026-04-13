@@ -20,6 +20,28 @@ import (
 	"github.com/katerina7479/company_town/internal/session"
 )
 
+// tickObservations holds per-handler counters accumulated during a single poll
+// tick. Handlers write to it via nil-guarded d.obs assignments so the struct
+// can be omitted in tests that don't care about the summary line.
+type tickObservations struct {
+	dead             int  // proles deleted (handleDeadSessions)
+	worktreesSkip    bool // stale-worktree handler was interval-guarded
+	worktreesPruned  int  // stale worktrees pruned (0 if skipped)
+	prBackfillFound  int  // tickets missing PR number
+	prBackfillDone   int  // PR numbers successfully backfilled
+	drafts           int  // draft tickets found
+	assignCandidates int  // selectable ticket count
+	assignSlots      int  // available prole slot count
+	assignPaired     int  // tickets actually assigned
+	inReview         int  // in_review tickets with a PR number
+	prEventsTotal    int  // tickets with PRs checked
+	prEventsMerged   int  // PRs merged this tick
+	prEventsRepairing int // open PRs moved to repairing (human comment)
+	prEventsClosed   int  // PRs closed without merge
+	epics            int  // completable epics found
+	qualitySkip      bool // quality baseline was interval-guarded
+}
+
 // Daemon polls for state changes and routes work to agents.
 type Daemon struct {
 	cfg           *config.Config
@@ -29,11 +51,16 @@ type Daemon struct {
 	stop          chan struct{}
 	sendKeys      func(session, msg string) error
 	sessionExists func(session string) bool
+	killSession   func(session string) error
 	lastNudged          map[string]time.Time
 	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
 	nudgeCooldown       time.Duration
 	stuckAgentThreshold time.Duration
 	nowFn               func() time.Time
+
+	// obs accumulates per-handler observations for the tick summary line.
+	// Set at the start of poll() and cleared afterwards; nil outside a poll.
+	obs *tickObservations
 
 	// Quality baseline
 	runQualityBaseline  func() error
@@ -41,7 +68,7 @@ type Daemon struct {
 	qualityInterval     time.Duration
 
 	// Stale worktree pruning
-	pruneStaleWorktrees  func() error
+	pruneStaleWorktrees  func() (int, error)
 	lastWorktreePrune    time.Time
 	worktreeInterval     time.Duration
 
@@ -95,6 +122,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
 		sessionExists: session.Exists,
+		killSession:   session.Kill,
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
 		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
@@ -104,12 +132,12 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 			return runAndPersistBaseline(runner, cfg.Quality.Checks, metrics, logger)
 		},
 		qualityInterval: time.Duration(cfg.Quality.BaselineIntervalSeconds) * time.Second,
-		pruneStaleWorktrees: func() error {
+		pruneStaleWorktrees: func() (int, error) {
 			pruned, err := prole.PruneDeadWorktrees(cfg, repo.NewAgentRepo(db, events), logger)
 			for _, name := range pruned {
 				logger.Printf("pruned stale worktree for dead prole %s", name)
 			}
-			return err
+			return len(pruned), err
 		},
 		worktreeInterval: time.Duration(cfg.WorktreePruneIntervalSeconds) * time.Second,
 		resetIdleProleWorktrees: func() error {
@@ -336,6 +364,8 @@ func ticketDigest(ids []int) string {
 }
 
 func (d *Daemon) poll() {
+	d.obs = &tickObservations{}
+
 	d.handleDeadSessions()
 	d.handleStaleWorktrees()
 	d.handleIdleProleWorktrees()
@@ -346,7 +376,52 @@ func (d *Daemon) poll() {
 	d.handlePREvents()
 	d.handleEpicAutoClose()
 	d.handleQualityBaseline()
+
+	logTickSummary(d.logger, *d.obs)
+	d.obs = nil
 	d.writeHeartbeat()
+}
+
+// logTickSummary emits a single tick: summary line in fixed key=value format.
+// Field order and format are a stability contract — operators grep/awk these
+// tokens to monitor daemon health over time. Do not reorder or rename tokens
+// without updating all downstream tooling.
+//
+// Format:
+//
+//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N epics=N quality=skip|ran
+//
+// Fields:
+//
+//	dead         — proles deleted (dead sessions)
+//	worktrees    — stale worktrees pruned, or "skip" when interval-guarded
+//	prBackfill   — tickets missing PR / PR numbers successfully backfilled
+//	drafts       — draft tickets found this tick
+//	assign       — selectable tickets / available slots / actually assigned
+//	inReview     — in_review tickets with a PR number
+//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge
+//	epics        — completable epics found
+//	quality      — "ran" when baseline executed, "skip" when interval-guarded
+func logTickSummary(logger *log.Logger, obs tickObservations) {
+	worktrees := fmt.Sprintf("%d", obs.worktreesPruned)
+	if obs.worktreesSkip {
+		worktrees = "skip"
+	}
+	quality := "ran"
+	if obs.qualitySkip {
+		quality = "skip"
+	}
+	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d epics=%d quality=%s",
+		obs.dead,
+		worktrees,
+		obs.prBackfillFound, obs.prBackfillDone,
+		obs.drafts,
+		obs.assignCandidates, obs.assignSlots, obs.assignPaired,
+		obs.inReview,
+		obs.prEventsTotal, obs.prEventsMerged, obs.prEventsRepairing, obs.prEventsClosed,
+		obs.epics,
+		quality,
+	)
 }
 
 // writeHeartbeat stamps the current UTC time into d.tickFile so the dashboard
@@ -371,10 +446,17 @@ func (d *Daemon) writeHeartbeat() {
 // worktreeInterval so it does not spawn git subprocesses on every poll tick.
 func (d *Daemon) handleStaleWorktrees() {
 	if d.worktreeInterval > 0 && !d.nowFn().After(d.lastWorktreePrune.Add(d.worktreeInterval)) {
-		return // not yet time
+		if d.obs != nil {
+			d.obs.worktreesSkip = true
+		}
+		return
 	}
-	if err := d.pruneStaleWorktrees(); err != nil {
+	n, err := d.pruneStaleWorktrees()
+	if err != nil {
 		d.logger.Printf("error pruning stale worktrees: %v", err)
+	}
+	if d.obs != nil {
+		d.obs.worktreesPruned = n
 	}
 	d.lastWorktreePrune = d.nowFn()
 }
@@ -400,7 +482,7 @@ func (d *Daemon) handleIdleProleWorktrees() {
 // to look up a matching open PR on GitHub. Guarded by prBackfillInterval.
 func (d *Daemon) handleBackfillPRNumbers() {
 	if d.prBackfillInterval > 0 && !d.nowFn().After(d.lastPRBackfill.Add(d.prBackfillInterval)) {
-		return // not yet time
+		return
 	}
 
 	tickets, err := d.issues.ListMissingPR()
@@ -408,6 +490,10 @@ func (d *Daemon) handleBackfillPRNumbers() {
 		d.logger.Printf("error listing tickets missing PR: %v", err)
 		d.lastPRBackfill = d.nowFn()
 		return
+	}
+
+	if d.obs != nil {
+		d.obs.prBackfillFound = len(tickets)
 	}
 
 	for _, issue := range tickets {
@@ -429,6 +515,9 @@ func (d *Daemon) handleBackfillPRNumbers() {
 		}
 		d.logger.Printf("backfilled PR #%d for ticket %s-%d (branch %s)",
 			prNum, d.cfg.TicketPrefix, issue.ID, issue.Branch.String)
+		if d.obs != nil {
+			d.obs.prBackfillDone++
+		}
 	}
 
 	d.lastPRBackfill = d.nowFn()
@@ -464,6 +553,9 @@ func (d *Daemon) handleEpicAutoClose() {
 		return
 	}
 
+	if d.obs != nil {
+		d.obs.epics = len(epics)
+	}
 	for _, epic := range epics {
 		d.logger.Printf("auto-closing epic %s-%d (%s): all sub-tasks closed",
 			d.cfg.TicketPrefix, epic.ID, epic.Title)
@@ -543,10 +635,16 @@ func (d *Daemon) handleStuckAgents() {
 // handleQualityBaseline runs quality checks and persists results when the interval has elapsed.
 func (d *Daemon) handleQualityBaseline() {
 	if d.qualityInterval == 0 {
+		if d.obs != nil {
+			d.obs.qualitySkip = true
+		}
 		return // disabled
 	}
 	if !d.nowFn().After(d.lastQualityBaseline.Add(d.qualityInterval)) {
-		return // not yet time
+		if d.obs != nil {
+			d.obs.qualitySkip = true
+		}
+		return
 	}
 
 	d.logger.Printf("running quality baseline")
@@ -568,12 +666,26 @@ func (d *Daemon) handleDeadSessions() {
 		return
 	}
 
+	deleted := 0
 	for _, agent := range agents {
-		if agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String) {
+		sessionAlive := agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String)
+		// Skip agents with a live session unless they are already marked dead.
+		// A dead-status prole with a live session still needs to be cleaned up.
+		if sessionAlive && agent.Status != "dead" {
 			continue
 		}
 		if agent.Type == "prole" {
-			d.logger.Printf("prole %s has no live tmux session — deleting", agent.Name)
+			if sessionAlive {
+				// Zombie: row is dead but tmux session is still running — kill it.
+				if err := d.killSession(agent.TmuxSession.String); err != nil {
+					d.logger.Printf("error killing zombie session %s for %s: %v",
+						agent.TmuxSession.String, agent.Name, err)
+				} else {
+					d.logger.Printf("killed zombie tmux session %s for dead prole %s",
+						agent.TmuxSession.String, agent.Name)
+				}
+			}
+			d.logger.Printf("prole %s is dead — cleaning up", agent.Name)
 			if n, err := d.issues.ClearAssigneeByAgent(agent.Name); err != nil {
 				d.logger.Printf("error clearing orphaned assignments for %s: %v", agent.Name, err)
 			} else if n > 0 {
@@ -581,6 +693,8 @@ func (d *Daemon) handleDeadSessions() {
 			}
 			if err := d.agents.Delete(agent.Name); err != nil {
 				d.logger.Printf("error deleting prole %s: %v", agent.Name, err)
+			} else {
+				deleted++
 			}
 			continue
 		}
@@ -593,6 +707,9 @@ func (d *Daemon) handleDeadSessions() {
 			d.logger.Printf("error marking agent %s dead: %v", agent.Name, err)
 		}
 	}
+	if d.obs != nil {
+		d.obs.dead = deleted
+	}
 }
 
 
@@ -602,6 +719,10 @@ func (d *Daemon) handleDraftTickets() {
 	if err != nil {
 		d.logger.Printf("error listing draft tickets: %v", err)
 		return
+	}
+
+	if d.obs != nil {
+		d.obs.drafts = len(drafts)
 	}
 
 	if len(drafts) == 0 {
@@ -676,6 +797,10 @@ func (d *Daemon) handleInReviewTickets() {
 	}
 	if len(withPR) == 0 {
 		return
+	}
+
+	if d.obs != nil {
+		d.obs.inReview = len(withPR)
 	}
 
 	activeSessions := d.nudgeableReviewerSessions()
@@ -786,6 +911,9 @@ func (d *Daemon) handlePREvents() {
 		return
 	}
 
+	if d.obs != nil {
+		d.obs.prEventsTotal = len(tickets)
+	}
 	for _, issue := range tickets {
 		if !issue.PRNumber.Valid {
 			continue
@@ -827,6 +955,10 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 		return
 	}
 
+	if d.obs != nil {
+		d.obs.prEventsMerged++
+	}
+
 	mayorSession := session.SessionName("mayor")
 	if d.sessionExists(mayorSession) {
 		msg := fmt.Sprintf("PR #%d merged. Ticket %s-%d (%s) is now closed.",
@@ -842,6 +974,10 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 
 	d.logger.Printf("PR #%d closed without merge for ticket %s-%d — escalating to Mayor",
 		issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID)
+
+	if d.obs != nil {
+		d.obs.prEventsClosed++
+	}
 
 	// Escalate to Mayor
 	mayorSession := session.SessionName("mayor")
@@ -878,6 +1014,10 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		if err := d.issues.UpdateStatus(issue.ID, "repairing"); err != nil {
 			d.logger.Printf("error updating ticket %d to repairing: %v", issue.ID, err)
 			return
+		}
+
+		if d.obs != nil {
+			d.obs.prEventsRepairing++
 		}
 
 		return // only need one human comment to trigger repair
