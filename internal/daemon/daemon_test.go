@@ -2011,3 +2011,178 @@ func TestRun_removesTickFileOnStop(t *testing.T) {
 		t.Errorf("heartbeat file should be removed on clean stop, got err=%v", err)
 	}
 }
+
+// --- handleIdleAssignedProles tests ---
+
+func TestHandleIdleAssignedProles_nudgesIdleProleWithOpenTicket(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-tin"})
+
+	agents.Register("tin", "prole", nil)
+	agents.SetTmuxSession("tin", "ct-tin")
+
+	id, _ := issues.Create("Pending task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.SetAssignee(id, "tin")
+	agents.SetCurrentIssue("tin", &id)
+	// Reset to idle — SetCurrentIssue sets working; we need idle for this handler.
+	agents.UpdateStatus("tin", "idle")
+
+	d.handleIdleAssignedProles()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge, got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-tin" {
+		t.Errorf("expected nudge sent to ct-tin, got %q", (*sent)[0].session)
+	}
+	if !strings.Contains((*sent)[0].msg, "nc-"+strconv.Itoa(id)) && !strings.Contains((*sent)[0].msg, strconv.Itoa(id)) {
+		t.Errorf("expected ticket ID in nudge message, got %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleIdleAssignedProles_nudgesIdleProleWithRepairingTicket(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-tin"})
+
+	agents.Register("tin", "prole", nil)
+	agents.SetTmuxSession("tin", "ct-tin")
+
+	id, _ := issues.Create("Repair task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.SetAssignee(id, "tin")
+	agents.SetCurrentIssue("tin", &id)
+	agents.UpdateStatus("tin", "idle")
+
+	d.handleIdleAssignedProles()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge for repairing ticket, got %d", len(*sent))
+	}
+}
+
+func TestHandleIdleAssignedProles_skipsWorkingProle(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-tin"})
+
+	agents.Register("tin", "prole", nil)
+	agents.SetTmuxSession("tin", "ct-tin")
+
+	id, _ := issues.Create("In-flight task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.SetAssignee(id, "tin")
+	// Leave prole in working status — SetCurrentIssue does this.
+	agents.SetCurrentIssue("tin", &id)
+
+	d.handleIdleAssignedProles()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (prole is working), got %d", len(*sent))
+	}
+}
+
+func TestHandleIdleAssignedProles_skipsDeadSession(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	agents.Register("tin", "prole", nil)
+	agents.SetTmuxSession("tin", "ct-tin")
+
+	id, _ := issues.Create("Pending task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.SetAssignee(id, "tin")
+	agents.SetCurrentIssue("tin", &id)
+	agents.UpdateStatus("tin", "idle")
+
+	d.handleIdleAssignedProles()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (session dead), got %d", len(*sent))
+	}
+}
+
+func TestHandleIdleAssignedProles_skipsNonProleAgents(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+
+	agents.Register("reviewer", "reviewer", nil)
+	agents.SetTmuxSession("reviewer", "ct-reviewer")
+
+	id, _ := issues.Create("Review task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.SetAssignee(id, "reviewer")
+	agents.SetCurrentIssue("reviewer", &id)
+	agents.UpdateStatus("reviewer", "idle")
+
+	d.handleIdleAssignedProles()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (not a prole), got %d", len(*sent))
+	}
+}
+
+func TestHandleIdleAssignedProles_skipsTicketWithMismatchedAssignee(t *testing.T) {
+	// current_issue points to a ticket assigned to a different prole — skip.
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-tin"})
+
+	agents.Register("tin", "prole", nil)
+	agents.SetTmuxSession("tin", "ct-tin")
+
+	id, _ := issues.Create("Task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.SetAssignee(id, "copper") // assigned to copper, not tin
+
+	agents.SetCurrentIssue("tin", &id)
+	agents.UpdateStatus("tin", "idle")
+
+	d.handleIdleAssignedProles()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (assignee mismatch), got %d", len(*sent))
+	}
+}
+
+func TestHandleIdleAssignedProles_skipsNoCurrentIssue(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-tin"})
+
+	agents.Register("tin", "prole", nil)
+	agents.SetTmuxSession("tin", "ct-tin")
+	// No SetCurrentIssue call — current_issue is NULL.
+
+	d.handleIdleAssignedProles()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 nudges (no current issue), got %d", len(*sent))
+	}
+}
+
+func TestHandleIdleAssignedProles_cooldownSuppressesRepeatNudge(t *testing.T) {
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{"ct-tin"})
+
+	agents.Register("tin", "prole", nil)
+	agents.SetTmuxSession("tin", "ct-tin")
+
+	id, _ := issues.Create("Pending task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.SetAssignee(id, "tin")
+	agents.SetCurrentIssue("tin", &id)
+	agents.UpdateStatus("tin", "idle")
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.nudgeCooldown = 5 * time.Minute
+
+	// First call: nudge fires.
+	d.handleIdleAssignedProles()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge on first call, got %d", len(*sent))
+	}
+
+	// Second call within cooldown: no nudge.
+	d.handleIdleAssignedProles()
+	if len(*sent) != 1 {
+		t.Errorf("expected no repeat nudge within cooldown, got %d total", len(*sent))
+	}
+
+	// After cooldown: nudge fires again.
+	d.nowFn = func() time.Time { return base.Add(6 * time.Minute) }
+	d.handleIdleAssignedProles()
+	if len(*sent) != 2 {
+		t.Errorf("expected 2 nudges after cooldown elapsed, got %d total", len(*sent))
+	}
+}

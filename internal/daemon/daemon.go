@@ -372,6 +372,7 @@ func (d *Daemon) poll() {
 	d.handleBackfillPRNumbers()
 	d.handleDraftTickets()
 	d.handleAssignments()
+	d.handleIdleAssignedProles()
 	d.handleInReviewTickets()
 	d.handlePREvents()
 	d.handleEpicAutoClose()
@@ -476,6 +477,72 @@ func (d *Daemon) handleIdleProleWorktrees() {
 		d.logger.Printf("error resetting idle prole worktrees: %v", err)
 	}
 	d.lastWorktreeReset = d.nowFn()
+}
+
+// handleIdleAssignedProles nudges idle proles that still have an assigned ticket
+// in open or repairing status. This covers the case where a prole returned to
+// idle (e.g. after filing a PR) but was re-assigned (e.g. sent back for repairs)
+// without its session being restarted — the normal assignment handler skips it
+// because the ticket already has an assignee, and the stuck-agent handler skips
+// it because the prole is not in working status. This handler closes that gap.
+//
+// Nudge key: "prole-resume:<name>:<ticket-id>" — per (prole, ticket) so a new
+// assignment re-primes immediately while a stuck prole is not spammed.
+func (d *Daemon) handleIdleAssignedProles() {
+	idleAgents, err := d.agents.FindIdle(nil)
+	if err != nil {
+		d.logger.Printf("error listing idle agents: %v", err)
+		return
+	}
+
+	for _, agent := range idleAgents {
+		if agent.Type != "prole" {
+			continue
+		}
+		if !agent.CurrentIssue.Valid {
+			continue
+		}
+		ticketID := int(agent.CurrentIssue.Int64)
+
+		issue, err := d.issues.Get(ticketID)
+		if err != nil {
+			d.logger.Printf("handleIdleAssignedProles: getting ticket %d for prole %s: %v",
+				ticketID, agent.Name, err)
+			continue
+		}
+
+		if issue.Status != "open" && issue.Status != "repairing" {
+			continue
+		}
+		if !issue.Assignee.Valid || issue.Assignee.String != agent.Name {
+			continue
+		}
+
+		if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
+			continue
+		}
+		if !d.sessionExists(agent.TmuxSession.String) {
+			// handleDeadSessions owns the cleanup path for dead sessions.
+			continue
+		}
+
+		nudgeKey := fmt.Sprintf("prole-resume:%s:%d", agent.Name, ticketID)
+		if !d.shouldNudge(nudgeKey) {
+			continue
+		}
+
+		msg := fmt.Sprintf(
+			"You are idle but ticket %s-%d is still assigned to you in [%s]. "+
+				"Please run 'gt ticket show %d', begin work on it per your startup protocol, and push when ready.",
+			d.cfg.TicketPrefix, ticketID, issue.Status, ticketID,
+		)
+		if err := d.sendKeys(agent.TmuxSession.String, msg); err != nil {
+			d.logger.Printf("error nudging idle prole %s: %v", agent.Name, err)
+			continue
+		}
+		d.logger.Printf("nudged idle prole %s to resume %s-%d", agent.Name, d.cfg.TicketPrefix, ticketID)
+		d.recordNudge(nudgeKey, "")
+	}
 }
 
 // handleBackfillPRNumbers finds tickets with a branch but no pr_number and attempts
