@@ -684,3 +684,74 @@ func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
 		t.Errorf("expected ticket status unchanged ('draft'), got %q", issue.Status)
 	}
 }
+
+func TestTicketUnassign_clearsAssignee(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("Some task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.SetAssignee(id, "iron"); err != nil {
+		t.Fatalf("SetAssignee: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	if err := ticketUnassign(issues, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketUnassign: %v", err)
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+	// Status must be unchanged — unassign does not transition status.
+	if issue.Status != "in_progress" {
+		t.Errorf("expected status unchanged ('in_progress'), got %q", issue.Status)
+	}
+}
+
+func TestTicketUnassign_notFound(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketUnassign(issues, []string{"9999"})
+	if err == nil {
+		t.Fatal("expected error for non-existent ticket, got nil")
+	}
+}
+
+func TestTicketUnassign_missingArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketUnassign(issues, []string{})
+	if err == nil {
+		t.Fatal("expected usage error, got nil")
+	}
+}
+
+func TestTicketUnassign_prefixedID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("Prefixed task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.SetAssignee(id, "copper"); err != nil {
+		t.Fatalf("SetAssignee: %v", err)
+	}
+
+	// Use "nc-N" form — parseTicketID should strip the prefix.
+	if err := ticketUnassign(issues, []string{fmt.Sprintf("nc-%d", id)}); err != nil {
+		t.Fatalf("ticketUnassign with prefixed ID: %v", err)
+	}
+
+	issue, _ := issues.Get(id)
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+}
