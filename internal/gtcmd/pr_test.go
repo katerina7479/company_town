@@ -136,6 +136,81 @@ func TestPRUpdate_wrongStatus_open(t *testing.T) {
 	}
 }
 
+func TestPRCreate_ClearsAssignee(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("assigning: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+
+	origPush := gitPushFn
+	origGH := ghPRCreateFn
+	t.Cleanup(func() {
+		gitPushFn = origPush
+		ghPRCreateFn = origGH
+	})
+	gitPushFn = func(args ...string) error { return nil }
+	ghPRCreateFn = func(title, body string) (string, error) {
+		return "https://github.com/x/y/pull/42", nil
+	}
+
+	if err := prCreate(issues, testCfg(), []string{"1"}); err != nil {
+		t.Fatalf("prCreate: %v", err)
+	}
+
+	got, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Assignee.Valid && got.Assignee.String != "" {
+		t.Errorf("expected assignee cleared, got %q", got.Assignee.String)
+	}
+	if got.Status != "in_review" {
+		t.Errorf("expected status=in_review, got %q", got.Status)
+	}
+}
+
+func TestPRUpdate_ClearsAssignee(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("assigning: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "repairing"); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+
+	origPush := gitPushFn
+	t.Cleanup(func() { gitPushFn = origPush })
+	gitPushFn = func(args ...string) error { return nil }
+
+	if err := prUpdate(issues, testCfg(), []string{"1"}); err != nil {
+		t.Fatalf("prUpdate: %v", err)
+	}
+
+	got, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Assignee.Valid && got.Assignee.String != "" {
+		t.Errorf("expected assignee cleared, got %q", got.Assignee.String)
+	}
+	if got.Status != "in_review" {
+		t.Errorf("expected status=in_review, got %q", got.Status)
+	}
+}
+
 func TestPRUpdate_noBranch(t *testing.T) {
 	issues := setupPRTestRepo(t)
 
