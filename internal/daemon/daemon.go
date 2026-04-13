@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -230,6 +231,7 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 			Model:    model,
 			AgentDir: agentDir,
 			Prompt:   prompt,
+			EnvVars:  map[string]string{"CT_AGENT_NAME": agent.Name},
 		}); err != nil {
 			agents.UpdateStatus(agent.Name, "dead") //nolint:errcheck
 			return fmt.Errorf("creating session for %s: %w", agent.Name, err)
@@ -386,6 +388,32 @@ func (d *Daemon) poll() {
 	logTickSummary(d.logger, *d.obs)
 	d.obs = nil
 	d.writeHeartbeat()
+}
+
+// stderrSnippetLen is the maximum bytes of captured stderr appended to a
+// subprocess error. Long stderr (e.g. an HTML error page) is truncated so a
+// single bad call cannot flood daemon.log.
+const stderrSnippetLen = 200
+
+// runCmd runs cmd and returns its stdout. If the command fails, up to
+// stderrSnippetLen bytes of stderr are appended to the error so the log entry
+// shows the actual failure reason (auth error, rate limit, network blip, etc.)
+// rather than just an exit code.
+func runCmd(cmd *exec.Cmd) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		snippet := strings.TrimSpace(stderr.String())
+		if len(snippet) > stderrSnippetLen {
+			snippet = snippet[:stderrSnippetLen] + "..."
+		}
+		if snippet != "" {
+			return nil, fmt.Errorf("%w: %s", err, snippet)
+		}
+		return nil, err
+	}
+	return out, nil
 }
 
 // logTickSummary emits a single tick: summary line in fixed key=value format.
@@ -601,7 +629,7 @@ func (d *Daemon) handleBackfillPRNumbers() {
 func lookupPRForBranch(branch, projectRoot string) (int, bool, error) {
 	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--json", "number", "--limit", "1")
 	cmd.Dir = projectRoot
-	out, err := cmd.Output()
+	out, err := runCmd(cmd)
 	if err != nil {
 		return 0, false, fmt.Errorf("gh pr list: %w", err)
 	}
@@ -1180,7 +1208,7 @@ func (d *Daemon) getPRState(prNum int) (state, mergeable string, merged bool, er
 	}
 	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt,mergeable")
 	cmd.Dir = d.cfg.ProjectRoot
-	out, err := cmd.Output()
+	out, err := runCmd(cmd)
 	if err != nil {
 		return "", "", false, fmt.Errorf("gh pr view: %w", err)
 	}
@@ -1202,7 +1230,7 @@ func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
 		fmt.Sprintf("repos/{owner}/{repo}/pulls/%d/reviews", prNum),
 		"--jq", ".[] | {author: .user.login, authorType: .user.type, state: .state, body: .body}")
 	cmd.Dir = d.cfg.ProjectRoot
-	out, err := cmd.Output()
+	out, err := runCmd(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("gh api: %w", err)
 	}

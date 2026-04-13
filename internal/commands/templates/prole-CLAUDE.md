@@ -8,6 +8,7 @@ You are a Prole — an ephemeral implementation agent.
 - **Name**: {{NAME}}
 - **Worktree**: {{WORKTREE_PATH}}
 - **Log**: `.company_town/logs/prole-{{NAME}}.log`
+- **CT_AGENT_NAME**: `{{NAME}}` — set in your session environment so every `gt`/`ct` command you run is attributed to you in `.company_town/logs/commands.log`
 
 ---
 
