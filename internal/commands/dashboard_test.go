@@ -609,6 +609,99 @@ func TestNudge_emptyBufferEnterDoesNotSendKeys(t *testing.T) {
 	}
 }
 
+// --- ticket action tests (NC-11) ---
+
+func makeModelWithTickets(t *testing.T) (*dashboardModel, *repo.IssueRepo) {
+	t.Helper()
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.ticketPrefix = "ct"
+	return m, m.issues
+}
+
+func TestStatusChange_invalidStatusRejected(t *testing.T) {
+	m, issues := makeModelWithTickets(t)
+
+	id, err := issues.Create("Test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	node := &repo.IssueNode{Issue: &repo.Issue{ID: id, Status: "open"}}
+	m.data.roots = []*repo.IssueNode{node}
+	m.focusedPanel = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("c")})
+	dm := updated.(dashboardModel)
+	if !dm.inputMode || dm.inputAction != "status" {
+		t.Fatal("expected inputMode=true with action=status after pressing c")
+	}
+
+	for _, ch := range "cosed" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.statusMsg == "" {
+		t.Error("expected statusMsg to be set for invalid status")
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected status to remain 'open', got %q", issue.Status)
+	}
+}
+
+func TestStatusChange_validStatusAccepted(t *testing.T) {
+	m, issues := makeModelWithTickets(t)
+
+	id, err := issues.Create("Test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	node := &repo.IssueNode{Issue: &repo.Issue{ID: id, Status: "open"}}
+	m.data.roots = []*repo.IssueNode{node}
+	m.focusedPanel = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("c")})
+	dm := updated.(dashboardModel)
+
+	for _, ch := range "closed" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Status != "closed" {
+		t.Errorf("expected status='closed', got %q", issue.Status)
+	}
+}
+
 // --- global action tests (NC-12) ---
 
 func TestShowClosed_toggleOnF(t *testing.T) {
@@ -669,7 +762,6 @@ func TestCreateTicket_createsInDB(t *testing.T) {
 	)
 	issues := m.issues
 
-	// Press C to enter create-ticket mode
 	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("C")})
 	dm := updated.(dashboardModel)
 	if !dm.inputMode || dm.inputAction != "create_ticket" {
