@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -1792,5 +1794,82 @@ func TestMakeRestartFn_SetsIdleNotWorking(t *testing.T) {
 	}
 	if got.Status == "working" {
 		t.Errorf("makeRestartFn must not set agent status to 'working'; got %q", got.Status)
+	}
+}
+
+// --- daemon tick file tests (NC-57) ---
+
+func TestPoll_writesTickFile(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	dir := t.TempDir()
+	tickFile := filepath.Join(dir, "run", "daemon-tick")
+	d.tickFile = tickFile
+
+	before := time.Now().UTC().Truncate(time.Second)
+	d.poll()
+
+	data, err := os.ReadFile(tickFile)
+	if err != nil {
+		t.Fatalf("tick file not written: %v", err)
+	}
+
+	tick, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("invalid timestamp in tick file: %v", err)
+	}
+	if tick.Before(before) {
+		t.Errorf("tick time %v is before poll start %v", tick, before)
+	}
+	if tick.Location() != time.UTC {
+		t.Errorf("heartbeat should be UTC, got location %v", tick.Location())
+	}
+}
+
+func TestPoll_skipsTickFileWhenEmpty(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	d.tickFile = "" // disabled
+
+	// Should not panic or attempt to write.
+	d.poll()
+}
+
+func TestRun_removesTickFileOnStop(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	// Use a polling interval long enough that Run() blocks on the ticker
+	// rather than firing another poll before Stop() lands.
+	d.cfg.PollingIntervalSeconds = 3600
+
+	dir := t.TempDir()
+	tickFile := filepath.Join(dir, "run", "daemon-tick")
+	d.tickFile = tickFile
+
+	done := make(chan struct{})
+	go func() {
+		d.Run() // blocks until Stop()
+		close(done)
+	}()
+
+	// Wait for the initial poll() to write the heartbeat.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(tickFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("heartbeat file never written")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	d.Stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("daemon did not stop")
+	}
+
+	if _, err := os.Stat(tickFile); !os.IsNotExist(err) {
+		t.Errorf("heartbeat file should be removed on clean stop, got err=%v", err)
 	}
 }
