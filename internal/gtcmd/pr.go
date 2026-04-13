@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -65,22 +66,31 @@ var (
 		return strings.TrimSpace(string(out)), nil
 	}
 
-	ghPRShowFn = func(prNum int, projectRoot string) (*prShowData, error) {
-		return fetchPRShow(prNum, projectRoot)
+	// ghPRViewFn fetches PR metadata (title, state, branch, checks, etc.).
+	// Hard-errors on failure — the metadata is load-bearing.
+	ghPRViewFn = func(prNum int, projectRoot string) ([]byte, error) {
+		fields := "number,title,state,headRefName,mergeable,reviewDecision,statusCheckRollup"
+		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", fields)
+		cmd.Dir = projectRoot
+		return cmd.Output()
+	}
+
+	// ghPRReviewsFn fetches structured PR reviews (APPROVED / CHANGES_REQUESTED / COMMENTED).
+	// Soft-fails on error — see fetchPRShow.
+	ghPRReviewsFn = func(prNum int, projectRoot string) ([]byte, error) {
+		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "reviews")
+		cmd.Dir = projectRoot
+		return cmd.Output()
+	}
+
+	// ghPRCommentsFn fetches free-form issue comments on the PR.
+	// Soft-fails on error — see fetchPRShow.
+	ghPRCommentsFn = func(prNum int, projectRoot string) ([]byte, error) {
+		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "comments")
+		cmd.Dir = projectRoot
+		return cmd.Output()
 	}
 )
-
-// prShowData holds the PR metadata and recent reviews fetched from GitHub.
-type prShowData struct {
-	Number         int
-	Title          string
-	State          string
-	HeadRefName    string
-	Mergeable      string
-	ReviewDecision string
-	Checks         []prCheckResult
-	Reviews        []prReviewEntry
-}
 
 // prCheckResult is a single CI check from statusCheckRollup.
 type prCheckResult struct {
@@ -89,21 +99,37 @@ type prCheckResult struct {
 	Conclusion string
 }
 
-// prReviewEntry is a single PR review (gh calls these "reviews").
-type prReviewEntry struct {
+// prEntry is a unified activity entry — either a PR review or an issue comment.
+// Reviews carry a verdict state (APPROVED, CHANGES_REQUESTED, COMMENTED);
+// issue comments are free-form remarks. Both are surfaced together sorted by time.
+type prEntry struct {
+	Kind        string // "review:APPROVED", "review:CHANGES_REQUESTED", "review:COMMENTED", "comment"
 	AuthorLogin string
-	State       string
-	SubmittedAt string
+	CreatedAt   string // ISO8601; sorts lexicographically
 	Body        string
 }
 
-// fetchPRShow shells out to gh to retrieve PR metadata and reviews.
+// prShowData holds the PR metadata and recent activity fetched from GitHub.
+type prShowData struct {
+	Number         int
+	Title          string
+	State          string
+	HeadRefName    string
+	Mergeable      string
+	ReviewDecision string
+	Checks         []prCheckResult
+	Activity       []prEntry // unified reviews + issue comments, sorted asc, last activityLimit entries
+}
+
+const activityLimit = 5
+
+// fetchPRShow shells out to gh to retrieve PR metadata, reviews, and issue
+// comments. The metadata fetch is load-bearing and hard-errors; reviews and
+// comments fetches soft-fail (log a warning to stderr, carry on with empty
+// slices) so a stale or restricted endpoint does not abort the whole command.
 func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
-	// Fetch metadata.
-	metaFields := "number,title,state,headRefName,mergeable,reviewDecision,statusCheckRollup"
-	metaCmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", metaFields)
-	metaCmd.Dir = projectRoot
-	metaOut, err := metaCmd.Output()
+	// --- Metadata (hard error) ---
+	metaOut, err := ghPRViewFn(prNum, projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
@@ -125,26 +151,6 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 		return nil, fmt.Errorf("parsing pr view output: %w", err)
 	}
 
-	// Fetch reviews.
-	reviewCmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "reviews")
-	reviewCmd.Dir = projectRoot
-	reviewOut, err := reviewCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("gh pr view --json reviews: %w", err)
-	}
-
-	var reviewResp struct {
-		Reviews []struct {
-			Author      struct{ Login string `json:"login"` } `json:"author"`
-			State       string `json:"state"`
-			SubmittedAt string `json:"submittedAt"`
-			Body        string `json:"body"`
-		} `json:"reviews"`
-	}
-	if err := json.Unmarshal(reviewOut, &reviewResp); err != nil {
-		return nil, fmt.Errorf("parsing reviews output: %w", err)
-	}
-
 	data := &prShowData{
 		Number:         meta.Number,
 		Title:          meta.Title,
@@ -160,14 +166,70 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 			Conclusion: c.Conclusion,
 		})
 	}
-	for _, r := range reviewResp.Reviews {
-		data.Reviews = append(data.Reviews, prReviewEntry{
-			AuthorLogin: r.Author.Login,
-			State:       r.State,
-			SubmittedAt: r.SubmittedAt,
-			Body:        r.Body,
-		})
+
+	var entries []prEntry
+
+	// --- Reviews (soft-fail) ---
+	reviewOut, err := ghPRReviewsFn(prNum, projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: reviews fetch failed: %v\n", err)
+	} else {
+		var resp struct {
+			Reviews []struct {
+				Author      struct{ Login string `json:"login"` } `json:"author"`
+				State       string `json:"state"`
+				SubmittedAt string `json:"submittedAt"`
+				Body        string `json:"body"`
+			} `json:"reviews"`
+		}
+		if parseErr := json.Unmarshal(reviewOut, &resp); parseErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: parsing reviews failed: %v\n", parseErr)
+		} else {
+			for _, r := range resp.Reviews {
+				entries = append(entries, prEntry{
+					Kind:        "review:" + r.State,
+					AuthorLogin: r.Author.Login,
+					CreatedAt:   r.SubmittedAt,
+					Body:        r.Body,
+				})
+			}
+		}
 	}
+
+	// --- Issue comments (soft-fail) ---
+	commentOut, err := ghPRCommentsFn(prNum, projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: comments fetch failed: %v\n", err)
+	} else {
+		var resp struct {
+			Comments []struct {
+				Author    struct{ Login string `json:"login"` } `json:"author"`
+				Body      string `json:"body"`
+				CreatedAt string `json:"createdAt"`
+			} `json:"comments"`
+		}
+		if parseErr := json.Unmarshal(commentOut, &resp); parseErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: parsing comments failed: %v\n", parseErr)
+		} else {
+			for _, c := range resp.Comments {
+				entries = append(entries, prEntry{
+					Kind:        "comment",
+					AuthorLogin: c.Author.Login,
+					CreatedAt:   c.CreatedAt,
+					Body:        c.Body,
+				})
+			}
+		}
+	}
+
+	// Sort by CreatedAt ascending (ISO8601 sorts lexicographically), then keep last N.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].CreatedAt < entries[j].CreatedAt
+	})
+	if len(entries) > activityLimit {
+		entries = entries[len(entries)-activityLimit:]
+	}
+	data.Activity = entries
 	return data, nil
 }
 
@@ -237,7 +299,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 		return fmt.Errorf("clearing ticket assignee: %w", err)
 	}
 
-	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
+	fmt.Printf("Ticket %s-%d -> in_review\n", cfg.TicketPrefix, id)
 	return nil
 }
 
@@ -261,7 +323,7 @@ func prShow(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 	prNum := int(issue.PRNumber.Int64)
 
-	data, err := ghPRShowFn(prNum, cfg.ProjectRoot)
+	data, err := fetchPRShow(prNum, cfg.ProjectRoot)
 	if err != nil {
 		return fmt.Errorf("fetching PR #%d: %w", prNum, err)
 	}
@@ -278,46 +340,45 @@ func prShow(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	if reviewDecision == "" {
 		reviewDecision = "none"
 	}
-	fmt.Printf("PR #%d · state: %s · branch: %s · mergeable: %s · review: %s\n",
+	fmt.Printf("PR #%d . state: %s . branch: %s . mergeable: %s . review: %s\n",
 		prNum, data.State, data.HeadRefName, mergeable, reviewDecision)
 
-	// CI checks summary.
+	// CI checks.
 	fmt.Printf("\nChecks (%d):\n", len(data.Checks))
 	if len(data.Checks) == 0 {
 		fmt.Printf("  none\n")
 	} else {
+		pass, fail, running := 0, 0, 0
 		for _, c := range data.Checks {
+			switch c.Conclusion {
+			case "SUCCESS":
+				pass++
+			case "FAILURE", "ERROR":
+				fail++
+			default:
+				running++
+			}
 			conclusion := c.Conclusion
 			if conclusion == "" {
 				conclusion = c.Status
 			}
 			fmt.Printf("  %-40s %s\n", c.Name, conclusion)
 		}
+		fmt.Printf("  summary: %d pass / %d fail / %d running\n", pass, fail, running)
 	}
 
-	// Recent reviews — last 5, newest last.
-	const maxReviews = 5
-	reviews := data.Reviews
-	if len(reviews) > maxReviews {
-		reviews = reviews[len(reviews)-maxReviews:]
-	}
-	fmt.Printf("\nReviews (%d", len(data.Reviews))
-	if len(data.Reviews) > maxReviews {
-		fmt.Printf(", showing last %d", maxReviews)
-	}
-	fmt.Printf("):\n")
-	if len(reviews) == 0 {
+	// Recent activity — unified reviews + issue comments, last activityLimit, newest last.
+	fmt.Printf("\nActivity (last %d):\n", activityLimit)
+	if len(data.Activity) == 0 {
 		fmt.Printf("  none\n")
 	}
-	for i, r := range reviews {
-		// Trim submittedAt to date portion for readability.
-		submittedAt := r.SubmittedAt
-		if len(submittedAt) > 10 {
-			submittedAt = submittedAt[:10]
+	for i, e := range data.Activity {
+		ts := e.CreatedAt
+		if len(ts) > 10 {
+			ts = ts[:10]
 		}
-		fmt.Printf("\n  [%d] %s · %s · %s\n", i+1, r.AuthorLogin, r.State, submittedAt)
-		// Indent each line of the body.
-		for _, line := range strings.Split(strings.TrimRight(r.Body, "\n"), "\n") {
+		fmt.Printf("\n  [%d] %s . %s . %s\n", i+1, e.AuthorLogin, e.Kind, ts)
+		for _, line := range strings.Split(strings.TrimRight(e.Body, "\n"), "\n") {
 			fmt.Printf("      %s\n", line)
 		}
 	}
@@ -359,12 +420,12 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	// Clear assignee so the daemon's orphan-reconcile loop can recover the
-	// ticket if the prole dies while under review. Mirror of prCreate — see
+	// ticket if the prole dies while under review. Mirror of prCreate -- see
 	// NC-50. Supersedes the nc-41 "preserve assignee through review" policy.
 	if err := issues.ClearAssignee(id); err != nil {
 		return fmt.Errorf("clearing ticket assignee: %w", err)
 	}
 
-	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
+	fmt.Printf("Ticket %s-%d -> in_review\n", cfg.TicketPrefix, id)
 	return nil
 }
