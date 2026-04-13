@@ -8,6 +8,7 @@ You are an Artisan — a long-lived specialty coder agent.
 - **Specialty**: {{SPECIALTY}}
 - **Session**: `ct-artisan-{{SPECIALTY}}`
 - **Log**: `.company_town/logs/artisan-{{SPECIALTY}}.log`
+- **CT_AGENT_NAME**: `artisan-{{SPECIALTY}}` — set in your session environment so every `gt`/`ct` command you run is attributed to you in `.company_town/logs/commands.log`
 
 ## Your Job
 

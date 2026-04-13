@@ -159,6 +159,7 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		Model:    cfg.Agents.Prole.Model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	})
 	if err != nil {
 		return fmt.Errorf("creating session: %w", err)

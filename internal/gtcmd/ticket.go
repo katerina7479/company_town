@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/katerina7479/company_town/internal/assign"
+	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/eventlog"
@@ -37,7 +38,7 @@ func parseTicketID(s string) (int, error) {
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|status|type|close|delete|depend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|close|delete|depend> ...")
 		os.Exit(1)
 	}
 
@@ -62,6 +63,8 @@ func Ticket(args []string) error {
 		return ticketReady(issues, cfg.TicketPrefix)
 	case "assign":
 		return ticketAssign(cfg, issues, agents, args[1:])
+	case "unassign":
+		return ticketUnassign(issues, args[1:])
 	case "review":
 		return ticketReview(issues, args[1:])
 	case "status":
@@ -298,9 +301,18 @@ func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.Agent
 
 	agentName := args[1]
 
+	// Capture previous assignee for annotation.
+	var prevAssignee string
+	if t, err := issues.Get(id); err == nil && t.Assignee.Valid {
+		prevAssignee = t.Assignee.String
+	}
+
 	if err := assign.Execute(cfg, issues, agents, id, agentName); err != nil {
 		return err
 	}
+
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), prevAssignee, agentName)
+	cmdlog.Annotate("agent="+agentName, "", "assigned")
 
 	branch := config.ProleBranchName(cfg.TicketPrefix, agentName, id)
 	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
@@ -328,6 +340,24 @@ func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.Agent
 	return nil
 }
 
+func ticketUnassign(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket unassign <id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	if err := issues.ClearAssignee(id); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d assignee cleared.\n", id)
+	return nil
+}
+
 func ticketStatus(issues *repo.IssueRepo, args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: gt ticket status <id> <status>")
@@ -340,10 +370,17 @@ func ticketStatus(issues *repo.IssueRepo, args []string) error {
 
 	status := args[1]
 
+	// Capture before value for annotation; tolerate lookup failure.
+	var before string
+	if t, err := issues.Get(id); err == nil {
+		before = t.Status
+	}
+
 	if err := issues.UpdateStatus(id, status); err != nil {
 		return err
 	}
 
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), before, status)
 	fmt.Printf("Ticket %d → %s\n", id, status)
 	return nil
 }
@@ -402,6 +439,8 @@ func ticketClose(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) 
 	if err := issues.Close(id); err != nil {
 		return err
 	}
+
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), issue.Status, "closed")
 
 	if issue.Assignee.Valid && issue.Assignee.String != "" {
 		if err := agents.ClearCurrentIssue(issue.Assignee.String); err != nil {

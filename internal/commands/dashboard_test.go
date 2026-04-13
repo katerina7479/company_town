@@ -454,7 +454,14 @@ func makeModelWithAgents(t *testing.T, sessionLive bool) (*dashboardModel, *[]st
 		func(string, string) error { return nil },
 	)
 	agents.Register("copper", "prole", nil)
-	m.data.agents = []*repo.Agent{{Name: "copper", Type: "prole"}}
+	// Use the canonical prole session name (ct-prole-<name>) that the system
+	// actually records at prole creation time — the bug was using session.SessionName
+	// which produced ct-copper instead.
+	m.data.agents = []*repo.Agent{{
+		Name:        "copper",
+		Type:        "prole",
+		TmuxSession: sql.NullString{String: "ct-prole-copper", Valid: true},
+	}}
 	m.focusedPanel = 0
 	return m, sent
 }
@@ -508,8 +515,8 @@ func TestNudge_typeAndEnterCallsSendKeys(t *testing.T) {
 	if len(*sent) != 1 {
 		t.Fatalf("expected 1 sendKeys call, got %d", len(*sent))
 	}
-	if (*sent)[0].session != "ct-copper" {
-		t.Errorf("expected sendKeys to 'ct-copper', got %q", (*sent)[0].session)
+	if (*sent)[0].session != "ct-prole-copper" {
+		t.Errorf("expected sendKeys to 'ct-prole-copper', got %q", (*sent)[0].session)
 	}
 	if (*sent)[0].msg != "hello" {
 		t.Errorf("expected message 'hello', got %q", (*sent)[0].msg)
@@ -584,7 +591,8 @@ func TestNudge_inputModeIsolatesNavKeys(t *testing.T) {
 }
 
 func TestNudge_noopOnDeadAgent(t *testing.T) {
-	// Session does NOT exist — pressing n should NOT enter input mode.
+	// Session name recorded but tmux session is not running — pressing n should
+	// NOT enter input mode and must set a status message (never silent).
 	m, _ := makeModelWithAgents(t, false)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
@@ -592,6 +600,9 @@ func TestNudge_noopOnDeadAgent(t *testing.T) {
 
 	if dm.inputMode {
 		t.Error("expected inputMode=false for agent with no live session")
+	}
+	if dm.statusMsg == "" {
+		t.Error("expected non-empty statusMsg when session is dead")
 	}
 }
 
@@ -610,6 +621,105 @@ func TestNudge_emptyBufferEnterDoesNotSendKeys(t *testing.T) {
 	}
 	if dm.inputMode {
 		t.Error("expected inputMode=false after Enter")
+	}
+}
+
+func TestNudge_noSessionRecorded(t *testing.T) {
+	// Agent has no tmux_session in DB — pressing n must set a status message, never silently swallow.
+	sent := &[]struct{ session, msg string }{}
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true }, // session would be alive, but name isn't recorded
+		func(name, msg string) error {
+			*sent = append(*sent, struct{ session, msg string }{name, msg})
+			return nil
+		},
+		func(string, string) error { return nil },
+	)
+	// Agent with no TmuxSession set.
+	m.data.agents = []*repo.Agent{{Name: "copper", Type: "prole"}}
+	m.focusedPanel = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false when no session recorded")
+	}
+	if dm.statusMsg == "" {
+		t.Error("expected non-empty statusMsg when no session recorded")
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no sendKeys calls, got %d", len(*sent))
+	}
+}
+
+func TestNudge_sendKeysFails_showsError(t *testing.T) {
+	// sendKeys returns an error — status bar must show the error, never silent.
+	sent := &[]struct{ session, msg string }{}
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true },
+		func(name, msg string) error {
+			*sent = append(*sent, struct{ session, msg string }{name, msg})
+			return fmt.Errorf("tmux write failed")
+		},
+		func(string, string) error { return nil },
+	)
+	m.data.agents = []*repo.Agent{{
+		Name:        "copper",
+		Type:        "prole",
+		TmuxSession: sql.NullString{String: "ct-prole-copper", Valid: true},
+	}}
+	m.focusedPanel = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	for _, ch := range "hello" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.statusMsg == "" {
+		t.Error("expected non-empty statusMsg on sendKeys error")
+	}
+	if !strings.Contains(dm.statusMsg, "nudge failed") {
+		t.Errorf("expected statusMsg to contain 'nudge failed', got %q", dm.statusMsg)
+	}
+}
+
+func TestNudge_successSetsStatusMsg(t *testing.T) {
+	// Successful nudge must set statusMsg = "nudged <name>".
+	m, _ := makeModelWithAgents(t, true)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	for _, ch := range "wake up" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.statusMsg != "nudged copper" {
+		t.Errorf("expected statusMsg='nudged copper', got %q", dm.statusMsg)
+	}
+}
+
+func TestNudge_wrongPanelNoInputMode(t *testing.T) {
+	// Pressing n while focused on the tickets panel (panel 1) must not open input mode.
+	m, _ := makeModelWithAgents(t, true)
+	m.focusedPanel = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm := updated.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false when ticket panel is focused")
 	}
 }
 
@@ -1434,5 +1544,24 @@ func TestRenderIssueRow_assigneeTruncatedAt8Chars(t *testing.T) {
 	// Must not contain the full name beyond 8 chars.
 	if strings.Contains(row, "verylongname") {
 		t.Errorf("renderIssueRow should truncate assignee to 8 chars, got: %q", row)
+	}
+}
+
+func TestColorStatus_mergeConflict(t *testing.T) {
+	// merge_conflict must render as a non-empty styled string distinct from
+	// the repairing style, so the dashboard operator can visually distinguish
+	// "needs conflict resolution" from "prole is fixing reviewer feedback".
+	mc := colorStatus("merge_conflict")
+	if mc == "" {
+		t.Fatal("colorStatus(merge_conflict) returned empty string")
+	}
+	// The rendered output must contain the status text.
+	if !strings.Contains(mc, "merge_conflict") {
+		t.Errorf("colorStatus(merge_conflict) output %q does not contain status text", mc)
+	}
+	// It must differ from the repairing style.
+	rep := colorStatus("repairing")
+	if mc == rep {
+		t.Errorf("colorStatus(merge_conflict) == colorStatus(repairing): expected distinct styles")
 	}
 }

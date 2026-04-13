@@ -169,6 +169,92 @@ func TestExecute_preservesBranchOnReassignment(t *testing.T) {
 	}
 }
 
+func TestExecute_reassignmentToSameProleNoop(t *testing.T) {
+	// Assigning a ticket to the same prole twice should be idempotent: the
+	// branch must be generated once and left unchanged on the second call.
+	issues, agents := setupRepos(t)
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("registering iron: %v", err)
+	}
+
+	ticketID, err := issues.Create("test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	// First assignment.
+	if err := Execute(cfg, issues, agents, ticketID, "iron"); err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	issue1, err := issues.Get(ticketID)
+	if err != nil {
+		t.Fatalf("Get after first assign: %v", err)
+	}
+	firstBranch := issue1.Branch.String
+
+	// Second assignment to the same prole.
+	if err := Execute(cfg, issues, agents, ticketID, "iron"); err != nil {
+		t.Fatalf("second Execute: %v", err)
+	}
+	issue2, err := issues.Get(ticketID)
+	if err != nil {
+		t.Fatalf("Get after second assign: %v", err)
+	}
+
+	if issue2.Branch.String != firstBranch {
+		t.Errorf("branch changed on idempotent reassign: first=%q second=%q", firstBranch, issue2.Branch.String)
+	}
+	if !issue2.Assignee.Valid || issue2.Assignee.String != "iron" {
+		t.Errorf("expected assignee=iron, got %v", issue2.Assignee)
+	}
+}
+
+func TestExecute_emptyStringBranchTreatedAsUnset(t *testing.T) {
+	// A branch column value of "" (non-NULL, but empty) must be treated the
+	// same as NULL and overwritten with a freshly-generated branch name.
+	// This defends the explicit `ticket.Branch.String != ""` guard in assign.go.
+	issues, agents := setupRepos(t)
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("registering copper: %v", err)
+	}
+
+	ticketID, err := issues.Create("test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+
+	// Seed the ticket with an empty-string branch (Valid=true, String="").
+	if err := issues.Assign(ticketID, "copper", ""); err != nil {
+		t.Fatalf("seeding empty branch: %v", err)
+	}
+	seeded, err := issues.Get(ticketID)
+	if err != nil {
+		t.Fatalf("Get after seed: %v", err)
+	}
+	if !seeded.Branch.Valid || seeded.Branch.String != "" {
+		t.Fatalf("seed did not produce empty-string branch: %v", seeded.Branch)
+	}
+
+	cfg := &config.Config{TicketPrefix: "nc"}
+	if err := Execute(cfg, issues, agents, ticketID, "copper"); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	issue, err := issues.Get(ticketID)
+	if err != nil {
+		t.Fatalf("Get after Execute: %v", err)
+	}
+
+	wantBranch := config.ProleBranchName("nc", "copper", ticketID)
+	if !issue.Branch.Valid || issue.Branch.String != wantBranch {
+		t.Errorf("expected branch=%q, got %v", wantBranch, issue.Branch)
+	}
+}
+
 func TestExecute_proleCreateFails(t *testing.T) {
 	issues, agents := setupRepos(t)
 
