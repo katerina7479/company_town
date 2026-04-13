@@ -56,6 +56,12 @@ var (
 		"P3": lipgloss.NewStyle().Foreground(lipgloss.Color("242")),           // medium gray
 	}
 
+	typeStyles = map[string]lipgloss.Style{
+		"epic":     lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true), // magenta bold
+		"bug":      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),            // bright red
+		"refactor": lipgloss.NewStyle().Foreground(lipgloss.Color("4")),            // blue
+	}
+
 	statusStyles = map[string]lipgloss.Style{
 		// Agent statuses
 		"working": lipgloss.NewStyle().Foreground(lipgloss.Color("2")),  // green
@@ -96,6 +102,24 @@ func priorityCell(p sql.NullString) string {
 		return s.Render(label) + " "
 	}
 	return fmt.Sprintf("%-*s", width, label)
+}
+
+// typeCell returns a fixed 2-visible-char cell for the issue type column.
+// epic → "E ", bug → "B ", refactor → "R ", task → "  " (blank — it's the default).
+func typeCell(issueType string) string {
+	letters := map[string]string{
+		"epic":     "E",
+		"bug":      "B",
+		"refactor": "R",
+	}
+	letter, ok := letters[issueType]
+	if !ok {
+		return "  " // task and unknown types get a blank cell
+	}
+	if s, ok2 := typeStyles[issueType]; ok2 {
+		return s.Render(letter) + " "
+	}
+	return letter + " "
 }
 
 // formatDuration formats a duration as a compact human-readable string.
@@ -705,17 +729,20 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	const priorityWidth = 5 // visible chars: "[P0] " or "     "
 	pri := priorityCell(node.Priority)
 
+	const typeWidth = 2 // visible chars: "E " / "B " / "R " / "  "
+	typ := typeCell(node.IssueType)
+
 	// Truncate title so the row fits inside the panel.
-	// prefix + space + id + space + status + space + priority + space + pr + space + age + space + title
-	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
+	// prefix + space + id + space + status + space + type + space + priority + space + pr + space + age + space + title
+	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + typeWidth + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
 	titleMax := width - fixedLen - 2
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	return fmt.Sprintf("%s %s %s %s %s %s %s",
-		prefix, idStr, coloredStatus, pri, prStr, age, title,
+	return fmt.Sprintf("%s %s %s %s %s %s %s %s",
+		prefix, idStr, coloredStatus, typ, pri, prStr, age, title,
 	)
 }
 

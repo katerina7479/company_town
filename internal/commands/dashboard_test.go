@@ -1052,3 +1052,67 @@ func TestWordWrap_multipleInputLinesPreserved(t *testing.T) {
 		t.Errorf("unexpected multiline result: %q", got)
 	}
 }
+
+// --- NC-47: ticket type indicator ---
+
+func TestTypeCell_taskIsBlank(t *testing.T) {
+	cell := typeCell("task")
+	if cell != "  " {
+		t.Errorf("typeCell('task') should return two spaces, got %q", cell)
+	}
+}
+
+func TestTypeCell_unknownIsBlank(t *testing.T) {
+	cell := typeCell("")
+	if cell != "  " {
+		t.Errorf("typeCell('') should return two spaces, got %q", cell)
+	}
+}
+
+func TestTypeCell_epicIsE(t *testing.T) {
+	cell := typeCell("epic")
+	// Strip ANSI codes — the visible content should end with a space and contain "E".
+	if !strings.Contains(cell, "E") {
+		t.Errorf("typeCell('epic') should contain 'E', got %q", cell)
+	}
+}
+
+func TestTypeCell_bugIsB(t *testing.T) {
+	cell := typeCell("bug")
+	if !strings.Contains(cell, "B") {
+		t.Errorf("typeCell('bug') should contain 'B', got %q", cell)
+	}
+}
+
+func TestTypeCell_refactorIsR(t *testing.T) {
+	cell := typeCell("refactor")
+	if !strings.Contains(cell, "R") {
+		t.Errorf("typeCell('refactor') should contain 'R', got %q", cell)
+	}
+}
+
+func TestRenderIssueRow_typeIndicatorPresent(t *testing.T) {
+	// A bug ticket row must contain the "B" type indicator.
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:        99,
+			IssueType: "bug",
+			Status:    "open",
+			Title:     "Something broken",
+		},
+	}
+	row := renderIssueRow(node, 0, 120)
+	if !strings.Contains(row, "B") {
+		t.Errorf("renderIssueRow for bug ticket should contain 'B' type indicator, got: %q", row)
+	}
+}
+
+func TestRenderIssueRow_taskTypeIndicatorAbsent(t *testing.T) {
+	// A task ticket row must NOT contain a type letter (type cell is blank).
+	// We verify by checking the row contains the title but no stray type letter
+	// adjacent to the id/status region. We do this by checking typeCell directly.
+	cell := typeCell("task")
+	if strings.ContainsAny(cell, "EBRTS") {
+		t.Errorf("typeCell('task') should not contain a type letter, got %q", cell)
+	}
+}
