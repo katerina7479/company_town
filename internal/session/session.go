@@ -27,11 +27,12 @@ func Exists(name string) bool {
 
 // AgentSessionConfig holds everything needed to launch an agent session.
 type AgentSessionConfig struct {
-	Name       string // tmux session name (e.g. "ct-mayor")
-	WorkDir    string // project root
-	Model      string // claude model
-	AgentDir   string // .company_town/agents/<role>/ — contains CLAUDE.md
-	Prompt     string // initial prompt to send to Claude Code
+	Name     string            // tmux session name (e.g. "ct-mayor")
+	WorkDir  string            // project root
+	Model    string            // claude model
+	AgentDir string            // .company_town/agents/<role>/ — contains CLAUDE.md
+	Prompt   string            // initial prompt to send to Claude Code
+	EnvVars  map[string]string // extra environment variables for the session
 }
 
 // CreateInteractive creates a tmux session with Claude Code in interactive mode.
@@ -65,12 +66,13 @@ func CreateInteractive(cfg AgentSessionConfig) error {
 
 	claudeCmd := strings.Join(parts, " ")
 
-	cmd := exec.Command("tmux", "new-session",
-		"-d",
-		"-s", cfg.Name,
-		"-c", cfg.WorkDir,
-		claudeCmd,
-	)
+	tmuxArgs := []string{"new-session", "-d", "-s", cfg.Name, "-c", cfg.WorkDir}
+	for k, v := range cfg.EnvVars {
+		tmuxArgs = append(tmuxArgs, "-e", k+"="+v)
+	}
+	tmuxArgs = append(tmuxArgs, claudeCmd)
+
+	cmd := exec.Command("tmux", tmuxArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

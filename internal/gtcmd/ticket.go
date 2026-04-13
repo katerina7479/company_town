@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/katerina7479/company_town/internal/assign"
+	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/eventlog"
@@ -298,9 +299,18 @@ func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.Agent
 
 	agentName := args[1]
 
+	// Capture previous assignee for annotation.
+	var prevAssignee string
+	if t, err := issues.Get(id); err == nil && t.Assignee.Valid {
+		prevAssignee = t.Assignee.String
+	}
+
 	if err := assign.Execute(cfg, issues, agents, id, agentName); err != nil {
 		return err
 	}
+
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), prevAssignee, agentName)
+	cmdlog.Annotate("agent="+agentName, "", "assigned")
 
 	branch := config.ProleBranchName(cfg.TicketPrefix, agentName, id)
 	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
@@ -340,10 +350,17 @@ func ticketStatus(issues *repo.IssueRepo, args []string) error {
 
 	status := args[1]
 
+	// Capture before value for annotation; tolerate lookup failure.
+	var before string
+	if t, err := issues.Get(id); err == nil {
+		before = t.Status
+	}
+
 	if err := issues.UpdateStatus(id, status); err != nil {
 		return err
 	}
 
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), before, status)
 	fmt.Printf("Ticket %d → %s\n", id, status)
 	return nil
 }
@@ -402,6 +419,8 @@ func ticketClose(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) 
 	if err := issues.Close(id); err != nil {
 		return err
 	}
+
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), issue.Status, "closed")
 
 	if issue.Assignee.Valid && issue.Assignee.String != "" {
 		if err := agents.ClearCurrentIssue(issue.Assignee.String); err != nil {
