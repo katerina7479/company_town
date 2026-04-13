@@ -177,7 +177,6 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 			return fmt.Errorf("updating agent status: %w", err)
 		}
 		if err := agents.SetTmuxSession(agent.Name, sessionName); err != nil {
-			agents.UpdateStatus(agent.Name, "idle") //nolint:errcheck
 			return fmt.Errorf("recording tmux session: %w", err)
 		}
 		if err := session.CreateInteractive(session.AgentSessionConfig{
