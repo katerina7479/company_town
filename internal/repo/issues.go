@@ -27,7 +27,7 @@ type Issue struct {
 }
 
 // Valid priority values.
-var ValidPriorities = []string{"P0", "P1", "P2", "P3"}
+var ValidPriorities = []string{"P0", "P1", "P2", "P3", "P4", "P5"}
 
 // Valid issue statuses.
 var ValidStatuses = []string{
@@ -412,7 +412,9 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 		   WHEN i.priority = 'P1' THEN 1
 		   WHEN i.priority = 'P2' THEN 2
 		   WHEN i.priority = 'P3' THEN 3
-		   ELSE 4
+		   WHEN i.priority = 'P4' THEN 4
+		   WHEN i.priority = 'P5' THEN 5
+		   ELSE 6
 		 END, i.id`,
 	)
 	if err != nil {
@@ -437,7 +439,7 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 //   - open tickets with no unmet dependencies and no assignee
 //
 // Ordering (strict): repairing before open, bugs before tasks before other
-// types, P0→P1→P2→P3→null, then lower ID first.
+// types, P0→P1→P2→P3→P4→P5→null, then lower ID first.
 //
 // Note: once nc-41 lands (proles stay assigned through repairing), the
 // repairing branch returns nothing for tickets whose prole is still alive.
@@ -469,7 +471,9 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 		     WHEN 'P1' THEN 1
 		     WHEN 'P2' THEN 2
 		     WHEN 'P3' THEN 3
-		     ELSE 4
+		     WHEN 'P4' THEN 4
+		     WHEN 'P5' THEN 5
+		     ELSE 6
 		   END,
 		   i.id`,
 	)

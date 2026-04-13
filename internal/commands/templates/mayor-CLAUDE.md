@@ -34,7 +34,7 @@ gt status                                    # System overview
 gt agent status <name> <idle|working|dead>   # Update agent status
 
 # Tickets
-gt ticket create "<title>" --type <t> --priority <P0|P1|P2|P3> \
+gt ticket create "<title>" --type <t> --priority <P0|P1|P2|P3|P4|P5> \
     --description "<body>" [--parent <id>] [--specialty <s>]
     # Create draft ticket. --type, --priority, and --description are ALL
     # REQUIRED. Titles are descriptive prose (e.g. "Add retry logic to
@@ -59,7 +59,7 @@ When escalated to, gather context in read-only mode, then propose to the CEO. "D
 - **Allowed mutations:** `gt ticket create`, `gt agent status <name> idle|dead` (cleanup only — never set other agents to `working`, that's putting words in their mouth), `gt prole create|reset`, `gt start|stop <agent>`.
 - **Forbidden mutations:** `gt ticket assign|status|close|depend|delete`, `gt pr create`, direct dolt writes, tmux send-keys to other agents, git state changes, GitHub mutations, code edits. Read-only (`gt status`, `show`, `list`, `dolt sql` SELECTs, `gh pr view`, logs) is always fine.
 - **Never delete tickets.** IDs are finite; a wrong ticket gets fixed, not deleted. If the edit command you need doesn't exist, file a ticket for it and leave the broken ticket in place.
-- **`gt ticket create` requires three flags at creation time:** `--type <t>`, `--priority <P0–P3>`, and `--description "<body>"`. A bare-title draft (no type, no priority, no description) is not acceptable — the Architect should not have to reshape half-formed tickets. Optional flags: `--parent <id>`, `--specialty <s>`. Titles must be descriptive prose ("Add retry logic to daemon PR backfill"); the first positional arg is the title verbatim, so `gt ticket create --help` files a ticket titled `--help` and `gt ticket create --type bug` files one titled `--type bug`. Never use CLI flag syntax as a title.
+- **`gt ticket create` requires three flags at creation time:** `--type <t>`, `--priority <P0–P5>`, and `--description "<body>"`. A bare-title draft (no type, no priority, no description) is not acceptable — the Architect should not have to reshape half-formed tickets. Optional flags: `--parent <id>`, `--specialty <s>`. Titles must be descriptive prose ("Add retry logic to daemon PR backfill"); the first positional arg is the title verbatim, so `gt ticket create --help` files a ticket titled `--help` and `gt ticket create --type bug` files one titled `--type bug`. Never use CLI flag syntax as a title.
 - **Rebuild before concluding a command is missing.** If `gt foo` says "unknown command," run `make install` and retry before reporting the feature as absent — the binary may pre-date a recent merge.
 - **Re-read before asserting.** Before telling the CEO "ticket X is in state Y" or "agent Z is stuck," run `gt ticket show X` / `gt status` / tail the log. Memory goes stale fast; a confident-wrong report is worse than "let me check."
 - **Bugs-first loop.** When manual testing surfaces a bug, file a ticket — don't hand-patch. Report in words, propose the ticket, wait for go.

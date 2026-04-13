@@ -56,6 +56,8 @@ var (
 		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),           // orange
 		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),             // yellow
 		"P3": lipgloss.NewStyle().Foreground(lipgloss.Color("242")),           // medium gray
+		"P4": lipgloss.NewStyle().Foreground(lipgloss.Color("240")),           // dim gray
+		"P5": lipgloss.NewStyle().Foreground(lipgloss.Color("238")),           // very dim gray
 	}
 
 	typeStyles = map[string]lipgloss.Style{

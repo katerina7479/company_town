@@ -85,7 +85,7 @@ func Ticket(args []string) error {
 
 func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3>]")
+		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3|P4|P5>]")
 	}
 
 	var parentID *int
@@ -136,7 +136,7 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 			i++
 			p := args[i]
 			if !isValidPriority(p) {
-				return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3", p)
+				return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3, P4, P5", p)
 			}
 			priority = &p
 		default:
@@ -154,6 +154,11 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 		return fmt.Errorf("gt ticket create: expected one title, got %d positional args (quote the title if it contains spaces): %v", len(positional), positional)
 	}
 	title := positional[0]
+
+	if priority == nil {
+		defaultPriority := "P3"
+		priority = &defaultPriority
+	}
 
 	id, err := issues.Create(title, issueType, parentID, specialty, priority)
 	if err != nil {
@@ -471,7 +476,7 @@ func isValidPriority(p string) bool {
 
 func ticketPrioritize(issues *repo.IssueRepo, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: gt ticket prioritize <id> <P0|P1|P2|P3>")
+		return fmt.Errorf("usage: gt ticket prioritize <id> <P0|P1|P2|P3|P4|P5>")
 	}
 
 	id, err := parseTicketID(args[0])
@@ -481,7 +486,7 @@ func ticketPrioritize(issues *repo.IssueRepo, args []string) error {
 
 	priority := args[1]
 	if !isValidPriority(priority) {
-		return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3", priority)
+		return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3, P4, P5", priority)
 	}
 
 	if err := issues.SetPriority(id, priority); err != nil {

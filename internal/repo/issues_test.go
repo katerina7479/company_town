@@ -849,6 +849,8 @@ func TestSelectable_OrderPriority(t *testing.T) {
 	p0 := "P0"
 	p2 := "P2"
 	p1 := "P1"
+	p4 := "P4"
+	p5 := "P5"
 
 	id3, _ := r.Create("P3 task", "task", nil, nil, &p3)
 	r.UpdateStatus(id3, "open")
@@ -858,15 +860,21 @@ func TestSelectable_OrderPriority(t *testing.T) {
 	r.UpdateStatus(id2, "open")
 	id1, _ := r.Create("P1 task", "task", nil, nil, &p1)
 	r.UpdateStatus(id1, "open")
+	id4, _ := r.Create("P4 task", "task", nil, nil, &p4)
+	r.UpdateStatus(id4, "open")
+	id5, _ := r.Create("P5 task", "task", nil, nil, &p5)
+	r.UpdateStatus(id5, "open")
+	idNull, _ := r.Create("null priority task", "task", nil, nil, nil)
+	r.UpdateStatus(idNull, "open")
 
 	result, err := r.Selectable()
 	if err != nil {
 		t.Fatalf("Selectable: %v", err)
 	}
-	if len(result) != 4 {
-		t.Fatalf("expected 4 results, got %d", len(result))
+	if len(result) != 7 {
+		t.Fatalf("expected 7 results, got %d", len(result))
 	}
-	order := []int{id0, id1, id2, id3}
+	order := []int{id0, id1, id2, id3, id4, id5, idNull}
 	for i, expected := range order {
 		if result[i].ID != expected {
 			t.Errorf("position %d: expected id=%d, got id=%d", i, expected, result[i].ID)
