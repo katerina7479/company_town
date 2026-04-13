@@ -38,7 +38,7 @@ func parseTicketID(s string) (int, error) {
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|status|type|close|delete|depend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|close|delete|depend> ...")
 		os.Exit(1)
 	}
 
@@ -63,6 +63,8 @@ func Ticket(args []string) error {
 		return ticketReady(issues, cfg.TicketPrefix)
 	case "assign":
 		return ticketAssign(cfg, issues, agents, args[1:])
+	case "unassign":
+		return ticketUnassign(issues, args[1:])
 	case "review":
 		return ticketReview(issues, args[1:])
 	case "status":
@@ -335,6 +337,24 @@ func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.Agent
 	if err := assignSendKeys(agent.TmuxSession.String, msg); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to nudge %s: %v\n", agentName, err)
 	}
+	return nil
+}
+
+func ticketUnassign(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket unassign <id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	if err := issues.ClearAssignee(id); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d assignee cleared.\n", id)
 	return nil
 }
 
