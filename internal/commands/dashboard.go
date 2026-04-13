@@ -607,7 +607,9 @@ func (m dashboardModel) renderAgents(width, height int) string {
 	sb.WriteString(headerStyle.Render("Agents") + "\n\n")
 
 	focused := m.focusedPanel == 0
-	rowWidth := width
+	// innerWidth is the content area width: outer width minus border (2) and padding (2).
+	innerWidth := width - 4
+	rowWidth := innerWidth
 
 	if len(m.data.agents) == 0 {
 		sb.WriteString(footerStyle.Render("(none registered)"))
@@ -647,20 +649,22 @@ func (m dashboardModel) renderTickets(width, height int) string {
 	sb.WriteString(headerStyle.Render("Tickets") + "\n\n")
 
 	focused := m.focusedPanel == 1
-	rowWidth := width
+	// innerWidth is the content area width: outer width minus border (2) and padding (2).
+	innerWidth := width - 4
+	rowWidth := innerWidth
 
 	flat := m.flatTickets()
 	if len(flat) == 0 {
 		sb.WriteString(footerStyle.Render("(no tickets)"))
 	} else {
 		for i, fn := range flat {
-			line := renderIssueRow(fn.node, fn.depth, width)
+			line := renderIssueRow(fn.node, fn.depth, innerWidth)
 			if focused && i == m.ticketCursor {
 				line = selectedStyle.Width(rowWidth).Render(line)
 			}
 			sb.WriteString(line + "\n")
 			if m.expanded[fn.node.ID] {
-				sb.WriteString(renderTicketDetails(fn.node, fn.depth, width))
+				sb.WriteString(renderTicketDetails(fn.node, fn.depth, innerWidth))
 			}
 		}
 	}
@@ -717,7 +721,6 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 
 	prefix := fmt.Sprintf("%s%s", indent, bullet)
 	idStr := fmt.Sprintf("%-6d", node.ID)
-	statusStr := fmt.Sprintf("[%-11s]", node.Status)
 	coloredStatus := colorStatus(node.Status)
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
 	age := footerStyle.Render(ageRaw)
@@ -733,10 +736,15 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	const typeWidth = 1 // visible char: "E" / "B" / "R" / " " (blank for task)
 	typ := typeCell(node.IssueType)
 
-	// Truncate title so the row fits inside the panel.
+	// Truncate title so the row fits inside the panel content area. `width` is
+	// the inner content width (outer panel width minus border and padding),
+	// passed in from renderTickets.
 	// prefix + space + type + space + id + space + status + space + priority + space + pr + space + age + space + title
-	fixedLen := len(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(statusStr) + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
-	titleMax := width - fixedLen - 2
+	// Use lipgloss.Width(prefix) because the selected-row bullet (●) is 3 bytes / 1 cell;
+	// len() would over-count by 2. Use len(node.Status) — the raw status is what the
+	// row actually renders via coloredStatus, not any bracket-framed variant.
+	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
+	titleMax := width - fixedLen
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
