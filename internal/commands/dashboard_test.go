@@ -1057,15 +1057,23 @@ func TestWordWrap_multipleInputLinesPreserved(t *testing.T) {
 
 func TestTypeCell_taskIsBlank(t *testing.T) {
 	cell := typeCell("task")
-	if cell != "  " {
-		t.Errorf("typeCell('task') should return two spaces, got %q", cell)
+	if cell != " " {
+		t.Errorf("typeCell('task') should return a single space, got %q", cell)
 	}
 }
 
-func TestTypeCell_unknownIsBlank(t *testing.T) {
+func TestTypeCell_unknownEmptyIsBlank(t *testing.T) {
 	cell := typeCell("")
-	if cell != "  " {
-		t.Errorf("typeCell('') should return two spaces, got %q", cell)
+	if cell != " " {
+		t.Errorf("typeCell('') should return a single space, got %q", cell)
+	}
+}
+
+func TestTypeCell_unknownStringIsBlank(t *testing.T) {
+	// Future/unknown types must silently return blank — not panic, not print garbage.
+	cell := typeCell("research")
+	if cell != " " {
+		t.Errorf("typeCell('research') should return a single space, got %q", cell)
 	}
 }
 
@@ -1114,5 +1122,25 @@ func TestRenderIssueRow_taskTypeIndicatorAbsent(t *testing.T) {
 	cell := typeCell("task")
 	if strings.ContainsAny(cell, "EBRTS") {
 		t.Errorf("typeCell('task') should not contain a type letter, got %q", cell)
+	}
+}
+
+func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
+	// An epic at depth=1 must show both the child bullet (◦) and the type letter (E).
+	// This pins the column position: if type is misplaced, ◦ and E may not both appear.
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:        7,
+			IssueType: "epic",
+			Status:    "open",
+			Title:     "Child epic",
+		},
+	}
+	row := renderIssueRow(node, 1, 120)
+	if !strings.Contains(row, "◦") {
+		t.Errorf("renderIssueRow for depth=1 should contain child bullet ◦, got: %q", row)
+	}
+	if !strings.Contains(row, "E") {
+		t.Errorf("renderIssueRow for epic at depth=1 should contain type letter E, got: %q", row)
 	}
 }
