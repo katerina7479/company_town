@@ -243,6 +243,93 @@ func List(agents *repo.AgentRepo, cfg *config.Config) ([]*repo.Agent, error) {
 	return proles, nil
 }
 
+// idleProlesNeedingReset returns the subset of agents that are candidates for
+// worktree reset: idle proles with no current issue and a registered worktree
+// path. Exposed as a pure filter so the selection logic is unit-testable
+// without touching git.
+func idleProlesNeedingReset(all []*repo.Agent) []*repo.Agent {
+	var out []*repo.Agent
+	for _, a := range all {
+		if a.Type != "prole" || a.Status != "idle" {
+			continue
+		}
+		if a.CurrentIssue.Valid {
+			continue
+		}
+		if !a.WorktreePath.Valid || a.WorktreePath.String == "" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// currentBranch reads the current git branch for a worktree path.
+func currentBranch(wtPath string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// isWorktreeDirty returns true if the worktree has uncommitted changes.
+func isWorktreeDirty(wtPath string) (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return len(strings.TrimSpace(string(out))) > 0, nil
+}
+
+// ResetIdleWorktrees is a reconciler: for every idle prole whose worktree is
+// not parked on its standby branch (or is parked on standby but dirty), run
+// prole.Reset to bring it back to a clean checkout of origin/main. Idempotent
+// — clean, standby-parked proles are skipped. This is the reconciler that
+// replaces the per-merge worktree reset in daemon.handlePRMerged; see NC-53.
+func ResetIdleWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logger) error {
+	all, err := agents.ListAll()
+	if err != nil {
+		return fmt.Errorf("listing agents: %w", err)
+	}
+
+	for _, a := range idleProlesNeedingReset(all) {
+		wtPath := a.WorktreePath.String
+		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+			continue
+		}
+
+		standbyBranch := fmt.Sprintf("prole/%s/standby", a.Name)
+		branch, err := currentBranch(wtPath)
+		if err != nil {
+			logger.Printf("warning: could not read branch for prole %s at %s: %v", a.Name, wtPath, err)
+			continue
+		}
+
+		if branch == standbyBranch {
+			dirty, err := isWorktreeDirty(wtPath)
+			if err != nil {
+				logger.Printf("warning: could not check dirty state for prole %s: %v", a.Name, err)
+				continue
+			}
+			if !dirty {
+				continue
+			}
+		}
+
+		if err := Reset(a.Name, cfg, agents); err != nil {
+			logger.Printf("error resetting idle prole %s: %v", a.Name, err)
+			continue
+		}
+		logger.Printf("reset idle prole %s worktree (was on %s)", a.Name, branch)
+	}
+	return nil
+}
+
 // deployProleCLAUDEMD writes a CLAUDE.md to the prole's agent directory
 // with template variables filled in.
 func deployProleCLAUDEMD(name, wtPath string, cfg *config.Config) error {

@@ -45,7 +45,6 @@ func newAssignmentDaemon(t *testing.T) (*Daemon, *repo.IssueRepo, *repo.AgentRep
 		stop:            make(chan struct{}),
 		sessionExists:   func(string) bool { return false },
 		sendKeys:        func(string, string) error { return nil },
-		resetWorktree:   func(string) error { return nil },
 		lastNudged:      make(map[string]time.Time),
 		lastNudgeDigest: make(map[string]string),
 		lastRestartedAt: make(map[string]time.Time),
@@ -92,8 +91,10 @@ func TestHandleAssignments_oneCandidateOneIdleProle(t *testing.T) {
 	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
 		t.Errorf("expected ticket assigned to copper, got assignee=%v", issue.Assignee)
 	}
+	// NC-44: Assign preserves ticket status — the ticket stays "open" until
+	// the prole itself promotes it to "in_progress" when it picks up the work.
 	if issue.Status != "open" {
-		t.Errorf("expected status=open (NC-44: assign preserves status), got %q", issue.Status)
+		t.Errorf("expected status=open (preserved by NC-44), got %q", issue.Status)
 	}
 }
 
