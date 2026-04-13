@@ -60,6 +60,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		logger:        log.New(io.Discard, "", 0),
 		stop:          make(chan struct{}),
 		sessionExists: func(s string) bool { return sessions[s] },
+		killSession:   func(string) error { return nil },
 		sendKeys: func(s, msg string) error {
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
@@ -571,6 +572,88 @@ func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
 
 	if _, err := agents.Get("dead-prole"); err == nil {
 		t.Errorf("dead-prole: expected to be deleted, still present")
+	}
+}
+
+func TestHandleDeadSessions_deletesDeadStatusProleEvenWithLiveSession(t *testing.T) {
+	// A prole already marked dead in the DB should be cleaned up even if its
+	// tmux session is still technically alive — and the zombie session must be killed.
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-dead-prole"})
+
+	var kills []string
+	d.killSession = func(s string) error {
+		kills = append(kills, s)
+		return nil
+	}
+
+	agents.Register("dead-prole", "prole", nil)
+	agents.SetTmuxSession("dead-prole", "ct-dead-prole")
+	agents.UpdateStatus("dead-prole", "dead")
+
+	// Assign an orphaned ticket to verify ClearAssigneeByAgent runs on zombie path.
+	id, _ := issues.Create("Orphaned task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetAssignee(id, "dead-prole")
+
+	d.handleDeadSessions()
+
+	// Prole row must be gone.
+	if _, err := agents.Get("dead-prole"); err == nil {
+		t.Errorf("expected dead-status prole to be deleted, still present")
+	}
+
+	// Zombie session must have been killed.
+	if len(kills) != 1 || kills[0] != "ct-dead-prole" {
+		t.Errorf("expected killSession called with %q, got %v", "ct-dead-prole", kills)
+	}
+
+	// Orphaned ticket must be returned to open with NULL assignee.
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get ticket: %v", err)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected ticket status='open' (reverted from in_progress), got %q", issue.Status)
+	}
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+}
+
+func TestHandleDeadSessions_killSessionFailureStillCleansRow(t *testing.T) {
+	// Even when killSession returns an error, the agent row must be deleted
+	// and orphaned tickets must be cleared — kill failure must not block cleanup.
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-zombie"})
+
+	d.killSession = func(string) error {
+		return fmt.Errorf("tmux: session not found")
+	}
+
+	agents.Register("zombie", "prole", nil)
+	agents.SetTmuxSession("zombie", "ct-zombie")
+	agents.UpdateStatus("zombie", "dead")
+
+	id, _ := issues.Create("Stuck task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetAssignee(id, "zombie")
+
+	d.handleDeadSessions()
+
+	// Row must still be deleted despite kill error.
+	if _, err := agents.Get("zombie"); err == nil {
+		t.Errorf("expected prole 'zombie' to be deleted even after kill error, still present")
+	}
+
+	// Orphaned ticket must still be cleared.
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get ticket: %v", err)
+	}
+	if issue.Status != "open" {
+		t.Errorf("expected ticket status='open' (reverted from in_progress), got %q", issue.Status)
+	}
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
 	}
 }
 
