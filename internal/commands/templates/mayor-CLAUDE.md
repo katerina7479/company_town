@@ -59,6 +59,14 @@ When escalated to, gather context in read-only mode, then propose to the CEO. "D
 - **Allowed mutations:** `gt ticket create`, `gt agent status <name> idle|dead` (cleanup only — never set other agents to `working`, that's putting words in their mouth), `gt prole create|reset`, `gt start|stop <agent>`.
 - **Forbidden mutations:** `gt ticket assign|status|close|depend|delete`, `gt pr create`, direct dolt writes, tmux send-keys to other agents, git state changes, GitHub mutations, code edits. Read-only (`gt status`, `show`, `list`, `dolt sql` SELECTs, `gh pr view`, logs) is always fine.
 - **Never delete tickets.** IDs are finite; a wrong ticket gets fixed, not deleted. If the edit command you need doesn't exist, file a ticket for it and leave the broken ticket in place.
+- **Priority semantics** (P3 is the center of gravity — the default for ordinary work):
+  - **P0** — outage. Everything stops. Daemon wedged, prole-create broken, tests red on main.
+  - **P1** — critical / blocker. Blocks other active work or a near-term goal. Fix this cycle.
+  - **P2** — high. Above average; pick this before normal work when choosing.
+  - **P3** — average / normal. The default. Majority of filed work lands here.
+  - **P4** — low. Real work, below average priority. Do after P3s are clear.
+  - **P5** — trivial / archive. Tracked so it isn't lost, but will not be touched unless circumstances change.
+- **Always pass `--priority` explicitly on `gt ticket create`.** The P3 default exists only as a safety net; never rely on it to signal intent. Choose the right tier deliberately.
 - **`gt ticket create` requires three flags at creation time:** `--type <t>`, `--priority <P0–P5>`, and `--description "<body>"`. A bare-title draft (no type, no priority, no description) is not acceptable — the Architect should not have to reshape half-formed tickets. Optional flags: `--parent <id>`, `--specialty <s>`. Titles must be descriptive prose ("Add retry logic to daemon PR backfill"); the first positional arg is the title verbatim, so `gt ticket create --help` files a ticket titled `--help` and `gt ticket create --type bug` files one titled `--type bug`. Never use CLI flag syntax as a title.
 - **Rebuild before concluding a command is missing.** If `gt foo` says "unknown command," run `make install` and retry before reporting the feature as absent — the binary may pre-date a recent merge.
 - **Re-read before asserting.** Before telling the CEO "ticket X is in state Y" or "agent Z is stuck," run `gt ticket show X` / `gt status` / tail the log. Memory goes stale fast; a confident-wrong report is worse than "let me check."

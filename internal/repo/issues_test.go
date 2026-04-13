@@ -1162,3 +1162,62 @@ func TestIssueRepo_BusyAssignees_distinctAcrossMultipleTickets(t *testing.T) {
 		t.Errorf("expected 1 entry (DISTINCT), got %d: %v", len(busy), busy)
 	}
 }
+
+func TestMigration007_RemapPriorities(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Seed tickets with old-scheme priorities.
+	// Old scheme: P0=critical, P1=high, P2=normal, P3=low/noise, NULL=unset.
+	type seed struct {
+		title    string
+		priority string // "" means NULL
+	}
+	seeds := []seed{
+		{"p0 ticket", "P0"},
+		{"p1 ticket", "P1"},
+		{"p2 ticket", "P2"},
+		{"p3 ticket", "P3"},
+		{"null ticket", ""},
+	}
+	ids := make([]int, len(seeds))
+	for i, s := range seeds {
+		var p *string
+		if s.priority != "" {
+			p = &s.priority
+		}
+		id, err := r.Create(s.title, "task", nil, nil, p)
+		if err != nil {
+			t.Fatalf("Create %q: %v", s.title, err)
+		}
+		ids[i] = id
+	}
+
+	// Run migration 007: P3→P5 must run before P2→P3 to avoid double-remap.
+	if _, err := r.db.Exec("UPDATE issues SET priority = 'P5' WHERE priority = 'P3'"); err != nil {
+		t.Fatalf("migration step 1 (P3->P5): %v", err)
+	}
+	if _, err := r.db.Exec("UPDATE issues SET priority = 'P3' WHERE priority = 'P2'"); err != nil {
+		t.Fatalf("migration step 2 (P2->P3): %v", err)
+	}
+
+	// Assert: old P0→P0, P1→P1, P2→P3, P3→P5, NULL→NULL.
+	want := []string{"P0", "P1", "P3", "P5", ""}
+	for i, id := range ids {
+		got, err := r.Get(id)
+		if err != nil {
+			t.Fatalf("Get(%d): %v", id, err)
+		}
+		wantP := want[i]
+		if wantP == "" {
+			if got.Priority.Valid && got.Priority.String != "" {
+				t.Errorf("seed[%d] %q: expected NULL priority after migration, got %q",
+					i, seeds[i].title, got.Priority.String)
+			}
+		} else {
+			if !got.Priority.Valid || got.Priority.String != wantP {
+				t.Errorf("seed[%d] %q: expected priority %q after migration, got %v",
+					i, seeds[i].title, wantP, got.Priority)
+			}
+		}
+	}
+}
