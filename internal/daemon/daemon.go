@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -383,6 +384,32 @@ func (d *Daemon) poll() {
 	d.writeHeartbeat()
 }
 
+// stderrSnippetLen is the maximum bytes of captured stderr appended to a
+// subprocess error. Long stderr (e.g. an HTML error page) is truncated so a
+// single bad call cannot flood daemon.log.
+const stderrSnippetLen = 200
+
+// runCmd runs cmd and returns its stdout. If the command fails, up to
+// stderrSnippetLen bytes of stderr are appended to the error so the log entry
+// shows the actual failure reason (auth error, rate limit, network blip, etc.)
+// rather than just an exit code.
+func runCmd(cmd *exec.Cmd) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		snippet := strings.TrimSpace(stderr.String())
+		if len(snippet) > stderrSnippetLen {
+			snippet = snippet[:stderrSnippetLen] + "..."
+		}
+		if snippet != "" {
+			return nil, fmt.Errorf("%w: %s", err, snippet)
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
 // logTickSummary emits a single tick: summary line in fixed key=value format.
 // Field order and format are a stability contract — operators grep/awk these
 // tokens to monitor daemon health over time. Do not reorder or rename tokens
@@ -595,7 +622,7 @@ func (d *Daemon) handleBackfillPRNumbers() {
 func lookupPRForBranch(branch, projectRoot string) (int, bool, error) {
 	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--json", "number", "--limit", "1")
 	cmd.Dir = projectRoot
-	out, err := cmd.Output()
+	out, err := runCmd(cmd)
 	if err != nil {
 		return 0, false, fmt.Errorf("gh pr list: %w", err)
 	}
@@ -1101,7 +1128,7 @@ type prComment struct {
 func (d *Daemon) getPRState(prNum int) (state string, merged bool, err error) {
 	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt")
 	cmd.Dir = d.cfg.ProjectRoot
-	out, err := cmd.Output()
+	out, err := runCmd(cmd)
 	if err != nil {
 		return "", false, fmt.Errorf("gh pr view: %w", err)
 	}
@@ -1122,7 +1149,7 @@ func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
 		fmt.Sprintf("repos/{owner}/{repo}/pulls/%d/reviews", prNum),
 		"--jq", ".[] | {author: .user.login, authorType: .user.type, state: .state, body: .body}")
 	cmd.Dir = d.cfg.ProjectRoot
-	out, err := cmd.Output()
+	out, err := runCmd(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("gh api: %w", err)
 	}
