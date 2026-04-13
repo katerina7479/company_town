@@ -590,10 +590,13 @@ func (d *Daemon) handleBackfillPRNumbers() {
 	d.lastPRBackfill = d.nowFn()
 }
 
-// lookupPRForBranch queries GitHub for an open PR matching the given head branch.
-// Returns (prNumber, found, error). found is false when no matching PR exists.
+// lookupPRForBranch queries GitHub for any PR (open or merged) matching the
+// given head branch. Returns (prNumber, found, error). found is false when no
+// matching PR exists. --state all is required so merged PRs are included —
+// without it, gh pr list only returns open PRs and the backfill misses PRs
+// that were merged before the ticket's pr_number column was populated.
 func lookupPRForBranch(branch, projectRoot string) (int, bool, error) {
-	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--json", "number", "--limit", "1")
+	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number", "--limit", "1")
 	cmd.Dir = projectRoot
 	out, err := cmd.Output()
 	if err != nil {
