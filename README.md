@@ -131,7 +131,7 @@ Daemon output lives at `.company_town/logs/daemon.log`.
 
 | Command | Action |
 |---|---|
-| `ct init [--force]` | Set up `.company_town/`, start Dolt, run migrations. Idempotent. `--force` overwrites CLAUDE.md templates. |
+| `ct init` | Set up `.company_town/`, start Dolt, run migrations. Idempotent. Always refreshes CLAUDE.md templates from the embedded copies. |
 | `ct start` | Start daemon + Mayor, attach to the Mayor's tmux session. |
 | `ct stop [--clean]` | Graceful shutdown. Agents write handoffs and exit. `--clean` also prunes prole worktrees. |
 | `ct nuke` | Kill every session immediately. No handoffs. |
@@ -193,7 +193,7 @@ Agents use this directly. Users generally don't, but it's fine for debugging and
 │       └── iron/
 ```
 
-Everything under `.company_town/` is gitignored by convention. The CLAUDE.md templates shipped with the binary are written into `agents/` on `ct init` and can be refreshed with `ct init --force`.
+Everything under `.company_town/` is gitignored by convention. The CLAUDE.md templates shipped with the binary are written into `agents/` on every `ct init`, which always refreshes them from the embedded copies.
 
 ## Database
 
