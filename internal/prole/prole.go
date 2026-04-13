@@ -102,13 +102,9 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 			return fmt.Errorf("setting up bare repo: %w", err)
 		}
 
-		// Create worktree on a new branch from origin/main
+		// Create worktree on a branch from origin/main.
 		branch := fmt.Sprintf("prole/%s/standby", name)
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, wtPath, "origin/main")
-		cmd.Dir = BareRepoPath(cfg)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := addWorktreeForProle(BareRepoPath(cfg), branch, wtPath); err != nil {
 			return fmt.Errorf("creating worktree: %w", err)
 		}
 
@@ -354,6 +350,40 @@ func deployProleCLAUDEMD(name, wtPath string, cfg *config.Config) error {
 	}
 
 	return os.WriteFile(filepath.Join(proleDir, "CLAUDE.md"), []byte(content), 0644)
+}
+
+// addWorktreeForProle adds a git worktree at wtPath on the given branch.
+// If the branch already exists in the bare repo (stale from a previous prole
+// incarnation), it is reset to origin/main before the worktree is created.
+// This makes prole creation idempotent with respect to stale standby branches.
+func addWorktreeForProle(barePath, branch, wtPath string) error {
+	// Detect whether the standby branch already exists.
+	checkCmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	checkCmd.Dir = barePath
+	branchExists := checkCmd.Run() == nil
+
+	if branchExists {
+		// Reset the stale branch to origin/main so the new worktree starts clean.
+		resetCmd := exec.Command("git", "branch", "-f", branch, "origin/main")
+		resetCmd.Dir = barePath
+		resetCmd.Stdout = os.Stdout
+		resetCmd.Stderr = os.Stderr
+		if err := resetCmd.Run(); err != nil {
+			return fmt.Errorf("resetting stale standby branch: %w", err)
+		}
+		addCmd := exec.Command("git", "worktree", "add", wtPath, branch)
+		addCmd.Dir = barePath
+		addCmd.Stdout = os.Stdout
+		addCmd.Stderr = os.Stderr
+		return addCmd.Run()
+	}
+
+	// Branch does not exist — create it fresh from origin/main.
+	addCmd := exec.Command("git", "worktree", "add", "-b", branch, wtPath, "origin/main")
+	addCmd.Dir = barePath
+	addCmd.Stdout = os.Stdout
+	addCmd.Stderr = os.Stderr
+	return addCmd.Run()
 }
 
 func getOriginURL(projectRoot string) (string, error) {

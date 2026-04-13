@@ -227,6 +227,42 @@ func capturingLogger() (*log.Logger, *bytes.Buffer) {
 	return log.New(&buf, "", 0), &buf
 }
 
+// --- addWorktreeForProle tests ---
+
+func TestAddWorktreeForProle_freshBranch(t *testing.T) {
+	_, _, bareDir, _ := setupPruneEnv(t)
+	wtPath := filepath.Join(t.TempDir(), "fresh-wt")
+
+	err := addWorktreeForProle(bareDir, "prole/fresh/standby", wtPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		t.Error("expected worktree directory to be created")
+	}
+}
+
+func TestAddWorktreeForProle_staleBranchReused(t *testing.T) {
+	_, _, bareDir, addWorktree := setupPruneEnv(t)
+
+	// Create an initial worktree (simulates a previous prole incarnation).
+	stalePath := addWorktree("reuse")
+	// Remove the worktree but leave the branch behind.
+	runGit(t, bareDir, "worktree", "remove", "--force", stalePath)
+	// Confirm the branch still exists.
+	runGit(t, bareDir, "show-ref", "--verify", "refs/heads/prole/reuse/standby")
+
+	// Now re-create a worktree using the same branch name — should succeed.
+	newPath := filepath.Join(t.TempDir(), "new-wt")
+	err := addWorktreeForProle(bareDir, "prole/reuse/standby", newPath)
+	if err != nil {
+		t.Fatalf("expected success reusing stale standby branch, got: %v", err)
+	}
+	if _, err := os.Stat(newPath); os.IsNotExist(err) {
+		t.Error("expected new worktree directory to be created")
+	}
+}
+
 func TestPruneDeadWorktrees_skipsNonProleAgents(t *testing.T) {
 	cfg, agents, _, _ := setupPruneEnv(t)
 
