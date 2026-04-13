@@ -106,9 +106,16 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 		}
 	}
 
-	// Move ticket to in_review
+	// Move ticket to in_review and clear the assignee — the prole's work on
+	// this ticket is done, the reviewer takes over. Keeping the assignee set
+	// would leave the ticket looking owned by an idle/deleted prole on the
+	// dashboard and would prevent Selectable() from returning it if the
+	// reviewer sends it back to `repairing` after the prole is gone.
 	if err := issues.UpdateStatus(id, "in_review"); err != nil {
 		return fmt.Errorf("updating ticket status: %w", err)
+	}
+	if err := issues.ClearAssignee(id); err != nil {
+		return fmt.Errorf("clearing ticket assignee: %w", err)
 	}
 
 	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
