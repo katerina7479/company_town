@@ -37,7 +37,7 @@ func parseTicketID(s string) (int, error) {
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|status|close|delete|depend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|status|type|close|delete|depend> ...")
 		os.Exit(1)
 	}
 
@@ -76,6 +76,8 @@ func Ticket(args []string) error {
 		return ticketDescribe(issues, args[1:])
 	case "prioritize":
 		return ticketPrioritize(issues, args[1:])
+	case "type":
+		return ticketType(issues, args[1:])
 	default:
 		return fmt.Errorf("unknown ticket command: %s", args[0])
 	}
@@ -462,6 +464,36 @@ func ticketPrioritize(issues *repo.IssueRepo, args []string) error {
 	}
 
 	fmt.Printf("Ticket %d priority → %s\n", id, priority)
+	return nil
+}
+
+func ticketType(issues *repo.IssueRepo, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket type <id> <task|epic|bug|refactor>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	issueType := args[1]
+	valid := false
+	for _, v := range repo.ValidTypes {
+		if issueType == v {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("invalid type %q: must be one of %v", issueType, repo.ValidTypes)
+	}
+
+	if err := issues.UpdateType(id, issueType); err != nil {
+		return err
+	}
+
+	fmt.Printf("Ticket %d type → %s\n", id, issueType)
 	return nil
 }
 

@@ -547,6 +547,21 @@ func (r *IssueRepo) SetPriority(id int, priority string) error {
 	return nil
 }
 
+func (r *IssueRepo) UpdateType(id int, issueType string) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET issue_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		issueType, id,
+	)
+	if err != nil {
+		return fmt.Errorf("updating issue type: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
 func scanIssue(row *sql.Row) (*Issue, error) {
 	var i Issue
 	err := row.Scan(
