@@ -205,6 +205,7 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 		sessionExists: existsFn,
 		sendKeys:      sendKeysFn,
 		restartAgent:  restartFn,
+		openPRFn:  func(int) error { return nil }, // no-op default
 		sleepFn:  func(time.Duration) {}, // no-op in tests
 		expanded: make(map[int]bool),
 	}
@@ -1381,5 +1382,61 @@ func TestColorStatus_mergeConflict(t *testing.T) {
 	rep := colorStatus("repairing")
 	if mc == rep {
 		t.Errorf("colorStatus(merge_conflict) == colorStatus(repairing): expected distinct styles")
+	}
+}
+
+// --- openPRCmd tests ---
+
+func TestOpenPRCmd_success(t *testing.T) {
+	var called int
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.openPRFn = func(prNumber int) error {
+		called = prNumber
+		return nil
+	}
+
+	cmd := m.openPRCmd(42)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err != nil {
+		t.Fatalf("expected no error, got %v", msg.err)
+	}
+	if !strings.Contains(msg.text, "42") {
+		t.Errorf("success text %q does not mention PR number", msg.text)
+	}
+	if called != 42 {
+		t.Errorf("openPRFn called with %d, want 42", called)
+	}
+}
+
+func TestOpenPRCmd_surfacesStderr(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.openPRFn = func(prNumber int) error {
+		return fmt.Errorf("exit status 1\nno pull requests found for branch")
+	}
+
+	cmd := m.openPRCmd(99)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Error must include the PR number for context
+	if !strings.Contains(msg.err.Error(), "99") {
+		t.Errorf("error %q does not mention PR number", msg.err.Error())
+	}
+	// Error must include the stderr text from gh
+	if !strings.Contains(msg.err.Error(), "no pull requests found") {
+		t.Errorf("error %q does not include stderr text", msg.err.Error())
 	}
 }

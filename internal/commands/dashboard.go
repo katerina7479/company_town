@@ -184,6 +184,7 @@ type dashboardModel struct {
 	sessionExists func(name string) bool
 	sendKeys      func(name, msg string) error
 	restartAgent  func(name, agentType string) error
+	openPRFn      func(prNumber int) error
 	sleepFn       func(time.Duration)
 
 	data dashboardData
@@ -233,6 +234,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		sessionExists:   session.Exists,
 		sendKeys:        session.SendKeys,
 		restartAgent:    defaultRestartAgent,
+		openPRFn:        defaultOpenPR,
 		sleepFn:         time.Sleep,
 		expanded:        make(map[int]bool),
 		ticketPrefix:    cfg.TicketPrefix,
@@ -425,7 +427,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(flat) > 0 {
 					node := flat[m.ticketCursor].node
 					if node.PRNumber.Valid {
-						return m, openPRCmd(int(node.PRNumber.Int64))
+						return m, m.openPRCmd(int(node.PRNumber.Int64))
 					}
 					m.statusMsg = "no PR for this ticket"
 				}
@@ -535,11 +537,20 @@ func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 	}
 }
 
+// defaultOpenPR opens a PR in the browser via gh, capturing stderr so errors are surfaced.
+func defaultOpenPR(prNumber int) error {
+	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNumber), "--web")
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) > 0 {
+		return fmt.Errorf("%w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return err
+}
+
 // openPRCmd opens a pull request in the browser using `gh pr view --web`.
-func openPRCmd(prNumber int) tea.Cmd {
+func (m *dashboardModel) openPRCmd(prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNumber), "--web")
-		if err := cmd.Run(); err != nil {
+		if err := m.openPRFn(prNumber); err != nil {
 			return actionResultMsg{err: fmt.Errorf("open PR #%d: %w", prNumber, err)}
 		}
 		return actionResultMsg{text: fmt.Sprintf("Opened PR #%d in browser", prNumber)}
