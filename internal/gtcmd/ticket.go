@@ -120,6 +120,9 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 			}
 			i++
 			issueType = args[i]
+			if !isValidType(issueType) {
+				return fmt.Errorf("invalid type %q: must be one of %v", issueType, repo.ValidTypes)
+			}
 		case "--description":
 			if i+1 >= len(args) {
 				return fmt.Errorf("--description requires a value")
@@ -435,6 +438,15 @@ func ticketDescribe(issues *repo.IssueRepo, args []string) error {
 	return nil
 }
 
+func isValidType(t string) bool {
+	for _, v := range repo.ValidTypes {
+		if t == v {
+			return true
+		}
+	}
+	return false
+}
+
 func isValidPriority(p string) bool {
 	for _, v := range repo.ValidPriorities {
 		if p == v {
@@ -478,14 +490,7 @@ func ticketType(issues *repo.IssueRepo, args []string) error {
 	}
 
 	issueType := args[1]
-	valid := false
-	for _, v := range repo.ValidTypes {
-		if issueType == v {
-			valid = true
-			break
-		}
-	}
-	if !valid {
+	if !isValidType(issueType) {
 		return fmt.Errorf("invalid type %q: must be one of %v", issueType, repo.ValidTypes)
 	}
 

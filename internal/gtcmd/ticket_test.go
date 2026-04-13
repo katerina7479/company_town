@@ -97,6 +97,39 @@ func TestTicketCreate_descriptionMissingValue(t *testing.T) {
 	}
 }
 
+func TestTicketCreate_invalidType(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"test", "--type", "garbage"})
+	if err == nil {
+		t.Fatal("expected error for invalid --type, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid type") {
+		t.Errorf("expected 'invalid type' error, got: %v", err)
+	}
+	// No ticket should have been created.
+	all, _ := issues.List("open")
+	if len(all) != 0 {
+		t.Errorf("expected no tickets created, got %d", len(all))
+	}
+}
+
+func TestTicketCreate_validType(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"test", "--type", "bug"})
+	if err != nil {
+		t.Fatalf("unexpected error for valid --type: %v", err)
+	}
+	issue, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.IssueType != "bug" {
+		t.Errorf("expected issue_type='bug', got %q", issue.IssueType)
+	}
+}
+
 func TestTicketDescribe(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
