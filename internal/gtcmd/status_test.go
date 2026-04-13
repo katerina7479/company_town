@@ -31,6 +31,10 @@ func TestReconcileDeadAgents(t *testing.T) {
 	// no-session prole: never had a tmux session — should be deleted
 	agents.Register("no-session", "prole", nil)
 
+	// live-reviewer: core agent with live tmux session — should stay (not marked dead, not deleted)
+	agents.Register("live-reviewer", "reviewer", nil)
+	agents.SetTmuxSession("live-reviewer", "ct-live-reviewer")
+
 	// dead-reviewer: core agent whose session is gone — should be marked dead, not deleted
 	agents.Register("reviewer", "reviewer", nil)
 	agents.SetTmuxSession("reviewer", "ct-reviewer")
@@ -43,7 +47,7 @@ func TestReconcileDeadAgents(t *testing.T) {
 	agents.UpdateStatus("architect", "dead")
 
 	sessionExists := func(name string) bool {
-		return name == "ct-alive"
+		return name == "ct-alive" || name == "ct-live-reviewer"
 	}
 
 	if err := reconcileDeadAgents(agents, sessionExists); err != nil {
@@ -86,5 +90,13 @@ func TestReconcileDeadAgents(t *testing.T) {
 	}
 	if architect.Status != "dead" {
 		t.Errorf("architect: expected status='dead', got %q", architect.Status)
+	}
+
+	liveReviewer, err := agents.Get("live-reviewer")
+	if err != nil {
+		t.Fatalf("live-reviewer should still exist (core agent with live session): %v", err)
+	}
+	if liveReviewer.Status != "idle" {
+		t.Errorf("live-reviewer: expected status='idle', got %q", liveReviewer.Status)
 	}
 }
