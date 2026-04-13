@@ -109,7 +109,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 
 	// Re-deploy CLAUDE.md from embedded template on every start so agents always
 	// get the latest instructions after a binary upgrade.
-	commands.WriteClaudeMD(agentDir, templateType, true)
+	commands.WriteClaudeMD(agentDir, templateType)
 
 	sessionName := session.SessionName(name)
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestWriteClaudeMDForce(t *testing.T) {
+func TestWriteClaudeMDOverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 
@@ -16,8 +16,8 @@ func TestWriteClaudeMDForce(t *testing.T) {
 		t.Fatalf("writing stale CLAUDE.md: %v", err)
 	}
 
-	// force=true must overwrite with the embedded template
-	WriteClaudeMD(dir, "reviewer", true)
+	// WriteClaudeMD must always overwrite with the embedded template
+	WriteClaudeMD(dir, "reviewer")
 
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -30,30 +30,7 @@ func TestWriteClaudeMDForce(t *testing.T) {
 	}
 
 	if string(got) != expected {
-		t.Errorf("CLAUDE.md content does not match embedded template after force re-deploy\ngot  (%d bytes)\nwant (%d bytes)", len(got), len(expected))
-	}
-}
-
-func TestWriteClaudeMDNoForce(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "CLAUDE.md")
-
-	// Write stale content
-	stale := "stale content"
-	if err := os.WriteFile(path, []byte(stale), 0644); err != nil {
-		t.Fatalf("writing stale CLAUDE.md: %v", err)
-	}
-
-	// force=false must NOT overwrite when file already exists
-	WriteClaudeMD(dir, "reviewer", false)
-
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading CLAUDE.md: %v", err)
-	}
-
-	if string(got) != stale {
-		t.Errorf("WriteClaudeMD with force=false must not overwrite existing file")
+		t.Errorf("CLAUDE.md content does not match embedded template after re-deploy\ngot  (%d bytes)\nwant (%d bytes)", len(got), len(expected))
 	}
 }
 
@@ -61,8 +38,8 @@ func TestWriteClaudeMDCreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 
-	// file does not exist; force=false should create it
-	WriteClaudeMD(dir, "reviewer", false)
+	// file does not exist; WriteClaudeMD should create it
+	WriteClaudeMD(dir, "reviewer")
 
 	got, err := os.ReadFile(path)
 	if err != nil {
