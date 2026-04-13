@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -2277,5 +2278,75 @@ func TestHandleIdleAssignedProles_statusFilter(t *testing.T) {
 
 	if len(*sent) != 1 {
 		t.Errorf("expected exactly 1 nudge (only repairing), got %d", len(*sent))
+	}
+}
+
+// --- runCmd tests ---
+
+func TestRunCmd_successReturnsStdout(t *testing.T) {
+	cmd := exec.Command("sh", "-c", `echo "hello"`)
+	out, err := runCmd(cmd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(out), "hello") {
+		t.Errorf("expected stdout 'hello', got %q", string(out))
+	}
+}
+
+func TestRunCmd_capturesStderrOnFailure(t *testing.T) {
+	cmd := exec.Command("sh", "-c", `echo "detailed error message" >&2; exit 1`)
+	_, err := runCmd(cmd)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "detailed error message") {
+		t.Errorf("expected stderr in error, got: %v", err)
+	}
+}
+
+func TestRunCmd_includesExitCodeAndStderr(t *testing.T) {
+	cmd := exec.Command("sh", "-c", `echo "rate limited" >&2; exit 1`)
+	_, err := runCmd(cmd)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Error must contain both the exit status and the stderr snippet.
+	if !strings.Contains(err.Error(), "exit status") {
+		t.Errorf("expected exit status in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("expected stderr snippet in error, got: %v", err)
+	}
+}
+
+func TestRunCmd_truncatesLongStderr(t *testing.T) {
+	// Generate stderr longer than stderrSnippetLen (200 bytes).
+	long := strings.Repeat("x", 300)
+	cmd := exec.Command("sh", "-c", fmt.Sprintf(`echo "%s" >&2; exit 1`, long))
+	_, err := runCmd(cmd)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Error must end with "..." indicating truncation.
+	if !strings.Contains(err.Error(), "...") {
+		t.Errorf("expected truncation marker '...' in error, got: %v", err)
+	}
+	// Error must not contain the full 300-char string.
+	if strings.Contains(err.Error(), long) {
+		t.Errorf("expected stderr to be truncated, but full string present in: %v", err)
+	}
+}
+
+func TestRunCmd_noStderrOnFailure(t *testing.T) {
+	// When the command fails but writes nothing to stderr, the error should
+	// still be returned (exit code only, no appended snippet).
+	cmd := exec.Command("sh", "-c", `exit 2`)
+	_, err := runCmd(cmd)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "exit status") {
+		t.Errorf("expected exit status in error, got: %v", err)
 	}
 }
