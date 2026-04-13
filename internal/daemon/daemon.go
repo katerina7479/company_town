@@ -127,6 +127,14 @@ func (d *Daemon) reviewComments(prNum int) ([]prComment, error) {
 // agentStartPrompt returns the startup prompt for an agent type.
 func agentStartPrompt(agentType, ticketPrefix string) string {
 	switch agentType {
+	case "architect":
+		return fmt.Sprintf(
+			"You are the Architect. Ticket prefix: %s. "+
+				"Read your CLAUDE.md for instructions. "+
+				"Check memory/handoff.md to resume previous work. "+
+				"Begin your patrol loop: check for draft tickets and spec them out.",
+			ticketPrefix,
+		)
 	case "reviewer":
 		return fmt.Sprintf(
 			"You are the Reviewer. Ticket prefix: %s. "+
@@ -143,6 +151,8 @@ func agentStartPrompt(agentType, ticketPrefix string) string {
 // agentModel returns the model string for an agent type.
 func agentModel(agentType string, cfg *config.Config) string {
 	switch agentType {
+	case "architect":
+		return cfg.Agents.Architect.Model
 	case "reviewer":
 		return cfg.Agents.Reviewer.Model
 	default:
@@ -153,7 +163,7 @@ func agentModel(agentType string, cfg *config.Config) string {
 // makeRestartFn creates the production restartAgent implementation.
 func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logger) func(*repo.Agent) error {
 	return func(agent *repo.Agent) error {
-		if agent.Type != "reviewer" {
+		if agent.Type != "reviewer" && agent.Type != "architect" {
 			return fmt.Errorf("restartAgent: unsupported agent type %q", agent.Type)
 		}
 
@@ -547,7 +557,18 @@ func (d *Daemon) handleDraftTickets() {
 
 	architectSession := session.SessionName("architect")
 	if !d.sessionExists(architectSession) {
-		return // Architect not running, nothing to do
+		// Architect not running — attempt restart if enabled and off cooldown.
+		if d.restartDeadAgents && d.restartAgent != nil && d.shouldRestart("architect") {
+			architect, err := d.agents.Get("architect")
+			if err == nil && (architect.Status == "dead" || architect.Status == "idle") {
+				if err := d.restartAgent(architect); err != nil {
+					d.logger.Printf("error restarting architect: %v", err)
+				} else {
+					d.recordRestart("architect")
+				}
+			}
+		}
+		return
 	}
 
 	if d.isAgentWorking("architect") {
