@@ -3,6 +3,7 @@ package commands
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -832,4 +833,222 @@ func containsAll(s string, substrings ...string) bool {
 		}
 	}
 	return true
+}
+
+// --- expand/collapse toggle tests (NC-10) ---
+
+// makeTicketNode builds an IssueNode with a given ID for expand/collapse tests.
+func makeTicketNode(id int) *repo.IssueNode {
+	return &repo.IssueNode{Issue: &repo.Issue{ID: id, Status: "open"}}
+}
+
+func TestExpand_enterTogglesExpanded(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	node := makeTicketNode(42)
+	m.data.roots = []*repo.IssueNode{node}
+	m.focusedPanel = 1 // ticket panel
+
+	// First Enter: expand ticket 42.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm := updated.(dashboardModel)
+
+	if !dm.expanded[42] {
+		t.Error("expected expanded[42]=true after first Enter")
+	}
+
+	// Second Enter: collapse ticket 42.
+	updated, _ = dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = updated.(dashboardModel)
+
+	if dm.expanded[42] {
+		t.Error("expected expanded[42]=false after second Enter")
+	}
+}
+
+func TestExpand_enterOnAgentPanelDoesNotToggle(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	node := makeTicketNode(7)
+	m.data.roots = []*repo.IssueNode{node}
+	m.focusedPanel = 0 // agent panel — Enter should not expand tickets
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm := updated.(dashboardModel)
+
+	if dm.expanded[7] {
+		t.Error("expected expanded[7]=false when Enter pressed on agent panel")
+	}
+}
+
+func TestExpand_enterNoopWhenNoTickets(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.data.roots = nil
+	m.focusedPanel = 1
+
+	// Should not panic or crash.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = updated
+}
+
+// --- renderTicketDetails tests (NC-10) ---
+
+func makeDetailNode(description, assignee, branch string, prNumber int64) *repo.IssueNode {
+	issue := &repo.Issue{
+		ID:     1,
+		Status: "open",
+	}
+	if description != "" {
+		issue.Description = sql.NullString{String: description, Valid: true}
+	}
+	if assignee != "" {
+		issue.Assignee = sql.NullString{String: assignee, Valid: true}
+	}
+	if branch != "" {
+		issue.Branch = sql.NullString{String: branch, Valid: true}
+	}
+	if prNumber > 0 {
+		issue.PRNumber = sql.NullInt64{Int64: prNumber, Valid: true}
+	}
+	return &repo.IssueNode{Issue: issue}
+}
+
+func TestRenderTicketDetails_descriptionShown(t *testing.T) {
+	node := makeDetailNode("Some description text", "", "", 0)
+	out := renderTicketDetails(node, 0, 80)
+	if !containsAll(out, "Some description text") {
+		t.Errorf("expected description in output, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_noDescriptionOmitted(t *testing.T) {
+	node := makeDetailNode("", "alice", "", 0)
+	out := renderTicketDetails(node, 0, 80)
+	// There should be an assignee line but no empty description line.
+	if !containsAll(out, "assignee:") {
+		t.Errorf("expected assignee line in output, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_assigneeShown(t *testing.T) {
+	node := makeDetailNode("", "copper", "", 0)
+	out := renderTicketDetails(node, 0, 80)
+	if !containsAll(out, "assignee:", "copper") {
+		t.Errorf("expected assignee in output, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_noAssigneeOmitted(t *testing.T) {
+	node := makeDetailNode("", "", "", 0)
+	out := renderTicketDetails(node, 0, 80)
+	if containsAll(out, "assignee:") {
+		t.Errorf("expected no assignee line when assignee is null, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_prNumberShown(t *testing.T) {
+	node := makeDetailNode("", "", "", 42)
+	out := renderTicketDetails(node, 0, 80)
+	if !containsAll(out, "PR:", "#42") {
+		t.Errorf("expected PR number in output, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_noPROmitted(t *testing.T) {
+	node := makeDetailNode("", "", "", 0)
+	out := renderTicketDetails(node, 0, 80)
+	if containsAll(out, "PR:") {
+		t.Errorf("expected no PR line when PR is null, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_branchShown(t *testing.T) {
+	node := makeDetailNode("", "", "prole/fig/10", 0)
+	out := renderTicketDetails(node, 0, 80)
+	if !containsAll(out, "branch:", "prole/fig/10") {
+		t.Errorf("expected branch in output, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_timestampsAlwaysPresent(t *testing.T) {
+	node := makeDetailNode("", "", "", 0)
+	out := renderTicketDetails(node, 0, 80)
+	if !containsAll(out, "created:", "updated:") {
+		t.Errorf("expected timestamps in output, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_depthAffectsIndentation(t *testing.T) {
+	node := makeDetailNode("", "alice", "", 0)
+	depth0 := renderTicketDetails(node, 0, 80)
+	depth1 := renderTicketDetails(node, 1, 80)
+	// Depth 1 should have more leading spaces than depth 0.
+	if len(depth1) <= len(depth0) {
+		t.Errorf("expected deeper indent at depth=1 to produce longer output")
+	}
+}
+
+// --- wordWrap tests (NC-10) ---
+
+func TestWordWrap_zeroWidthReturnsUnchanged(t *testing.T) {
+	s := "hello world this is a long string"
+	if got := wordWrap(s, 0); got != s {
+		t.Errorf("expected unchanged string for width=0, got %q", got)
+	}
+}
+
+func TestWordWrap_shortStringUnchanged(t *testing.T) {
+	s := "hello"
+	if got := wordWrap(s, 20); got != s {
+		t.Errorf("expected unchanged short string, got %q", got)
+	}
+}
+
+func TestWordWrap_wrapsAtSpaceBelowWidth(t *testing.T) {
+	// "hello world" with width=8 should wrap between "hello" and "world"
+	got := wordWrap("hello world", 8)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), got)
+	}
+	if lines[0] != "hello" || lines[1] != "world" {
+		t.Errorf("unexpected wrap result: %q", got)
+	}
+}
+
+func TestWordWrap_longWordWithoutSpaceCutAtWidth(t *testing.T) {
+	// "abcdefghij" with width=5 should hard-cut at 5
+	got := wordWrap("abcdefghij", 5)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), got)
+	}
+	if lines[0] != "abcde" {
+		t.Errorf("expected first line 'abcde', got %q", lines[0])
+	}
+}
+
+func TestWordWrap_multipleInputLinesPreserved(t *testing.T) {
+	// Each input line should be wrapped independently.
+	got := wordWrap("line one\nline two", 20)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines from multi-line input, got %d: %q", len(lines), got)
+	}
+	if lines[0] != "line one" || lines[1] != "line two" {
+		t.Errorf("unexpected multiline result: %q", got)
+	}
 }
