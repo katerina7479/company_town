@@ -2279,3 +2279,191 @@ func TestHandleIdleAssignedProles_statusFilter(t *testing.T) {
 		t.Errorf("expected exactly 1 nudge (only repairing), got %d", len(*sent))
 	}
 }
+
+// --- Merge conflict detection tests ---
+
+func TestHandlePRConflict_movesPROpenToMergeConflict(t *testing.T) {
+	architectSession := "ct-architect"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{architectSession})
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 55)
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflict(issue, 55)
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict, got %q", updated.Status)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge to architect, got %d", len(*sent))
+	}
+	if (*sent)[0].session != architectSession {
+		t.Errorf("expected nudge to %q, got %q", architectSession, (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "MERGE CONFLICT", "PR #55", "NC-"+itoa(id)) {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandlePRConflict_noNudgeWhenArchitectAbsent(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 55)
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflict(issue, 55)
+
+	// Status should still be updated even without the architect session.
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict, got %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge (architect absent), got %d", len(*sent))
+	}
+}
+
+func TestHandlePRConflict_noSpam(t *testing.T) {
+	architectSession := "ct-architect"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{architectSession})
+	d.nudgeCooldown = 1 * time.Hour
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 55)
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflict(issue, 55)
+	firstCount := len(*sent)
+
+	// Second call within cooldown — should not nudge again.
+	d.handlePRConflict(issue, 55)
+
+	if len(*sent) != firstCount {
+		t.Errorf("expected no additional nudge within cooldown, got %d total nudges", len(*sent))
+	}
+}
+
+func TestHandlePRConflictResolved_movesMergeConflictToPROpen(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 77)
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflictResolved(issue, 77)
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "pr_open" {
+		t.Errorf("expected status=pr_open, got %q", updated.Status)
+	}
+}
+
+func TestHandlePREvents_conflictingOpenPR_movesToMergeConflict(t *testing.T) {
+	architectSession := "ct-architect"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{architectSession})
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 88)
+
+	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
+		return "OPEN", "CONFLICTING", false, nil
+	}
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict, got %q", updated.Status)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 architect nudge, got %d", len(*sent))
+	}
+	if !containsAll((*sent)[0].msg, "MERGE CONFLICT", "PR #88") {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandlePREvents_mergeableAfterConflict_movesToPROpen(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 99)
+
+	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
+		return "OPEN", "MERGEABLE", false, nil
+	}
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "pr_open" {
+		t.Errorf("expected status=pr_open after conflict resolved, got %q", updated.Status)
+	}
+}
+
+func TestHandlePREvents_dirtyMergeability_movesToMergeConflict(t *testing.T) {
+	architectSession := "ct-architect"
+	d, issues, _, _ := newTestDaemonWithSessions(t, []string{architectSession})
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 101)
+
+	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
+		return "OPEN", "DIRTY", false, nil
+	}
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict for DIRTY PR, got %q", updated.Status)
+	}
+}
+
+func TestHandlePREvents_obsCountersForConflict(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+	d.obs = &tickObservations{}
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 110)
+
+	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
+		return "OPEN", "CONFLICTING", false, nil
+	}
+
+	d.handlePREvents()
+
+	if d.obs.prEventsConflict != 1 {
+		t.Errorf("expected prEventsConflict=1, got %d", d.obs.prEventsConflict)
+	}
+}
+
+func TestHandlePREvents_obsCountersForConflictResolved(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+	d.obs = &tickObservations{}
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 111)
+
+	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
+		return "OPEN", "MERGEABLE", false, nil
+	}
+
+	d.handlePREvents()
+
+	if d.obs.prEventsConflictResolved != 1 {
+		t.Errorf("expected prEventsConflictResolved=1, got %d", d.obs.prEventsConflictResolved)
+	}
+}

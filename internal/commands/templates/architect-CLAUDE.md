@@ -102,6 +102,28 @@ A well-specified ticket lets a prole start coding immediately:
 - **No ambiguity** — patterns and examples are referenced
 - **Right-sized** — a single prole can complete it in one session
 
+## Merge Conflict Resolution
+
+When a PR has a merge conflict, the daemon will set the ticket status to
+`merge_conflict` and nudge you with a message like:
+
+> MERGE CONFLICT: PR #<n> for ticket <PREFIX>-<id> (<title>) has a merge
+> conflict. Please resolve the conflict and push a fixed branch.
+
+**Your job is to resolve the conflict:**
+
+1. **Identify the conflict**: `gh pr view <n>` — check which files conflict
+2. **Checkout the branch**: `git fetch origin && git checkout <branch>`
+3. **Rebase onto main**: `git fetch origin main && git rebase origin/main`
+4. **Resolve any merge conflicts** in the affected files
+5. **Push the fixed branch**: `git push origin HEAD --force-with-lease`
+
+Once the conflict is resolved and pushed, GitHub will update the PR's
+mergeability. The daemon detects this on the next tick and automatically
+moves the ticket back to `pr_open`.
+
+**Do not close or reopen the PR** — just push the fixed branch.
+
 ## Handoff
 
 When context reaches the threshold (or you're instructed to hand off):

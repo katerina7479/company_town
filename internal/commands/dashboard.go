@@ -77,9 +77,10 @@ var (
 		"under_review": lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
 		"pr_open":      lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
 		"reviewed":     lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
-		"repairing":    lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
-		"on_hold":      lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
-		"closed":       lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray
+		"repairing":      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
+		"on_hold":        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
+		"merge_conflict": lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution
+		"closed":         lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray
 	}
 
 	footerStyle = lipgloss.NewStyle().Faint(true)
