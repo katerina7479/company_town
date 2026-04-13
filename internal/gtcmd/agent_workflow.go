@@ -2,6 +2,7 @@ package gtcmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -15,7 +16,7 @@ type agentWorkflowDeps struct {
 	agents *repo.AgentRepo
 	issues *repo.IssueRepo
 	cfg    *config.Config
-	stderr *os.File
+	stderr io.Writer
 }
 
 // agentAccept implements `gt agent accept <ticket-id>`.
@@ -145,6 +146,62 @@ func roleAgentConfig(cfg *config.Config, name string) *config.AgentConfig {
 	// is treated as a prole.
 	ac := cfg.Agents.Prole
 	return &ac
+}
+
+// agentDo implements `gt agent do <action> <ticket-id>`.
+// It runs a named workflow action from the caller's AgentConfig.Workflow.Actions map.
+// Same semantics as accept/release: agent row is NOT changed (do is a ticket-only
+// side-effect verb), the ticket transition fires iff the ticket's current status
+// matches the configured From field.
+func agentDo(deps agentWorkflowDeps, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt agent do <action> <ticket-id>")
+	}
+
+	name := os.Getenv("CT_AGENT_NAME")
+	if name == "" {
+		return fmt.Errorf("gt agent do requires CT_AGENT_NAME to be set")
+	}
+
+	actionName := args[0]
+	id, err := parseTicketID(args[1])
+	if err != nil {
+		return err
+	}
+
+	wf := roleWorkflow(deps.cfg, name)
+	if wf == nil || wf.Actions == nil {
+		return fmt.Errorf("no workflow actions configured for agent %q", name)
+	}
+	action, ok := wf.Actions[actionName]
+	if !ok || action == nil {
+		return fmt.Errorf("unknown workflow action %q for agent %q", actionName, name)
+	}
+
+	issue, err := deps.issues.Get(id)
+	if err != nil {
+		return fmt.Errorf("ticket %d not found: %w", id, err)
+	}
+
+	if action.TicketTransition == nil {
+		// No-op transition: nothing to do.
+		fmt.Printf("Action %q: no ticket transition configured\n", actionName)
+		return nil
+	}
+
+	tt := action.TicketTransition
+	if issue.Status != tt.From {
+		fmt.Fprintf(deps.stderr, "note: ticket %d is in status %q, not %q; action %q skipped\n",
+			id, issue.Status, tt.From, actionName)
+		return nil
+	}
+
+	if err := deps.issues.UpdateStatus(id, tt.To); err != nil {
+		return fmt.Errorf("applying action %q to ticket %d: %w", actionName, id, err)
+	}
+
+	fmt.Printf("Action %q applied: ticket %d → %s\n", actionName, id, tt.To)
+	return nil
 }
 
 // openWorkflowDeps opens a DB connection and wires real dependencies for

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/commands"
 )
 
@@ -16,60 +17,66 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
-	var err error
+	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "init":
-		err = commands.Init()
-	case "start":
-		err = commands.Start()
-	case "stop":
-		clean := false
-		for _, a := range args {
-			if a == "--clean" {
-				clean = true
-			}
-		}
-		err = commands.Stop(clean)
-	case "nuke":
-		err = commands.Nuke()
-	case "architect":
-		if len(args) > 0 && args[0] == "stop" {
-			err = commands.ArchitectStop()
-		} else {
-			err = commands.Architect()
-		}
-	case "artisan":
-		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty> [stop]")
-			os.Exit(1)
-		}
-		if len(args) == 1 && args[0] == "stop" {
-			fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty> stop")
-			os.Exit(1)
-		}
-		specialty := args[0]
-		if len(args) > 1 && args[1] == "stop" {
-			err = commands.ArtisanStop(specialty)
-		} else {
-			err = commands.Artisan(specialty)
-		}
-	case "attach":
-		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, "usage: ct attach <session-name>")
-			os.Exit(1)
-		}
-		err = commands.Attach(args[0])
-	case "dashboard":
-		err = commands.Dashboard()
-	case "metrics":
-		err = commands.Metrics(args)
-	case "daemon":
-		err = runDaemon()
+	case "init", "start", "stop", "nuke", "architect", "artisan", "attach", "dashboard", "metrics", "daemon":
+		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
 		os.Exit(1)
 	}
+
+	err := cmdlog.Run(cmdlog.FindLogPath(), "ct", cmdlog.Actor(), os.Args[1:], func() error {
+		switch cmd {
+		case "init":
+			return commands.Init()
+		case "start":
+			return commands.Start()
+		case "stop":
+			clean := false
+			for _, a := range args {
+				if a == "--clean" {
+					clean = true
+				}
+			}
+			return commands.Stop(clean)
+		case "nuke":
+			return commands.Nuke()
+		case "architect":
+			if len(args) > 0 && args[0] == "stop" {
+				return commands.ArchitectStop()
+			}
+			return commands.Architect()
+		case "artisan":
+			if len(args) < 1 {
+				fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty> [stop]")
+				os.Exit(1)
+			}
+			if len(args) == 1 && args[0] == "stop" {
+				fmt.Fprintln(os.Stderr, "usage: ct artisan <specialty> stop")
+				os.Exit(1)
+			}
+			specialty := args[0]
+			if len(args) > 1 && args[1] == "stop" {
+				return commands.ArtisanStop(specialty)
+			}
+			return commands.Artisan(specialty)
+		case "attach":
+			if len(args) < 1 {
+				fmt.Fprintln(os.Stderr, "usage: ct attach <session-name>")
+				os.Exit(1)
+			}
+			return commands.Attach(args[0])
+		case "dashboard":
+			return commands.Dashboard()
+		case "metrics":
+			return commands.Metrics(args)
+		case "daemon":
+			return runDaemon()
+		}
+		return nil
+	})
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

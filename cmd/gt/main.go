@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/gtcmd"
 )
 
@@ -16,42 +17,72 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
-	var err error
+	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "ticket":
-		err = gtcmd.Ticket(args)
-	case "prole":
-		err = gtcmd.Prole(args)
-	case "agent":
-		err = gtcmd.Agent(args)
-	case "pr":
-		err = gtcmd.PR(args)
-	case "start":
-		err = gtcmd.Start(args)
-	case "stop":
-		err = gtcmd.Stop(args)
-	case "status":
-		err = gtcmd.Status()
-	case "check":
-		err = gtcmd.Check(args)
-	case "migrate":
-		err = gtcmd.Migrate()
+	case "ticket", "prole", "agent", "pr", "create", "start", "stop", "status", "check", "migrate":
+		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
 		os.Exit(1)
 	}
 
+	err := cmdlog.Run(cmdlog.FindLogPath(), "gt", cmdlog.Actor(), os.Args[1:], func() error {
+		switch cmd {
+		case "ticket":
+			return gtcmd.Ticket(args)
+		case "prole":
+			return gtcmd.Prole(args)
+		case "agent":
+			return gtcmd.Agent(args)
+		case "pr":
+			return gtcmd.PR(args)
+		case "start":
+			return gtcmd.Start(args)
+		case "stop":
+			return gtcmd.Stop(args)
+		case "status":
+			return gtcmd.Status()
+		case "check":
+			return gtcmd.Check(args)
+		case "create":
+			return gtcmd.Create(args)
+		case "migrate":
+			return gtcmd.Migrate()
+		}
+		return nil
+	})
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Emit a rate-limited stderr warning if the caller's agent row has drifted.
+	// Skip on:
+	//   - read-only introspection commands (status, check) — drift rendered inline
+	//   - agent lifecycle verbs (accept, release, do, status) — actively correcting state
+	skipDrift := cmd == "status" || cmd == "check" ||
+		(cmd == "agent" && len(args) > 0 && isAgentExemptVerb(args[0]))
+	gtcmd.WarnDriftOnStdErr(skipDrift)
+}
+
+// isAgentExemptVerb returns true for gt agent subcommands that should not
+// trigger a drift warning. These are verbs that actively fix or report state,
+// so a warning would be confusing or redundant.
+func isAgentExemptVerb(verb string) bool {
+	switch verb {
+	case "accept", "release", "do", "status":
+		return true
+	}
+	return false
 }
 
 func printUsage() {
 	fmt.Println(`Usage: gt <command>
 
 Commands:
+  create <reviewer> <name>                                      Create agents
   ticket <create|show|list|ready|assign|status|close|depend>   Manage tickets
   prole <create|reset|list>                                     Manage proles
   agent <register|status>                                        Manage agents
