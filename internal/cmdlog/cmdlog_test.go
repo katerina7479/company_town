@@ -144,6 +144,50 @@ func TestAnnotate_ResetsBeforeEachRun(t *testing.T) {
 	}
 }
 
+func TestActor_fallback(t *testing.T) {
+	// CT_AGENT_NAME wins over USER; USER wins over unknown.
+	t.Setenv("CT_AGENT_NAME", "architect")
+	t.Setenv("USER", "alice")
+	if got := cmdlog.Actor(); got != "architect" {
+		t.Errorf("with CT_AGENT_NAME set: got %q, want %q", got, "architect")
+	}
+
+	t.Setenv("CT_AGENT_NAME", "")
+	if got := cmdlog.Actor(); got != "alice" {
+		t.Errorf("with USER set, no CT_AGENT_NAME: got %q, want %q", got, "alice")
+	}
+
+	t.Setenv("USER", "")
+	if got := cmdlog.Actor(); got != "unknown" {
+		t.Errorf("with neither set: got %q, want %q", got, "unknown")
+	}
+}
+
+func TestRun_writeErrorDoesNotAbort(t *testing.T) {
+	// Run against a path that cannot be written (a directory where a file is
+	// expected) — the command fn should still execute and its return value should
+	// be returned unchanged. No panic, no error from the log write itself.
+	dir := t.TempDir()
+	// Create a directory at the log path — opening it for append will fail.
+	badPath := filepath.Join(dir, "commands.log")
+	if err := os.Mkdir(badPath, 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	called := false
+	err := cmdlog.Run(badPath, "gt", "actor", []string{"status"}, func() error {
+		called = true
+		return nil
+	})
+
+	if !called {
+		t.Error("fn was not called despite write error")
+	}
+	if err != nil {
+		t.Errorf("Run returned non-nil error despite fn succeeding: %v", err)
+	}
+}
+
 // helpers
 
 func trimNewline(s string) string {
