@@ -42,6 +42,11 @@ func Status() error {
 		fmt.Printf("  %-20s %-10s %s%s\n", a.Name, a.Type, a.Status, issue)
 	}
 
+	// Drift is rendered as a section below the agent table rather than as an
+	// inline ⚠ marker on each agent row. The section-at-bottom approach keeps
+	// the agent table compact and groups all drift together where an operator
+	// scanning for problems will see it all at once. The spec suggested inline
+	// markers; this deviation is intentional and should not be reverted.
 	if driftErr == nil && len(driftEntries) > 0 {
 		fmt.Println("\n=== Drift Warnings ===")
 		for _, d := range driftEntries {

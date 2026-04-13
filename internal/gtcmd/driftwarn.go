@@ -3,6 +3,7 @@ package gtcmd
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,7 +24,9 @@ const driftWarnCooldown = 60 * time.Second
 // not set or when the project root cannot be found.
 //
 // Commands that are purely read-only (status, check list/history) should
-// pass skipCmd=true to avoid noisy output on introspection commands.
+// pass skipCmd=true to avoid noisy output on introspection commands. Agent
+// lifecycle verbs (accept, release, do, status) should also pass skipCmd=true
+// because they are actively correcting state.
 func WarnDriftOnStdErr(skipCmd bool) {
 	if skipCmd {
 		return
@@ -48,29 +51,34 @@ func WarnDriftOnStdErr(skipCmd bool) {
 	agents := repo.NewAgentRepo(conn, nil)
 	issues := repo.NewIssueRepo(conn, nil)
 
-	entries, err := repo.CheckDrift(agents, issues, cfg.TicketPrefix)
+	runDir := filepath.Join(config.CompanyTownDir(projectRoot), "run")
+	warnDriftToWriter(os.Stderr, agentName, runDir, agents, issues, cfg.TicketPrefix, time.Now)
+}
+
+// warnDriftToWriter is the injectable core of WarnDriftOnStdErr. It checks
+// for drift entries belonging to agentName and emits rate-limited warnings to w.
+func warnDriftToWriter(w io.Writer, agentName, runDir string, agents *repo.AgentRepo, issues *repo.IssueRepo, prefix string, nowFn func() time.Time) {
+	entries, err := repo.CheckDrift(agents, issues, prefix)
 	if err != nil {
 		return
 	}
-
-	runDir := filepath.Join(config.CompanyTownDir(projectRoot), "run")
 
 	for _, e := range entries {
 		if e.AgentName != agentName {
 			continue // only warn about the caller's own row
 		}
-		if !shouldEmitDriftWarning(runDir, agentName, e.Reason) {
+		if !shouldEmitDriftWarning(runDir, agentName, e.Reason, nowFn) {
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "warning: %s\n", e.Reason)
-		recordDriftWarning(runDir, agentName, e.Reason)
+		fmt.Fprintf(w, "warning: %s\n", e.Reason)
+		recordDriftWarning(runDir, agentName, e.Reason, nowFn)
 	}
 }
 
 // shouldEmitDriftWarning returns true if the warning has not been emitted
 // within the cooldown window. Errors reading the state file default to true
 // (emit the warning).
-func shouldEmitDriftWarning(runDir, agentName, reason string) bool {
+func shouldEmitDriftWarning(runDir, agentName, reason string, nowFn func() time.Time) bool {
 	path := driftWarnPath(runDir, agentName, reason)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -81,16 +89,20 @@ func shouldEmitDriftWarning(runDir, agentName, reason string) bool {
 		return true
 	}
 	last := time.Unix(ts, 0)
-	return time.Since(last) >= driftWarnCooldown
+	return nowFn().Sub(last) >= driftWarnCooldown
 }
 
 // recordDriftWarning writes the current timestamp to the rate-limit file.
-func recordDriftWarning(runDir, agentName, reason string) {
+//
+// State is stored as one file per (agent, warning-hash) under runDir. This is
+// filesystem-atomic and needs no prune-on-read pass (unlike a JSON-map approach).
+// Old files are harmless and can be cleaned by a maintenance cron if needed.
+func recordDriftWarning(runDir, agentName, reason string, nowFn func() time.Time) {
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return
 	}
 	path := driftWarnPath(runDir, agentName, reason)
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	ts := strconv.FormatInt(nowFn().Unix(), 10)
 	_ = os.WriteFile(path, []byte(ts), 0644)
 }
 

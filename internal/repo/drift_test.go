@@ -103,14 +103,25 @@ func TestCheckDrift_pointingAtOtherAgentsTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckDrift: %v", err)
 	}
-	found := false
-	for _, e := range entries {
-		if e.AgentName == "copper" && strings.Contains(e.Reason, "tin") {
-			found = true
+
+	var found *repo.DriftEntry
+	for i := range entries {
+		if entries[i].AgentName == "copper" {
+			found = &entries[i]
+			break
 		}
 	}
-	if !found {
-		t.Errorf("expected drift entry for copper pointing at tin's ticket, got: %v", entries)
+	if found == nil {
+		t.Fatalf("expected drift entry for copper, got: %v", entries)
+	}
+	// Pin the category by asserting on key fragments of the Reason string.
+	// This catches the wrong category firing (e.g. IdleWithPointer instead of
+	// PointingAtOtherAssignee) because each category produces a distinct sentence.
+	if !strings.Contains(found.Reason, "assigned to tin") {
+		t.Errorf("expected reason to indicate assignment to tin, got: %q", found.Reason)
+	}
+	if !strings.Contains(found.Reason, "nc-"+intStr(id)) {
+		t.Errorf("expected reason to include ticket ref, got: %q", found.Reason)
 	}
 }
 
@@ -126,8 +137,6 @@ func TestCheckDrift_noPointerSkipped(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf("expected no drift for agent with no current issue, got: %v", entries)
 	}
-
-	_ = issues // suppress unused warning
 }
 
 func intStr(id int) string {

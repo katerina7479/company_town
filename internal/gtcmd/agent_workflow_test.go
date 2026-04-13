@@ -2,7 +2,6 @@ package gtcmd
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"strconv"
 	"testing"
@@ -13,6 +12,8 @@ import (
 )
 
 // setupWorkflowTest creates a DB-backed agentWorkflowDeps with the given config.
+// stderr is wired to a bytes.Buffer so tests can inspect warning output without
+// pipe goroutines or race conditions.
 func setupWorkflowTest(t *testing.T, cfg *config.Config) (agentWorkflowDeps, *bytes.Buffer) {
 	t.Helper()
 	conn, err := db.NewTestDB()
@@ -22,20 +23,11 @@ func setupWorkflowTest(t *testing.T, cfg *config.Config) (agentWorkflowDeps, *by
 	t.Cleanup(func() { conn.Close() })
 
 	var buf bytes.Buffer
-	// os.File can't be faked cleanly, so use a pipe trick: redirect
-	// stderr writes via a fake *os.File backed by a pipe.
-	r, w, _ := os.Pipe()
-	t.Cleanup(func() {
-		w.Close()
-		r.Close()
-	})
-	go func() { io.Copy(&buf, r) }()
-
 	return agentWorkflowDeps{
 		agents: repo.NewAgentRepo(conn, nil),
 		issues: repo.NewIssueRepo(conn, nil),
 		cfg:    cfg,
-		stderr: w,
+		stderr: &buf,
 	}, &buf
 }
 
@@ -397,7 +389,6 @@ func TestAgentDo_statusMismatchSkips(t *testing.T) {
 		t.Errorf("expected status=open (unchanged), got %q", issue.Status)
 	}
 	// A note should have been printed to stderr.
-	deps.stderr.Close()
 	if buf.Len() == 0 {
 		t.Error("expected a note on stderr for status mismatch, got nothing")
 	}

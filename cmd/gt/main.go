@@ -57,9 +57,23 @@ func main() {
 	}
 
 	// Emit a rate-limited stderr warning if the caller's agent row has drifted.
-	// Skip on read-only introspection commands to avoid noise.
-	skipDrift := cmd == "status" || cmd == "check"
+	// Skip on:
+	//   - read-only introspection commands (status, check) — drift rendered inline
+	//   - agent lifecycle verbs (accept, release, do, status) — actively correcting state
+	skipDrift := cmd == "status" || cmd == "check" ||
+		(cmd == "agent" && len(args) > 0 && isAgentExemptVerb(args[0]))
 	gtcmd.WarnDriftOnStdErr(skipDrift)
+}
+
+// isAgentExemptVerb returns true for gt agent subcommands that should not
+// trigger a drift warning. These are verbs that actively fix or report state,
+// so a warning would be confusing or redundant.
+func isAgentExemptVerb(verb string) bool {
+	switch verb {
+	case "accept", "release", "do", "status":
+		return true
+	}
+	return false
 }
 
 func printUsage() {

@@ -2,6 +2,7 @@ package gtcmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -15,7 +16,7 @@ type agentWorkflowDeps struct {
 	agents *repo.AgentRepo
 	issues *repo.IssueRepo
 	cfg    *config.Config
-	stderr *os.File
+	stderr io.Writer
 }
 
 // agentAccept implements `gt agent accept <ticket-id>`.
