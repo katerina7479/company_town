@@ -8,6 +8,7 @@ gt ticket show <id>
 gt ticket list [--status <status>]
 gt ticket assign <ticket_id> <agent_name>
 gt ticket status <id> <status>
+gt ticket review <id> <approve|request-changes>
 gt ticket close <id>
 gt ticket delete <id>
 gt agent register <name> <type> [--specialty <s>]
