@@ -10,11 +10,11 @@ import (
 type QualityMetric struct {
 	ID        int
 	CheckName string
-	Status    string          // pass | fail | warn | error
+	Status    string // pass | fail | warn | error
 	Output    string
 	Value     sql.NullFloat64 // set for metric checks; NULL for pass/fail checks
 	RunAt     time.Time
-	Error     string          // non-empty when the check could not be executed
+	Error     string // non-empty when the check could not be executed
 }
 
 // QualityMetricRepo persists and retrieves quality check results.

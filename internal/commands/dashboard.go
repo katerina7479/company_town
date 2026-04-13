@@ -52,10 +52,10 @@ var (
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 
 	priorityStyles = map[string]lipgloss.Style{
-		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true),  // bright red bold
-		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),           // orange
-		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),             // yellow
-		"P3": lipgloss.NewStyle().Foreground(lipgloss.Color("242")),           // medium gray
+		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true), // bright red bold
+		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),          // orange
+		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),            // yellow
+		"P3": lipgloss.NewStyle().Foreground(lipgloss.Color("242")),          // medium gray
 	}
 
 	typeStyles = map[string]lipgloss.Style{
@@ -66,17 +66,17 @@ var (
 
 	statusStyles = map[string]lipgloss.Style{
 		// Agent statuses
-		"working": lipgloss.NewStyle().Foreground(lipgloss.Color("2")),  // green
-		"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")),  // yellow
-		"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // red
+		"working": lipgloss.NewStyle().Foreground(lipgloss.Color("2")), // green
+		"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")), // yellow
+		"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")), // red
 		// Ticket statuses
-		"draft":        lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
-		"open":         lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
-		"in_progress":  lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
-		"in_review":    lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
-		"under_review": lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
-		"pr_open":      lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
-		"reviewed":     lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
+		"draft":          lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
+		"open":           lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
+		"in_progress":    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
+		"in_review":      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
+		"under_review":   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
+		"pr_open":        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
+		"reviewed":       lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
 		"repairing":      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
 		"on_hold":        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
 		"merge_conflict": lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution

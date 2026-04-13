@@ -252,4 +252,3 @@ func TestQualityMetricRepo_Record_statusVariants(t *testing.T) {
 		t.Fatalf("expected 4 results, got %d", len(results))
 	}
 }
-
