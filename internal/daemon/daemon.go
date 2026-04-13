@@ -29,7 +29,6 @@ type Daemon struct {
 	stop          chan struct{}
 	sendKeys      func(session, msg string) error
 	sessionExists func(session string) bool
-	resetWorktree func(name string) error
 	lastNudged          map[string]time.Time
 	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
 	nudgeCooldown       time.Duration
@@ -45,6 +44,13 @@ type Daemon struct {
 	pruneStaleWorktrees  func() error
 	lastWorktreePrune    time.Time
 	worktreeInterval     time.Duration
+
+	// Idle prole worktree reset — reconciler that brings idle proles' worktrees
+	// back to their standby branch at origin/main. Independent of PR merge
+	// events (see NC-53).
+	resetIdleProleWorktrees func() error
+	lastWorktreeReset       time.Time
+	worktreeResetInterval   time.Duration
 
 	// PR number backfill
 	lookupPRForBranch  func(branch string) (int, bool, error)
@@ -85,9 +91,6 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
 		sessionExists: session.Exists,
-		resetWorktree: func(name string) error {
-			return prole.Reset(name, cfg, repo.NewAgentRepo(db, events))
-		},
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
 		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
@@ -105,6 +108,10 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 			return err
 		},
 		worktreeInterval: time.Duration(cfg.WorktreePruneIntervalSeconds) * time.Second,
+		resetIdleProleWorktrees: func() error {
+			return prole.ResetIdleWorktrees(cfg, repo.NewAgentRepo(db, events), logger)
+		},
+		worktreeResetInterval: time.Duration(cfg.WorktreeResetIntervalSeconds) * time.Second,
 		lookupPRForBranch: func(branch string) (int, bool, error) {
 			return lookupPRForBranch(branch, cfg.ProjectRoot)
 		},
@@ -321,6 +328,7 @@ func ticketDigest(ids []int) string {
 func (d *Daemon) poll() {
 	d.handleDeadSessions()
 	d.handleStaleWorktrees()
+	d.handleIdleProleWorktrees()
 	d.handleBackfillPRNumbers()
 	d.handleDraftTickets()
 	d.handleAssignments()
@@ -341,6 +349,23 @@ func (d *Daemon) handleStaleWorktrees() {
 		d.logger.Printf("error pruning stale worktrees: %v", err)
 	}
 	d.lastWorktreePrune = d.nowFn()
+}
+
+// handleIdleProleWorktrees runs the idle-prole worktree reset reconciler.
+// Brings any idle prole whose worktree has drifted off its standby branch
+// back to a clean checkout of origin/main. Guarded by worktreeResetInterval
+// so it does not spawn git subprocesses on every poll tick. See NC-53.
+func (d *Daemon) handleIdleProleWorktrees() {
+	if d.resetIdleProleWorktrees == nil {
+		return
+	}
+	if d.worktreeResetInterval > 0 && !d.nowFn().After(d.lastWorktreeReset.Add(d.worktreeResetInterval)) {
+		return
+	}
+	if err := d.resetIdleProleWorktrees(); err != nil {
+		d.logger.Printf("error resetting idle prole worktrees: %v", err)
+	}
+	d.lastWorktreeReset = d.nowFn()
 }
 
 // handleBackfillPRNumbers finds tickets with a branch but no pr_number and attempts
@@ -756,6 +781,11 @@ func (d *Daemon) handlePREvents() {
 	}
 }
 
+// handlePRMerged is the reconciler that reacts to a merged PR: it closes the
+// ticket and notifies the Mayor. Freeing the assignee agent and resetting its
+// worktree are NOT this handler's job — proles free themselves via
+// `gt agent status idle` in their Completion Protocol, and worktree hygiene
+// is handled by the resetIdleProleWorktrees reconciler tick. See NC-53.
 func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 	if issue.Status == "closed" {
 		return // already handled
@@ -769,28 +799,6 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 		return
 	}
 
-	// Free the assignee agent so it can pick up new work
-	if issue.Assignee.Valid {
-		assignee := issue.Assignee.String
-		if err := d.agents.ClearCurrentIssue(assignee); err != nil {
-			d.logger.Printf("error clearing current issue for agent %s: %v", assignee, err)
-		} else {
-			d.logger.Printf("freed agent %s after PR #%d merged", assignee, issue.PRNumber.Int64)
-
-			// Reset prole worktree so it is clean for the next ticket
-			agent, err := d.agents.Get(assignee)
-			if err == nil && agent.Type == "prole" {
-				if err := d.resetWorktree(assignee); err != nil {
-					d.logger.Printf("error resetting worktree for prole %s: %v", assignee, err)
-				} else {
-					d.logger.Printf("reset worktree for prole %s after PR #%d merged",
-						assignee, issue.PRNumber.Int64)
-				}
-			}
-		}
-	}
-
-	// Notify Mayor
 	mayorSession := session.SessionName("mayor")
 	if d.sessionExists(mayorSession) {
 		msg := fmt.Sprintf("PR #%d merged. Ticket %s-%d (%s) is now closed.",

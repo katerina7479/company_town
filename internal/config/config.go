@@ -65,6 +65,7 @@ type Config struct {
 	ContextHandoffThreshold      float64       `json:"context_handoff_threshold"`
 	StuckAgentThresholdSeconds   int           `json:"stuck_agent_threshold_seconds"`
 	WorktreePruneIntervalSeconds int           `json:"worktree_prune_interval_seconds"`
+	WorktreeResetIntervalSeconds int           `json:"worktree_reset_interval_seconds"`
 	PRBackfillIntervalSeconds    int           `json:"pr_backfill_interval_seconds"`
 	RestartDeadAgents            bool          `json:"restart_dead_agents"`
 	RestartCooldownSeconds       int           `json:"restart_cooldown_seconds"`
@@ -126,6 +127,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		ContextHandoffThreshold:      0.80,
 		StuckAgentThresholdSeconds:   1800,
 		WorktreePruneIntervalSeconds: 300,
+		WorktreeResetIntervalSeconds: 60,
 		PRBackfillIntervalSeconds:    300,
 		RestartDeadAgents:            true,
 		RestartCooldownSeconds:       300,
