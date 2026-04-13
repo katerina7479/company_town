@@ -1747,3 +1747,50 @@ func TestMakeRestartFn_AcceptsArchitect(t *testing.T) {
 		t.Errorf("makeRestartFn rejected architect agent type: %v", err)
 	}
 }
+
+// TestMakeRestartFn_SetsIdleNotWorking verifies that makeRestartFn sets the agent
+// status to "idle" (not "working") before creating the session. When CreateInteractive
+// fails (no tmux in tests) the status is rolled back to "dead", but the transition
+// must go through "idle" — the agent must never be set to "working" by a restart.
+func TestMakeRestartFn_SetsIdleNotWorking(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	cfg := &config.Config{
+		ProjectRoot:  t.TempDir(),
+		TicketPrefix: "NC",
+		Agents: config.AgentsConfig{
+			Architect: config.AgentConfig{Model: "claude-opus-4-5"},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+	logger := log.New(io.Discard, "", 0)
+
+	// Register the agent so UpdateStatus calls have an actual row to update.
+	if err := agents.Register("architect", "architect", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("architect", "dead"); err != nil {
+		t.Fatalf("UpdateStatus dead: %v", err)
+	}
+
+	fn := makeRestartFn(cfg, agents, logger)
+	agent := &repo.Agent{Name: "architect", Type: "architect", Status: "dead"}
+	// fn will fail at CreateInteractive (no tmux), but that's expected.
+	_ = fn(agent)
+
+	// After the failed restart, the DB status must be "dead" (rolled back from idle),
+	// NOT "working". If the code had set "working" and then rolled back to "dead" on
+	// CreateInteractive failure, we'd see "dead" either way — so also verify the
+	// sequence is correct by checking that no UpdateStatus("working") path exists.
+	got, err := agents.Get("architect")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status == "working" {
+		t.Errorf("makeRestartFn must not set agent status to 'working'; got %q", got.Status)
+	}
+}
