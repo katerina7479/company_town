@@ -299,7 +299,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 		return fmt.Errorf("clearing ticket assignee: %w", err)
 	}
 
-	fmt.Printf("Ticket %s-%d -> in_review\n", cfg.TicketPrefix, id)
+	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
 	return nil
 }
 
@@ -420,12 +420,12 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	// Clear assignee so the daemon's orphan-reconcile loop can recover the
-	// ticket if the prole dies while under review. Mirror of prCreate -- see
+	// ticket if the prole dies while under review. Mirror of prCreate — see
 	// NC-50. Supersedes the nc-41 "preserve assignee through review" policy.
 	if err := issues.ClearAssignee(id); err != nil {
 		return fmt.Errorf("clearing ticket assignee: %w", err)
 	}
 
-	fmt.Printf("Ticket %s-%d -> in_review\n", cfg.TicketPrefix, id)
+	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
 	return nil
 }
