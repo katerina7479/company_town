@@ -67,6 +67,12 @@ type Config struct {
 	StuckAgentThresholdSeconds   int           `json:"stuck_agent_threshold_seconds"`
 	WorktreePruneIntervalSeconds int           `json:"worktree_prune_interval_seconds"`
 	Quality                      QualityConfig `json:"quality"`
+	// ConductorEnabled controls whether the daemon invokes the conductor oracle
+	// when there are more ready tickets than available proles. When false, FIFO
+	// assignment is always used. A nil pointer (key omitted from config file)
+	// defaults to true in Load().
+	ConductorEnabled *bool  `json:"conductor_enabled,omitempty"`
+	ConductorModel   string `json:"conductor_model"`
 }
 
 // CompanyTownDir returns the .company_town directory path for a project root.
@@ -93,6 +99,14 @@ func Load(projectRoot string) (*Config, error) {
 
 	if cfg.TicketPrefix == "" {
 		return nil, fmt.Errorf("config: ticket_prefix is required")
+	}
+
+	if cfg.ConductorEnabled == nil {
+		t := true
+		cfg.ConductorEnabled = &t
+	}
+	if cfg.ConductorModel == "" {
+		cfg.ConductorModel = "claude-sonnet-4-6"
 	}
 
 	return &cfg, nil
@@ -125,6 +139,8 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		ContextHandoffThreshold:      0.80,
 		StuckAgentThresholdSeconds:   1800,
 		WorktreePruneIntervalSeconds: 300,
+		ConductorEnabled:             boolPtr(true),
+		ConductorModel:               "claude-sonnet-4-6",
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,
@@ -132,6 +148,17 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		},
 	}
 }
+
+// IsConductorEnabled returns the effective value of ConductorEnabled, defaulting to true.
+func (c *Config) IsConductorEnabled() bool {
+	if c.ConductorEnabled == nil {
+		return true
+	}
+	return *c.ConductorEnabled
+}
+
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(b bool) *bool { return &b }
 
 // Write serializes the config to disk.
 func Write(projectRoot string, cfg *Config) error {
