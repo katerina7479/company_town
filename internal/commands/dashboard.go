@@ -165,8 +165,9 @@ type dashboardModel struct {
 	width  int
 	height int
 
-	ticketPrefix string // from config, used in status-change label
-	tickFile     string // path to daemon-tick file; empty disables reading
+	ticketPrefix    string        // from config, used in status-change label
+	tickFile        string        // path to daemon-tick file; empty disables reading
+	pollingInterval time.Duration // daemon poll interval, used to compute stale threshold
 
 	focusedPanel int // 0 = agents, 1 = tickets
 	agentCursor  int
@@ -194,18 +195,23 @@ func newDashboardModel() (*dashboardModel, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 	ctDir := filepath.Join(cfg.ProjectRoot, ".company_town")
+	pollingInterval := time.Duration(cfg.PollingIntervalSeconds) * time.Second
+	if pollingInterval <= 0 {
+		pollingInterval = 10 * time.Second
+	}
 	return &dashboardModel{
-		conn:          conn,
-		agents:        repo.NewAgentRepo(conn, nil),
-		issues:        repo.NewIssueRepo(conn, nil),
-		killSession:   session.Kill,
-		sessionExists: session.Exists,
-		sendKeys:      session.SendKeys,
-		restartAgent:  defaultRestartAgent,
-		sleepFn:       time.Sleep,
-		expanded:      make(map[int]bool),
-		ticketPrefix:  cfg.TicketPrefix,
-		tickFile:      filepath.Join(ctDir, "daemon-tick"),
+		conn:            conn,
+		agents:          repo.NewAgentRepo(conn, nil),
+		issues:          repo.NewIssueRepo(conn, nil),
+		killSession:     session.Kill,
+		sessionExists:   session.Exists,
+		sendKeys:        session.SendKeys,
+		restartAgent:    defaultRestartAgent,
+		sleepFn:         time.Sleep,
+		expanded:        make(map[int]bool),
+		ticketPrefix:    cfg.TicketPrefix,
+		tickFile:        filepath.Join(ctDir, "run", "daemon-tick"),
+		pollingInterval: pollingInterval,
 	}, nil
 }
 
@@ -221,7 +227,7 @@ func (m *dashboardModel) fetch() tea.Msg {
 	var lastTick *time.Time
 	if m.tickFile != "" {
 		if data, err := os.ReadFile(m.tickFile); err == nil {
-			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data))); err == nil {
+			if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); err == nil {
 				lastTick = &t
 			}
 		}
@@ -546,7 +552,7 @@ func (m dashboardModel) View() string {
 	}
 
 	// Reserve 2 rows for the footer.
-	contentHeight := m.height - 2
+	contentHeight := m.height - 3 // 2 for panel border + 1 extra footer line (daemon status)
 
 	// Split width roughly 35% agents / 65% tickets, minus 4 for panel borders/padding.
 	agentWidth := m.width*35/100 - 4
@@ -581,19 +587,34 @@ func (m dashboardModel) View() string {
 			hint += fmt.Sprintf("  enter expand  o open PR  c change status  C new ticket  f[%s]filter closed", filterFlag)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
-		daemonTickStr := "daemon: never"
-		if m.data.lastDaemonTick != nil {
-			daemonTickStr = fmt.Sprintf("daemon: %s ago", formatDuration(time.Since(*m.data.lastDaemonTick)))
-		}
-		hint += "  " + daemonTickStr
-		parts := []string{hint}
 		if m.statusMsg != "" {
-			parts = append(parts, "  "+m.statusMsg)
+			hint += "  " + m.statusMsg
 		}
-		footer = footerStyle.Render(strings.Join(parts, ""))
+		// Two-line footer: daemon liveness above the key hint.
+		footer = m.renderDaemonLine() + "\n" + footerStyle.Render(hint)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
+}
+
+// renderDaemonLine renders a one-line daemon liveness status for the footer.
+// Three states: fresh (✓ green), stale (⚠ red), missing (✗ red). Stale is
+// defined as age > 3 × pollingInterval, floor 30s.
+func (m dashboardModel) renderDaemonLine() string {
+	if m.data.lastDaemonTick == nil {
+		return statusStyles["dead"].Render(" daemon: not running ✗")
+	}
+	age := time.Since(*m.data.lastDaemonTick)
+	staleThreshold := 3 * m.pollingInterval
+	if staleThreshold < 30*time.Second {
+		staleThreshold = 30 * time.Second
+	}
+	if age > staleThreshold {
+		label := fmt.Sprintf(" daemon: %s ago ⚠  (expected every %s)", formatDuration(age), m.pollingInterval)
+		return statusStyles["dead"].Render(label)
+	}
+	label := fmt.Sprintf(" daemon: %s ago ✓", formatDuration(age))
+	return statusStyles["working"].Render(label)
 }
 
 func (m dashboardModel) renderAgents(width, height int) string {

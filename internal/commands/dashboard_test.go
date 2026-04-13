@@ -1067,8 +1067,8 @@ func TestFetch_populatesLastDaemonTickFromFile(t *testing.T) {
 
 	dir := t.TempDir()
 	tickFile := filepath.Join(dir, "daemon-tick")
-	tickTime := time.Now().Truncate(time.Second)
-	if err := os.WriteFile(tickFile, []byte(tickTime.Format(time.RFC3339)), 0644); err != nil {
+	tickTime := time.Now().UTC().Truncate(time.Millisecond)
+	if err := os.WriteFile(tickFile, []byte(tickTime.Format(time.RFC3339Nano)), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	m.tickFile = tickFile
@@ -1132,3 +1132,79 @@ func TestFetch_lastDaemonTickNilWhenTickFileDisabled(t *testing.T) {
 		t.Errorf("expected lastDaemonTick=nil when tickFile disabled, got %v", msg.lastDaemonTick)
 	}
 }
+
+// --- renderDaemonLine state tests (NC-57 reviewer deviations 1+3) ---
+
+func TestRenderDaemonLine_freshShowsCheck(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 10 * time.Second,
+		data: dashboardData{
+			lastDaemonTick: ptrTime(time.Now().Add(-3 * time.Second)),
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "✓") {
+		t.Errorf("fresh daemon should render with ✓, got %q", out)
+	}
+	if strings.Contains(out, "⚠") || strings.Contains(out, "✗") {
+		t.Errorf("fresh daemon should not render warning/missing markers, got %q", out)
+	}
+	if !strings.Contains(out, "daemon:") {
+		t.Errorf("expected 'daemon:' label, got %q", out)
+	}
+}
+
+func TestRenderDaemonLine_staleShowsWarning(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 10 * time.Second, // stale threshold = 30s floor
+		data: dashboardData{
+			lastDaemonTick: ptrTime(time.Now().Add(-2 * time.Minute)),
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "⚠") {
+		t.Errorf("stale daemon should render with ⚠, got %q", out)
+	}
+	if strings.Contains(out, "✓") {
+		t.Errorf("stale daemon should not render ✓, got %q", out)
+	}
+	if !strings.Contains(out, "expected every") {
+		t.Errorf("stale daemon should include the interval hint, got %q", out)
+	}
+}
+
+func TestRenderDaemonLine_missingShowsCross(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 10 * time.Second,
+		data: dashboardData{
+			lastDaemonTick: nil,
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "✗") {
+		t.Errorf("missing daemon should render with ✗, got %q", out)
+	}
+	if !strings.Contains(out, "not running") {
+		t.Errorf("missing daemon should say 'not running', got %q", out)
+	}
+	if strings.Contains(out, "✓") || strings.Contains(out, "⚠") {
+		t.Errorf("missing daemon should not render fresh/stale markers, got %q", out)
+	}
+}
+
+// Stale threshold floor: a 1-second polling interval still yields a 30s
+// threshold, so a 20s-old heartbeat should render fresh (not stale).
+func TestRenderDaemonLine_staleFloorIs30Seconds(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 1 * time.Second,
+		data: dashboardData{
+			lastDaemonTick: ptrTime(time.Now().Add(-20 * time.Second)),
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "✓") {
+		t.Errorf("age 20s with 1s interval should be fresh (30s floor), got %q", out)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }

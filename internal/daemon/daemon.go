@@ -117,7 +117,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		restartCooldown:    time.Duration(cfg.RestartCooldownSeconds) * time.Second,
 		lastRestartedAt:    make(map[string]time.Time),
 		restartAgent:       makeRestartFn(cfg, agentRepo, logger),
-		tickFile:           filepath.Join(ctDir, "daemon-tick"),
+		tickFile:           filepath.Join(ctDir, "run", "daemon-tick"),
 	}, nil
 }
 
@@ -239,6 +239,12 @@ func (d *Daemon) Run() {
 		case <-ticker.C:
 			d.poll()
 		case <-d.stop:
+			// Drop the heartbeat on clean shutdown so the dashboard flips to
+			// "not running" immediately instead of showing a stale timestamp
+			// aging toward the stale threshold.
+			if d.tickFile != "" {
+				_ = os.Remove(d.tickFile)
+			}
 			d.logger.Println("Daemon stopped")
 			return
 		}
@@ -333,8 +339,23 @@ func (d *Daemon) poll() {
 	d.handlePREvents()
 	d.handleEpicAutoClose()
 	d.handleQualityBaseline()
-	if d.tickFile != "" {
-		_ = os.WriteFile(d.tickFile, []byte(d.nowFn().Format(time.RFC3339)), 0644)
+	d.writeHeartbeat()
+}
+
+// writeHeartbeat stamps the current UTC time into d.tickFile so the dashboard
+// can render daemon liveness. Empty tickFile disables the write (for tests).
+// Errors are logged and swallowed — a failed heartbeat must not abort poll().
+func (d *Daemon) writeHeartbeat() {
+	if d.tickFile == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(d.tickFile), 0755); err != nil {
+		d.logger.Printf("heartbeat: mkdir: %v", err)
+		return
+	}
+	content := d.nowFn().UTC().Format(time.RFC3339Nano) + "\n"
+	if err := os.WriteFile(d.tickFile, []byte(content), 0644); err != nil {
+		d.logger.Printf("heartbeat: write: %v", err)
 	}
 }
 
