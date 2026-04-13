@@ -107,6 +107,13 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		return fmt.Errorf("unknown agent: %s", name)
 	}
 
+	// Ensure the agent directory exists before writing CLAUDE.md. Artisan dirs are
+	// created above; architect and reviewer dirs may not exist yet in a fresh setup
+	// or a test temp dir.
+	if err := os.MkdirAll(agentDir, 0755); err != nil {
+		return fmt.Errorf("creating agent dir %s: %w", agentDir, err)
+	}
+
 	// Re-deploy CLAUDE.md from embedded template on every start so agents always
 	// get the latest instructions after a binary upgrade.
 	commands.WriteClaudeMD(agentDir, templateType)

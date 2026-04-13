@@ -1,9 +1,11 @@
 package gtcmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -15,7 +17,7 @@ import (
 // PR dispatches gt pr subcommands.
 func PR(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt pr <create|update> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt pr <create|update|show> ...")
 		os.Exit(1)
 	}
 
@@ -32,6 +34,8 @@ func PR(args []string) error {
 		return prCreate(issues, cfg, args[1:])
 	case "update":
 		return prUpdate(issues, cfg, args[1:])
+	case "show":
+		return prShow(issues, cfg, args[1:])
 	default:
 		return fmt.Errorf("unknown pr command: %s", args[0])
 	}
@@ -61,7 +65,173 @@ var (
 		}
 		return strings.TrimSpace(string(out)), nil
 	}
+
+	// ghPRViewFn fetches PR metadata (title, state, branch, checks, etc.).
+	// Hard-errors on failure — the metadata is load-bearing.
+	ghPRViewFn = func(prNum int, projectRoot string) ([]byte, error) {
+		fields := "number,title,state,headRefName,mergeable,reviewDecision,statusCheckRollup"
+		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", fields)
+		cmd.Dir = projectRoot
+		return cmd.Output()
+	}
+
+	// ghPRReviewsFn fetches structured PR reviews (APPROVED / CHANGES_REQUESTED / COMMENTED).
+	// Soft-fails on error — see fetchPRShow.
+	ghPRReviewsFn = func(prNum int, projectRoot string) ([]byte, error) {
+		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "reviews")
+		cmd.Dir = projectRoot
+		return cmd.Output()
+	}
+
+	// ghPRCommentsFn fetches free-form issue comments on the PR.
+	// Soft-fails on error — see fetchPRShow.
+	ghPRCommentsFn = func(prNum int, projectRoot string) ([]byte, error) {
+		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "comments")
+		cmd.Dir = projectRoot
+		return cmd.Output()
+	}
 )
+
+// prCheckResult is a single CI check from statusCheckRollup.
+type prCheckResult struct {
+	Name       string
+	Status     string
+	Conclusion string
+}
+
+// prEntry is a unified activity entry — either a PR review or an issue comment.
+// Reviews carry a verdict state (APPROVED, CHANGES_REQUESTED, COMMENTED);
+// issue comments are free-form remarks. Both are surfaced together sorted by time.
+type prEntry struct {
+	Kind        string // "review:APPROVED", "review:CHANGES_REQUESTED", "review:COMMENTED", "comment"
+	AuthorLogin string
+	CreatedAt   string // ISO8601; sorts lexicographically
+	Body        string
+}
+
+// prShowData holds the PR metadata and recent activity fetched from GitHub.
+type prShowData struct {
+	Number         int
+	Title          string
+	State          string
+	HeadRefName    string
+	Mergeable      string
+	ReviewDecision string
+	Checks         []prCheckResult
+	Activity       []prEntry // unified reviews + issue comments, sorted asc, last activityLimit entries
+}
+
+const activityLimit = 5
+
+// fetchPRShow shells out to gh to retrieve PR metadata, reviews, and issue
+// comments. The metadata fetch is load-bearing and hard-errors; reviews and
+// comments fetches soft-fail (log a warning to stderr, carry on with empty
+// slices) so a stale or restricted endpoint does not abort the whole command.
+func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
+	// --- Metadata (hard error) ---
+	metaOut, err := ghPRViewFn(prNum, projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("gh pr view: %w", err)
+	}
+
+	var meta struct {
+		Number         int    `json:"number"`
+		Title          string `json:"title"`
+		State          string `json:"state"`
+		HeadRefName    string `json:"headRefName"`
+		Mergeable      string `json:"mergeable"`
+		ReviewDecision string `json:"reviewDecision"`
+		StatusCheckRollup []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"statusCheckRollup"`
+	}
+	if err := json.Unmarshal(metaOut, &meta); err != nil {
+		return nil, fmt.Errorf("parsing pr view output: %w", err)
+	}
+
+	data := &prShowData{
+		Number:         meta.Number,
+		Title:          meta.Title,
+		State:          meta.State,
+		HeadRefName:    meta.HeadRefName,
+		Mergeable:      meta.Mergeable,
+		ReviewDecision: meta.ReviewDecision,
+	}
+	for _, c := range meta.StatusCheckRollup {
+		data.Checks = append(data.Checks, prCheckResult{
+			Name:       c.Name,
+			Status:     c.Status,
+			Conclusion: c.Conclusion,
+		})
+	}
+
+	var entries []prEntry
+
+	// --- Reviews (soft-fail) ---
+	reviewOut, err := ghPRReviewsFn(prNum, projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: reviews fetch failed: %v\n", err)
+	} else {
+		var resp struct {
+			Reviews []struct {
+				Author      struct{ Login string `json:"login"` } `json:"author"`
+				State       string `json:"state"`
+				SubmittedAt string `json:"submittedAt"`
+				Body        string `json:"body"`
+			} `json:"reviews"`
+		}
+		if parseErr := json.Unmarshal(reviewOut, &resp); parseErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: parsing reviews failed: %v\n", parseErr)
+		} else {
+			for _, r := range resp.Reviews {
+				entries = append(entries, prEntry{
+					Kind:        "review:" + r.State,
+					AuthorLogin: r.Author.Login,
+					CreatedAt:   r.SubmittedAt,
+					Body:        r.Body,
+				})
+			}
+		}
+	}
+
+	// --- Issue comments (soft-fail) ---
+	commentOut, err := ghPRCommentsFn(prNum, projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: comments fetch failed: %v\n", err)
+	} else {
+		var resp struct {
+			Comments []struct {
+				Author    struct{ Login string `json:"login"` } `json:"author"`
+				Body      string `json:"body"`
+				CreatedAt string `json:"createdAt"`
+			} `json:"comments"`
+		}
+		if parseErr := json.Unmarshal(commentOut, &resp); parseErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: parsing comments failed: %v\n", parseErr)
+		} else {
+			for _, c := range resp.Comments {
+				entries = append(entries, prEntry{
+					Kind:        "comment",
+					AuthorLogin: c.Author.Login,
+					CreatedAt:   c.CreatedAt,
+					Body:        c.Body,
+				})
+			}
+		}
+	}
+
+	// Sort by CreatedAt ascending (ISO8601 sorts lexicographically), then keep last N.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].CreatedAt < entries[j].CreatedAt
+	})
+	if len(entries) > activityLimit {
+		entries = entries[len(entries)-activityLimit:]
+	}
+	data.Activity = entries
+	return data, nil
+}
 
 func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	if len(args) < 1 {
@@ -130,6 +300,89 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
+	return nil
+}
+
+func prShow(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt pr show <ticket_id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if !issue.PRNumber.Valid {
+		return fmt.Errorf("ticket %s-%d has no PR number set", cfg.TicketPrefix, id)
+	}
+	prNum := int(issue.PRNumber.Int64)
+
+	data, err := fetchPRShow(prNum, cfg.ProjectRoot)
+	if err != nil {
+		return fmt.Errorf("fetching PR #%d: %w", prNum, err)
+	}
+
+	// Header line: ticket + PR state.
+	fmt.Printf("%s-%d [%s] %s\n", cfg.TicketPrefix, id, issue.Status, issue.Title)
+
+	// PR metadata line.
+	mergeable := data.Mergeable
+	if mergeable == "" {
+		mergeable = "unknown"
+	}
+	reviewDecision := data.ReviewDecision
+	if reviewDecision == "" {
+		reviewDecision = "none"
+	}
+	fmt.Printf("PR #%d . state: %s . branch: %s . mergeable: %s . review: %s\n",
+		prNum, data.State, data.HeadRefName, mergeable, reviewDecision)
+
+	// CI checks.
+	fmt.Printf("\nChecks (%d):\n", len(data.Checks))
+	if len(data.Checks) == 0 {
+		fmt.Printf("  none\n")
+	} else {
+		pass, fail, running := 0, 0, 0
+		for _, c := range data.Checks {
+			switch c.Conclusion {
+			case "SUCCESS":
+				pass++
+			case "FAILURE", "ERROR":
+				fail++
+			default:
+				running++
+			}
+			conclusion := c.Conclusion
+			if conclusion == "" {
+				conclusion = c.Status
+			}
+			fmt.Printf("  %-40s %s\n", c.Name, conclusion)
+		}
+		fmt.Printf("  summary: %d pass / %d fail / %d running\n", pass, fail, running)
+	}
+
+	// Recent activity — unified reviews + issue comments, last activityLimit, newest last.
+	fmt.Printf("\nActivity (last %d):\n", activityLimit)
+	if len(data.Activity) == 0 {
+		fmt.Printf("  none\n")
+	}
+	for i, e := range data.Activity {
+		ts := e.CreatedAt
+		if len(ts) > 10 {
+			ts = ts[:10]
+		}
+		fmt.Printf("\n  [%d] %s . %s . %s\n", i+1, e.AuthorLogin, e.Kind, ts)
+		for _, line := range strings.Split(strings.TrimRight(e.Body, "\n"), "\n") {
+			fmt.Printf("      %s\n", line)
+		}
+	}
+
 	return nil
 }
 

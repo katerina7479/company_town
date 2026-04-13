@@ -1221,3 +1221,37 @@ func TestMigration007_RemapPriorities(t *testing.T) {
 		}
 	}
 }
+
+func TestValidStatuses_includesMergeConflict(t *testing.T) {
+	found := false
+	for _, s := range ValidStatuses {
+		if s == "merge_conflict" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected ValidStatuses to contain %q; got %v", "merge_conflict", ValidStatuses)
+	}
+}
+
+func TestUpdateStatus_acceptsMergeConflict(t *testing.T) {
+	repo := setupTestRepo(t)
+	id, err := repo.Create("test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := repo.UpdateStatus(id, "pr_open"); err != nil {
+		t.Fatalf("UpdateStatus pr_open: %v", err)
+	}
+	if err := repo.UpdateStatus(id, "merge_conflict"); err != nil {
+		t.Fatalf("UpdateStatus merge_conflict: %v", err)
+	}
+	issue, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict, got %q", issue.Status)
+	}
+}
