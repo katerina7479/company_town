@@ -144,6 +144,21 @@ type flatNode struct {
 	depth int
 }
 
+// validTicketStatuses is the set of status values accepted by the dashboard's
+// status-change input. Validated here so a typo cannot silently corrupt the DB.
+var validTicketStatuses = map[string]bool{
+	"draft":        true,
+	"open":         true,
+	"in_progress":  true,
+	"in_review":    true,
+	"under_review": true,
+	"pr_open":      true,
+	"reviewed":     true,
+	"repairing":    true,
+	"on_hold":      true,
+	"closed":       true,
+}
+
 // dashboardModel is the bubbletea model for the dashboard.
 type dashboardModel struct {
 	conn   interface{ Close() error }
@@ -160,6 +175,8 @@ type dashboardModel struct {
 
 	width  int
 	height int
+
+	ticketPrefix string // from config, used in status-change label
 
 	focusedPanel int // 0 = agents, 1 = tickets
 	agentCursor  int
@@ -182,7 +199,7 @@ type dashboardModel struct {
 }
 
 func newDashboardModel() (*dashboardModel, error) {
-	conn, _, err := db.OpenFromWorkingDir()
+	conn, cfg, err := db.OpenFromWorkingDir()
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -196,6 +213,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		restartAgent:  defaultRestartAgent,
 		sleepFn:       time.Sleep,
 		expanded:      make(map[int]bool),
+		ticketPrefix:  cfg.TicketPrefix,
 	}, nil
 }
 
@@ -242,8 +260,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				case "status":
 					if m.inputBuffer != "" {
-						id, _ := strconv.Atoi(m.inputTarget)
-						if err := m.issues.UpdateStatus(id, m.inputBuffer); err != nil {
+						if !validTicketStatuses[m.inputBuffer] {
+							m.statusMsg = fmt.Sprintf("invalid status %q", m.inputBuffer)
+						} else if id, err := strconv.Atoi(m.inputTarget); err != nil {
+							m.statusMsg = "internal error: bad ticket id"
+						} else if err := m.issues.UpdateStatus(id, m.inputBuffer); err != nil {
 							m.statusMsg = "status update failed: " + err.Error()
 						}
 					}
@@ -543,7 +564,7 @@ func (m dashboardModel) View() string {
 		case "nudge":
 			label = "nudge " + m.inputTarget
 		case "status":
-			label = fmt.Sprintf("status nc-%s  [draft/open/in_progress/in_review/pr_open/repairing/closed]", m.inputTarget)
+			label = fmt.Sprintf("status %s-%s  [draft/open/in_progress/in_review/pr_open/repairing/closed]", m.ticketPrefix, m.inputTarget)
 		case "create_ticket":
 			label = "new ticket title"
 		}
