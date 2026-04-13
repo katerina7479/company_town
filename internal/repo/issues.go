@@ -229,6 +229,33 @@ func (r *IssueRepo) ClearAssignee(id int) error {
 	return nil
 }
 
+// BusyAssignees returns the set of agent names currently holding at least one
+// non-closed ticket. Used by the daemon's assignment reconciler to avoid
+// double-booking an agent whose self-reported status has not yet flipped to
+// working after a prior tick's assignment.
+func (r *IssueRepo) BusyAssignees() (map[string]bool, error) {
+	rows, err := r.db.Query(
+		`SELECT DISTINCT assignee FROM issues
+		 WHERE assignee IS NOT NULL
+		   AND assignee != ''
+		   AND status != 'closed'`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying busy assignees: %w", err)
+	}
+	defer rows.Close()
+
+	busy := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scanning busy assignee: %w", err)
+		}
+		busy[name] = true
+	}
+	return busy, rows.Err()
+}
+
 // ClearAssigneeByAgent clears the assignee on every open or in_progress
 // issue currently assigned to `name`, and reverts any in_progress issues
 // back to open so they become selectable again. Used during dead-prole
