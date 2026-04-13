@@ -79,20 +79,47 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
 
 1. **Receive ticket** — you are nudged with an assignment
 2. **Claim the work**: `gt agent status {{NAME}} working --issue <id>` (sets your status AND current_issue)
-3. **Move to in_progress**: `gt ticket status <id> in_progress`
-4. **Create branch**: `prole/{{NAME}}/<TICKET_PREFIX>-<id>`
+3. **Get on the right branch** — see Startup Protocol below. For new work, create a fresh branch. For repair work, check out the existing branch.
+4. **Move to in_progress**: `gt ticket status <id> in_progress` (only for new work — repair tickets stay in `repairing` until `gt pr update`)
 5. **Implement the work** — commit and push after every change
 6. **Run quality gates** — tests, lint, vet (all must pass)
-7. **File a PR**: `gt pr create <ticket_id>`
+7. **File a PR**: `gt pr create <ticket_id>` (for new work) or `gt pr update <ticket_id>` (for repairs)
 8. **Go idle**: `gt agent status {{NAME}} idle`
 
 ## Startup Protocol
 
-1. Check your assigned ticket — look for a ticket whose assignee is `{{NAME}}`
-2. Read the ticket spec: understand what to build
-3. Claim the work: `gt agent status {{NAME}} working --issue <id>`
-4. Create your branch and start working
-5. If NO assigned ticket: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged
+1. **Find your ticket.** Run `gt ticket show <id>` on the ticket you were nudged about. Note two fields:
+   - **status** — `open`, `in_progress`, or `repairing`
+   - **branch** — the exact branch name recorded on the ticket (e.g. `prole/{{NAME}}/42`)
+
+2. **Claim the work:** `gt agent status {{NAME}} working --issue <id>`
+
+3. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
+
+   **If ticket status is `repairing`**: the branch already exists and has prior commits on `origin`. Do NOT create a new branch. Check out the existing one:
+
+   ```bash
+   git fetch origin
+   git checkout <branch>        # exact name from gt ticket show
+   git pull --ff-only origin <branch>
+   ```
+
+   If `git checkout` fails with "pathspec did not match", the branch only exists on `origin` — use `git checkout -b <branch> origin/<branch>` to track it. If THAT fails, the branch is genuinely missing on the remote; stop and escalate — do NOT create an empty branch of the same name, that will silently lose prior work.
+
+   **If ticket status is `open` or `in_progress`**: this is new work. Create a fresh branch from `main`:
+
+   ```bash
+   git fetch origin main
+   git checkout -b <branch> origin/main
+   ```
+
+   Then move the ticket: `gt ticket status <id> in_progress`.
+
+4. **Verify you are on the right branch** before touching any file: `git branch --show-current` should print the exact branch name from the ticket. If it does not, stop and fix it.
+
+5. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
+
+**Why this matters.** Repairing tickets already have real work on their branch — that's the whole point of sending a PR back instead of closing it. Creating a new branch with the same name (or working on the wrong branch) throws that work away. The reviewer's feedback refers to commits that exist on `origin/<branch>`; you must be on that branch to see them.
 
 ## Key Commands
 
@@ -138,13 +165,15 @@ so you MUST run lint/format/tests manually before every commit.
 ## Repair Lifecycle
 
 If your PR is sent back for repairs (`repairing` status), the reviewer has left
-feedback. Fix the issues on your existing branch, then re-submit:
+feedback. You may be picking this up in a fresh session — so **first run the
+Startup Protocol above to get on the existing branch**. Then:
 
 ```
-[ ] 1. Read reviewer feedback (gh pr view <number>)
-[ ] 2. Fix the issues on your branch
-[ ] 3. Run quality gates: go test ./... && go vet ./...
-[ ] 4. Commit and re-submit: gt pr update <ticket_id>
+[ ] 1. Verify you are on the ticket's existing branch (git branch --show-current)
+[ ] 2. Read reviewer feedback (gh pr view <number>)
+[ ] 3. Fix the issues on that branch — do NOT create a new branch
+[ ] 4. Run quality gates: go test ./... && go vet ./...
+[ ] 5. Commit and re-submit: gt pr update <ticket_id>
 ```
 
 `gt pr update` pushes your latest commits and moves the ticket back to `in_review`.
@@ -152,9 +181,12 @@ Do NOT file a new PR — update the existing one.
 
 ## Branch Naming
 
-`prole/{{NAME}}/<TICKET_PREFIX>-<id>`
+The canonical format is `prole/{{NAME}}/<id>` (no ticket prefix, just the numeric id).
 
-Example: `prole/obsidian/CT-42`
+Example: `prole/obsidian/42`
+
+The ticket's `branch` field is authoritative — always read it from `gt ticket show <id>`
+and use the exact value. Do not construct the branch name yourself from the ticket id.
 
 ## PR Format
 
