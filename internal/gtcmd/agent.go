@@ -11,8 +11,21 @@ import (
 // Agent dispatches gt agent subcommands.
 func Agent(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt agent <register|status> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt agent <register|status|accept|release> ...")
 		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "accept", "release":
+		deps, cleanup, err := openWorkflowDeps()
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		if args[0] == "accept" {
+			return agentAccept(deps, args[1:])
+		}
+		return agentRelease(deps, args[1:])
 	}
 
 	conn, _, err := db.OpenFromWorkingDir()

@@ -13,7 +13,30 @@ const (
 )
 
 type AgentConfig struct {
-	Model string `json:"model"`
+	Model    string          `json:"model"`
+	Workflow *WorkflowConfig `json:"workflow,omitempty"`
+}
+
+// WorkflowConfig declares the optional accept/release ticket transitions for a
+// role, plus an open-ended Actions map for the gt-agent-do escape hatch (nc-84).
+type WorkflowConfig struct {
+	Accept  *WorkflowAction            `json:"accept,omitempty"`
+	Release *WorkflowAction            `json:"release,omitempty"`
+	Actions map[string]*WorkflowAction `json:"actions,omitempty"`
+}
+
+// WorkflowAction wraps the optional ticket transition that fires when the
+// agent invokes the corresponding verb (accept / release / do <action>).
+type WorkflowAction struct {
+	TicketTransition *TicketTransition `json:"ticket_transition,omitempty"`
+}
+
+// TicketTransition describes a status transition that is applied to the
+// current ticket when a workflow action fires. The transition is a no-op if
+// the ticket's current status does not match From.
+type TicketTransition struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // ArtisanConfig maps specialty names to their configs.
@@ -98,7 +121,75 @@ func Load(projectRoot string) (*Config, error) {
 		return nil, fmt.Errorf("config: ticket_prefix is required")
 	}
 
+	if err := validateAgentsWorkflow(&cfg.Agents); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// validateAgentsWorkflow checks that every declared TicketTransition has
+// non-empty, non-equal From and To values.
+func validateAgentsWorkflow(agents *AgentsConfig) error {
+	type namedConfig struct {
+		path string
+		cfg  AgentConfig
+	}
+	named := []namedConfig{
+		{"agents.mayor", agents.Mayor},
+		{"agents.architect", agents.Architect},
+		{"agents.reviewer", agents.Reviewer},
+		{"agents.prole", agents.Prole},
+	}
+	for specialty, ac := range agents.Artisan {
+		named = append(named, namedConfig{"agents.artisan." + specialty, ac})
+	}
+	for _, nc := range named {
+		if err := validateWorkflow(nc.path, nc.cfg.Workflow); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateWorkflow validates all TicketTransitions in a WorkflowConfig.
+func validateWorkflow(path string, wf *WorkflowConfig) error {
+	if wf == nil {
+		return nil
+	}
+	if wf.Accept != nil {
+		if err := validateTransition(path+".workflow.accept", wf.Accept.TicketTransition); err != nil {
+			return err
+		}
+	}
+	if wf.Release != nil {
+		if err := validateTransition(path+".workflow.release", wf.Release.TicketTransition); err != nil {
+			return err
+		}
+	}
+	for name, action := range wf.Actions {
+		if action == nil {
+			continue
+		}
+		if err := validateTransition(path+".workflow.actions."+name, action.TicketTransition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTransition checks that a TicketTransition has non-empty, non-equal From/To.
+func validateTransition(path string, tt *TicketTransition) error {
+	if tt == nil {
+		return nil
+	}
+	if tt.From == "" || tt.To == "" {
+		return fmt.Errorf("config: %s.ticket_transition: from and to must be non-empty and different", path)
+	}
+	if tt.From == tt.To {
+		return fmt.Errorf("config: %s.ticket_transition: from and to must be non-empty and different", path)
+	}
+	return nil
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -119,8 +210,22 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 			Mayor:     AgentConfig{Model: "claude-opus-4-5"},
 			Architect: AgentConfig{Model: "claude-opus-4-5"},
 			Artisan:   ArtisanConfig{}, // User-defined in config.json
-			Reviewer:  AgentConfig{Model: "claude-sonnet-4-5"},
-			Prole:     AgentConfig{Model: "claude-sonnet-4-5"},
+			Reviewer: AgentConfig{
+				Model: "claude-sonnet-4-5",
+				Workflow: &WorkflowConfig{
+					Accept: &WorkflowAction{
+						TicketTransition: &TicketTransition{From: "in_review", To: "under_review"},
+					},
+					// Release is nil: reviewer release is handled by approve / request-changes verbs.
+				},
+			},
+			Prole: AgentConfig{
+				Model: "claude-sonnet-4-5",
+				Workflow: &WorkflowConfig{
+					// Accept and Release are nil: prole acceptance is implicit in picking up
+					// the assignment; there is no automatic ticket side-effect.
+				},
+			},
 		},
 		PollingIntervalSeconds:       30,
 		NudgeCooldownSeconds:         300,
