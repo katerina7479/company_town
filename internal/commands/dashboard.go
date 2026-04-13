@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -169,11 +170,15 @@ type dashboardModel struct {
 	// expanded holds ticket IDs that have been expanded to show full details.
 	expanded map[int]bool
 
-	// Input mode — active when the user is typing a message (e.g. for nudge).
+	// showClosed controls whether closed tickets are shown regardless of age.
+	showClosed bool
+
+	// Input mode — active when the user is typing a message (e.g. for nudge,
+	// status change, or ticket creation).
 	inputMode   bool
 	inputBuffer string
-	inputAction string // "nudge"
-	inputTarget string // agent name receiving the nudge
+	inputAction string // "nudge", "status", "create_ticket"
+	inputTarget string // agent name (nudge) or ticket ID string (status)
 }
 
 func newDashboardModel() (*dashboardModel, error) {
@@ -225,11 +230,27 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inputMode {
 			switch msg.String() {
 			case "enter":
-				if m.inputAction == "nudge" && m.inputBuffer != "" {
-					sname := session.SessionName(m.inputTarget)
-					if m.sessionExists(sname) {
-						if err := m.sendKeys(sname, m.inputBuffer); err != nil {
-							m.statusMsg = "nudge failed: " + err.Error()
+				switch m.inputAction {
+				case "nudge":
+					if m.inputBuffer != "" {
+						sname := session.SessionName(m.inputTarget)
+						if m.sessionExists(sname) {
+							if err := m.sendKeys(sname, m.inputBuffer); err != nil {
+								m.statusMsg = "nudge failed: " + err.Error()
+							}
+						}
+					}
+				case "status":
+					if m.inputBuffer != "" {
+						id, _ := strconv.Atoi(m.inputTarget)
+						if err := m.issues.UpdateStatus(id, m.inputBuffer); err != nil {
+							m.statusMsg = "status update failed: " + err.Error()
+						}
+					}
+				case "create_ticket":
+					if m.inputBuffer != "" {
+						if _, err := m.issues.Create(m.inputBuffer, "task", nil, nil, nil); err != nil {
+							m.statusMsg = "create ticket failed: " + err.Error()
 						}
 					}
 				}
@@ -344,6 +365,38 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.inputBuffer = ""
 				}
 			}
+
+		case "o":
+			if m.focusedPanel == 1 {
+				flat := m.flatTickets()
+				if len(flat) > 0 {
+					node := flat[m.ticketCursor].node
+					if node.PRNumber.Valid {
+						return m, openPRCmd(int(node.PRNumber.Int64))
+					}
+					m.statusMsg = "no PR for this ticket"
+				}
+			}
+
+		case "c":
+			if m.focusedPanel == 1 {
+				flat := m.flatTickets()
+				if len(flat) > 0 {
+					m.inputMode = true
+					m.inputAction = "status"
+					m.inputTarget = strconv.Itoa(flat[m.ticketCursor].node.ID)
+					m.inputBuffer = ""
+				}
+			}
+
+		case "C":
+			m.inputMode = true
+			m.inputAction = "create_ticket"
+			m.inputTarget = ""
+			m.inputBuffer = ""
+
+		case "f":
+			m.showClosed = !m.showClosed
 		}
 
 	case actionResultMsg:
@@ -429,9 +482,25 @@ func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 	}
 }
 
+// openPRCmd opens a pull request in the browser using `gh pr view --web`.
+func openPRCmd(prNumber int) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNumber), "--web")
+		if err := cmd.Run(); err != nil {
+			return actionResultMsg{err: fmt.Errorf("open PR #%d: %w", prNumber, err)}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Opened PR #%d in browser", prNumber)}
+	}
+}
+
 // flatTickets returns the flat ordered list of visible ticket nodes (same order as rendered).
 func (m dashboardModel) flatTickets() []flatNode {
-	cutoff := time.Now().Add(-4 * time.Hour)
+	var cutoff time.Time
+	if m.showClosed {
+		cutoff = time.Time{} // zero value is before any real timestamp — keeps all nodes
+	} else {
+		cutoff = time.Now().Add(-4 * time.Hour)
+	}
 	filtered := filterStaleClosedNodes(m.data.roots, cutoff)
 	return flattenTree(filtered, 0)
 }
@@ -469,14 +538,26 @@ func (m dashboardModel) View() string {
 
 	var footer string
 	if m.inputMode {
-		label := "nudge " + m.inputTarget
+		var label string
+		switch m.inputAction {
+		case "nudge":
+			label = "nudge " + m.inputTarget
+		case "status":
+			label = fmt.Sprintf("status nc-%s  [draft/open/in_progress/in_review/pr_open/repairing/closed]", m.inputTarget)
+		case "create_ticket":
+			label = "new ticket title"
+		}
 		footer = boldStyle.Render(fmt.Sprintf(" [%s] > %s█", label, m.inputBuffer))
 	} else {
 		hint := " q quit  r refresh  tab switch panel  j/k navigate"
 		if m.focusedPanel == 0 {
 			hint += "  a attach  x kill  s stop  R restart  n nudge"
 		} else {
-			hint += "  enter expand/collapse"
+			filterFlag := " "
+			if m.showClosed {
+				filterFlag = "*"
+			}
+			hint += fmt.Sprintf("  enter expand  o open PR  c status  C new ticket  f[%s]filter closed", filterFlag)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
 		parts := []string{hint}
