@@ -201,7 +201,8 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 		sessionExists: existsFn,
 		sendKeys:      sendKeysFn,
 		restartAgent:  restartFn,
-		sleepFn:       func(time.Duration) {}, // no-op in tests
+		sleepFn:  func(time.Duration) {}, // no-op in tests
+		expanded: make(map[int]bool),
 	}
 	return m, agents
 }
@@ -605,6 +606,123 @@ func TestNudge_emptyBufferEnterDoesNotSendKeys(t *testing.T) {
 	}
 	if dm.inputMode {
 		t.Error("expected inputMode=false after Enter")
+	}
+}
+
+// --- global action tests (NC-12) ---
+
+func TestShowClosed_toggleOnF(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	if m.showClosed {
+		t.Fatal("expected showClosed=false initially")
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm := updated.(dashboardModel)
+	if !dm.showClosed {
+		t.Error("expected showClosed=true after pressing f")
+	}
+
+	updated, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm = updated.(dashboardModel)
+	if dm.showClosed {
+		t.Error("expected showClosed=false after pressing f again")
+	}
+}
+
+func TestShowClosed_zeroTimeCutoffIncludesAll(t *testing.T) {
+	// With showClosed=true, flatTickets uses a zero-time cutoff so all closed
+	// nodes are kept regardless of age.
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+
+	staleTime := time.Now().Add(-48 * time.Hour)
+	staleNode := makeNode("closed", &staleTime)
+	m.data.roots = []*repo.IssueNode{staleNode}
+
+	m.showClosed = false
+	if len(m.flatTickets()) != 0 {
+		t.Errorf("expected stale closed node hidden when showClosed=false")
+	}
+
+	m.showClosed = true
+	if len(m.flatTickets()) != 1 {
+		t.Errorf("expected stale closed node shown when showClosed=true")
+	}
+}
+
+func TestCreateTicket_createsInDB(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	issues := m.issues
+
+	// Press C to enter create-ticket mode
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("C")})
+	dm := updated.(dashboardModel)
+	if !dm.inputMode || dm.inputAction != "create_ticket" {
+		t.Fatal("expected inputMode=true with action=create_ticket after pressing C")
+	}
+
+	for _, ch := range "My new ticket" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+
+	drafts, err := issues.List("draft")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	found := false
+	for _, iss := range drafts {
+		if iss.Title == "My new ticket" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected new ticket 'My new ticket' to exist in DB")
+	}
+}
+
+func TestCreateTicket_emptyTitleNoOp(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	issues := m.issues
+
+	before, _ := issues.List("draft")
+	beforeCount := len(before)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("C")})
+	dm := updated.(dashboardModel)
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = upd
+
+	after, _ := issues.List("draft")
+	if len(after) != beforeCount {
+		t.Errorf("expected no new ticket on empty title, count went from %d to %d", beforeCount, len(after))
 	}
 }
 
