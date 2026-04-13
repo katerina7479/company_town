@@ -624,26 +624,70 @@ func (d *Daemon) handleBackfillPRNumbers() {
 	d.lastPRBackfill = d.nowFn()
 }
 
-// lookupPRForBranch queries GitHub for an open PR matching the given head branch.
-// Returns (prNumber, found, error). found is false when no matching PR exists.
+// prListEntry is one element from `gh pr list --json number,state,updatedAt`.
+type prListEntry struct {
+	Number    int       `json:"number"`
+	State     string    `json:"state"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// pickMostRecentPR selects the most authoritative PR from a list returned by
+// gh pr list. It sorts by UpdatedAt descending; ties are broken by state
+// precedence: MERGED > OPEN > CLOSED. Returns 0 for an empty list.
+func pickMostRecentPR(entries []prListEntry) int {
+	if len(entries) == 0 {
+		return 0
+	}
+	statePrecedence := func(s string) int {
+		switch s {
+		case "MERGED":
+			return 0
+		case "OPEN":
+			return 1
+		default: // CLOSED
+			return 2
+		}
+	}
+	best := entries[0]
+	for _, e := range entries[1:] {
+		if e.UpdatedAt.After(best.UpdatedAt) {
+			best = e
+		} else if e.UpdatedAt.Equal(best.UpdatedAt) && statePrecedence(e.State) < statePrecedence(best.State) {
+			best = e
+		}
+	}
+	return best.Number
+}
+
+// lookupPRForBranch queries GitHub for any PR (open or merged) matching the
+// given head branch. Returns (prNumber, found, error). found is false when no
+// matching PR exists. --state all is required so merged PRs are included —
+// without it, gh pr list only returns open PRs and the backfill misses PRs
+// that were merged before the ticket's pr_number column was populated.
+// --limit 5 and pickMostRecentPR guard against rare branch-name collisions
+// (e.g. a prior closed PR on the same branch) by always picking the most
+// recently updated, with MERGED > OPEN > CLOSED as a tie-breaker.
 func lookupPRForBranch(branch, projectRoot string) (int, bool, error) {
-	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--json", "number", "--limit", "1")
+	cmd := exec.Command("gh", "pr", "list",
+		"--head", branch,
+		"--state", "all",
+		"--json", "number,state,updatedAt",
+		"--limit", "5",
+	)
 	cmd.Dir = projectRoot
 	out, err := runCmd(cmd)
 	if err != nil {
 		return 0, false, fmt.Errorf("gh pr list: %w", err)
 	}
 
-	var results []struct {
-		Number int `json:"number"`
-	}
+	var results []prListEntry
 	if err := json.Unmarshal(out, &results); err != nil {
 		return 0, false, fmt.Errorf("parsing PR list: %w", err)
 	}
 	if len(results) == 0 {
 		return 0, false, nil
 	}
-	return results[0].Number, true, nil
+	return pickMostRecentPR(results), true, nil
 }
 
 // handleEpicAutoClose closes epics whose sub-tasks are all closed.
