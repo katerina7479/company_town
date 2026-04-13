@@ -88,14 +88,14 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3>]")
 	}
 
-	title := args[0]
 	var parentID *int
 	var specialty *string
 	var description string
 	var priority *string
 	issueType := "task"
+	var positional []string
 
-	for i := 1; i < len(args); i++ {
+	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--parent":
 			if i+1 >= len(args) {
@@ -136,8 +136,21 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 				return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3", p)
 			}
 			priority = &p
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return fmt.Errorf("unknown flag: %s", args[i])
+			}
+			positional = append(positional, args[i])
 		}
 	}
+
+	if len(positional) == 0 {
+		return fmt.Errorf("gt ticket create: title is required")
+	}
+	if len(positional) > 1 {
+		return fmt.Errorf("gt ticket create: expected one title, got %d positional args (quote the title if it contains spaces): %v", len(positional), positional)
+	}
+	title := positional[0]
 
 	id, err := issues.Create(title, issueType, parentID, specialty, priority)
 	if err != nil {
