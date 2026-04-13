@@ -90,7 +90,7 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
 
 1. **Find your ticket.** Run `gt ticket show <id>` on the ticket you were nudged about. Note two fields:
    - **status** — `open`, `in_progress`, or `repairing`
-   - **branch** — the exact branch name recorded on the ticket (e.g. `prole/{{NAME}}/42`)
+   - **branch** — the exact branch name recorded on the ticket (e.g. `prole/{{NAME}}/{{TICKET_PREFIX}}-42`)
 
 2. **Claim the work:** `gt agent status {{NAME}} working --issue <id>`
 
@@ -181,9 +181,9 @@ Do NOT file a new PR — update the existing one.
 
 ## Branch Naming
 
-The canonical format is `prole/{{NAME}}/<id>` (no ticket prefix, just the numeric id).
+The canonical format is `prole/{{NAME}}/{{TICKET_PREFIX}}-<id>` (ticket prefix + numeric id).
 
-Example: `prole/obsidian/42`
+Example: `prole/obsidian/{{TICKET_PREFIX}}-42`
 
 The ticket's `branch` field is authoritative — always read it from `gt ticket show <id>`
 and use the exact value. Do not construct the branch name yourself from the ticket id.

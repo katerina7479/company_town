@@ -302,7 +302,7 @@ func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.Agent
 		return err
 	}
 
-	branch := fmt.Sprintf("prole/%s/%d", agentName, id)
+	branch := config.ProleBranchName(cfg.TicketPrefix, agentName, id)
 	fmt.Printf("Assigned ticket %d to %s (branch: %s)\n", id, agentName, branch)
 
 	// Nudge the agent's tmux session so it picks the work up immediately.
