@@ -57,12 +57,6 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 			cfg.TicketPrefix,
 		)
 
-	case name == "conductor":
-		fmt.Println("The conductor has been decommissioned.")
-		fmt.Println("Ticket assignment is now handled directly by the daemon (NC-28/NC-30).")
-		fmt.Println("No persistent conductor session is needed — nothing to start.")
-		return nil
-
 	case name == "reviewer":
 		agentType = "reviewer"
 		templateType = "reviewer"

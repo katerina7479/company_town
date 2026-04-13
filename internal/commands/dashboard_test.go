@@ -301,18 +301,18 @@ func TestStopAgentCmd_success(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "conductor"}
+	agent := &repo.Agent{Name: "reviewer"}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
 	if result.err != nil {
 		t.Fatalf("expected no error, got %v", result.err)
 	}
-	if result.text != "Sent stop signal to conductor" {
+	if result.text != "Sent stop signal to reviewer" {
 		t.Errorf("unexpected success text: %q", result.text)
 	}
-	if sentTo != "ct-conductor" {
-		t.Errorf("expected sendKeys to 'ct-conductor', got %q", sentTo)
+	if sentTo != "ct-reviewer" {
+		t.Errorf("expected sendKeys to 'ct-reviewer', got %q", sentTo)
 	}
 	if sentMsg == "" {
 		t.Error("expected non-empty stop message sent to agent")
@@ -327,7 +327,7 @@ func TestStopAgentCmd_noSessionError(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "conductor"}
+	agent := &repo.Agent{Name: "reviewer"}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
@@ -347,7 +347,7 @@ func TestStopAgentCmd_sendKeysFails(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "conductor"}
+	agent := &repo.Agent{Name: "reviewer"}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 

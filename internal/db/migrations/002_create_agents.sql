@@ -2,8 +2,8 @@ CREATE TABLE IF NOT EXISTS agents (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   name          VARCHAR(100) NOT NULL UNIQUE,
   type          VARCHAR(50)  NOT NULL,
-                             -- mayor | architect | conductor
-                             -- prole | reviewer | janitor | artisan
+                             -- mayor | architect | reviewer
+                             -- prole | janitor | artisan
   specialty     VARCHAR(50),
   status        VARCHAR(20)  NOT NULL DEFAULT 'idle',
                              -- working | idle | dead

@@ -98,7 +98,7 @@ This is deterministic — no LLM is involved in the pick.
 
 A background goroutine inside `ct start` that polls every 30 seconds (configurable via `polling_interval_seconds`). Each tick it:
 
-- Restarts dead architect/conductor/reviewer sessions when they have work to do
+- Restarts dead architect/reviewer sessions when they have work to do
 - Nudges architect about `draft` tickets
 - Assigns idle proles to the top selectable tickets
 - Detects PR merges → closes tickets
@@ -187,7 +187,7 @@ Agents use this directly. Users generally don't, but it's fine for debugging and
 │   │   │   └── memory/
 │   │   │       ├── handoff.md
 │   │   │       └── lessons_learned.md
-│   │   └── ... (conductor, reviewer, artisan/<specialty>)
+│   │   └── ... (reviewer, artisan/<specialty>)
 │   └── proles/                 # per-prole git worktrees
 │       ├── copper/
 │       └── iron/
@@ -268,5 +268,5 @@ gt check run
 ## Further reading
 
 - `CLAUDE.md` — build/test instructions for anyone (human or AI) hacking on Company Town itself.
-- `.company_town/ticket_specs/` — living design documents for in-progress work. `NC-26.md` is the current conductor-replacement design.
+- `.company_town/ticket_specs/` — living design documents for in-progress work.
 - Agent templates at `internal/commands/templates/*-CLAUDE.md` — the exact instructions each agent role receives on spawn. These are the source of truth for agent behavior.
