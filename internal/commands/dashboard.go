@@ -797,22 +797,32 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	const typeWidth = 1 // visible char: "E" / "B" / "R" / " " (blank for task)
 	typ := typeCell(node.IssueType)
 
+	const assigneeWidth = 8 // visible chars: up to 8-char agent name (e.g. "obsidian") or blank
+	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")
+	if node.Assignee.Valid && node.Assignee.String != "" {
+		name := node.Assignee.String
+		if len(name) > assigneeWidth {
+			name = name[:assigneeWidth]
+		}
+		assigneeRaw = fmt.Sprintf("%-*s", assigneeWidth, name)
+	}
+
 	// Truncate title so the row fits inside the panel content area. `width` is
 	// the inner content width (outer panel width minus border and padding),
 	// passed in from renderTickets.
-	// prefix + space + type + space + id + space + status + space + priority + space + pr + space + age + space + title
+	// prefix + space + type + space + id + space + status + space + priority + space + pr + space + assignee + space + age + space + title
 	// Use lipgloss.Width(prefix) because the selected-row bullet (●) is 3 bytes / 1 cell;
 	// len() would over-count by 2. Use len(node.Status) — the raw status is what the
 	// row actually renders via coloredStatus, not any bracket-framed variant.
-	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
+	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + assigneeWidth + 1 + len(ageRaw) + 1
 	titleMax := width - fixedLen
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	return fmt.Sprintf("%s %s %s %s %s %s %s %s",
-		prefix, typ, idStr, coloredStatus, pri, prStr, age, title,
+	return fmt.Sprintf("%s %s %s %s %s %s %s %s %s",
+		prefix, typ, idStr, coloredStatus, pri, prStr, assigneeRaw, age, title,
 	)
 }
 

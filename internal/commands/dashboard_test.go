@@ -1475,6 +1475,78 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 	}
 }
 
+// --- NC-90: assignee column in collapsed row ---
+
+func TestRenderIssueRow_assigneeShownWhenSet(t *testing.T) {
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:       42,
+			Status:   "in_progress",
+			Title:    "Some ticket",
+			Assignee: sql.NullString{String: "copper", Valid: true},
+		},
+	}
+	row := renderIssueRow(node, 0, 120)
+	if !strings.Contains(row, "copper") {
+		t.Errorf("renderIssueRow for assigned ticket should contain assignee name, got: %q", row)
+	}
+}
+
+func TestRenderIssueRow_assigneeBlankWhenUnset(t *testing.T) {
+	// Two tickets with same-length titles: one assigned, one not.
+	// Both rows must have equal visible width so columns stay aligned.
+	assigned := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:       1,
+			Status:   "open",
+			Title:    "Same title here",
+			Assignee: sql.NullString{String: "iron", Valid: true},
+		},
+	}
+	unassigned := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:     2,
+			Status: "open",
+			Title:  "Same title here",
+		},
+	}
+	rowA := renderIssueRow(assigned, 0, 120)
+	rowU := renderIssueRow(unassigned, 0, 120)
+
+	// Unassigned row must not contain a stray agent name.
+	if strings.Contains(rowU, "iron") {
+		t.Errorf("unassigned row should not contain 'iron', got: %q", rowU)
+	}
+
+	// Both rows must have the same visible width (lipgloss strips ANSI).
+	wA := lipgloss.Width(rowA)
+	wU := lipgloss.Width(rowU)
+	if wA != wU {
+		t.Errorf("assigned row width=%d, unassigned row width=%d — columns misaligned", wA, wU)
+	}
+}
+
+func TestRenderIssueRow_assigneeTruncatedAt8Chars(t *testing.T) {
+	// An agent name longer than 8 chars must be truncated, not overflow the cell.
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:       10,
+			Status:   "in_progress",
+			Title:    "Long assignee test",
+			Assignee: sql.NullString{String: "verylongname", Valid: true},
+		},
+	}
+	row := renderIssueRow(node, 0, 120)
+	// Must contain the first 8 chars of the name.
+	if !strings.Contains(row, "verylong") {
+		t.Errorf("renderIssueRow should contain truncated assignee 'verylong', got: %q", row)
+	}
+	// Must not contain the full name beyond 8 chars.
+	if strings.Contains(row, "verylongname") {
+		t.Errorf("renderIssueRow should truncate assignee to 8 chars, got: %q", row)
+	}
+}
+
 func TestColorStatus_mergeConflict(t *testing.T) {
 	// merge_conflict must render as a non-empty styled string distinct from
 	// the repairing style, so the dashboard operator can visually distinguish
