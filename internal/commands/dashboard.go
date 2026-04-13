@@ -3,13 +3,17 @@ package commands
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
@@ -160,6 +164,9 @@ type dashboardModel struct {
 	width  int
 	height int
 
+	ticketPrefix string // from config, used in ticket labels and PR creation
+	showClosed   bool   // when true, show all closed tickets regardless of age
+
 	focusedPanel int // 0 = agents, 1 = tickets
 	agentCursor  int
 	ticketCursor int
@@ -169,11 +176,11 @@ type dashboardModel struct {
 	// expanded holds ticket IDs that have been expanded to show full details.
 	expanded map[int]bool
 
-	// Input mode — active when the user is typing a message (e.g. for nudge).
+	// Input mode — active when the user is typing a response.
 	inputMode   bool
 	inputBuffer string
-	inputAction string // "nudge"
-	inputTarget string // agent name receiving the nudge
+	inputAction string // "nudge", "status", "create_ticket"
+	inputTarget string // agent name (nudge) or ticket ID as string (status)
 }
 
 func newDashboardModel() (*dashboardModel, error) {
@@ -181,6 +188,18 @@ func newDashboardModel() (*dashboardModel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("getting working directory: %w", err)
+	}
+	cfg, err := config.Load(wd)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+
 	return &dashboardModel{
 		conn:          conn,
 		agents:        repo.NewAgentRepo(conn, nil),
@@ -191,6 +210,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		restartAgent:  defaultRestartAgent,
 		sleepFn:       time.Sleep,
 		expanded:      make(map[int]bool),
+		ticketPrefix:  cfg.TicketPrefix,
 	}, nil
 }
 
@@ -225,11 +245,26 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inputMode {
 			switch msg.String() {
 			case "enter":
-				if m.inputAction == "nudge" && m.inputBuffer != "" {
-					sname := session.SessionName(m.inputTarget)
-					if m.sessionExists(sname) {
-						if err := m.sendKeys(sname, m.inputBuffer); err != nil {
-							m.statusMsg = "nudge failed: " + err.Error()
+				if m.inputBuffer != "" {
+					switch m.inputAction {
+					case "nudge":
+						sname := session.SessionName(m.inputTarget)
+						if m.sessionExists(sname) {
+							if err := m.sendKeys(sname, m.inputBuffer); err != nil {
+								m.statusMsg = "nudge failed: " + err.Error()
+							}
+						}
+					case "status":
+						if !slices.Contains(repo.ValidStatuses, m.inputBuffer) {
+							m.statusMsg = fmt.Sprintf("invalid status %q", m.inputBuffer)
+						} else if id, err := strconv.Atoi(m.inputTarget); err != nil {
+							m.statusMsg = "internal error: bad ticket id"
+						} else if err := m.issues.UpdateStatus(id, m.inputBuffer); err != nil {
+							m.statusMsg = "status update failed: " + err.Error()
+						}
+					case "create_ticket":
+						if _, err := m.issues.Create(m.inputBuffer, "task", nil, nil, nil); err != nil {
+							m.statusMsg = "create failed: " + err.Error()
 						}
 					}
 				}
@@ -345,6 +380,46 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "o":
+			if m.focusedPanel == 1 {
+				flat := m.flatTickets()
+				if len(flat) > 0 {
+					id := flat[m.ticketCursor].node.ID
+					return m, m.openPRCmd(id)
+				}
+			}
+
+		case "c":
+			if m.focusedPanel == 1 {
+				flat := m.flatTickets()
+				if len(flat) > 0 {
+					id := flat[m.ticketCursor].node.ID
+					m.inputMode = true
+					m.inputAction = "status"
+					m.inputTarget = fmt.Sprintf("%d", id)
+					m.inputBuffer = ""
+				}
+			}
+
+		case "C":
+			m.showClosed = !m.showClosed
+			flat := m.flatTickets()
+			if m.ticketCursor >= len(flat) {
+				if len(flat) == 0 {
+					m.ticketCursor = 0
+				} else {
+					m.ticketCursor = len(flat) - 1
+				}
+			}
+
+		case "f":
+			if m.focusedPanel == 1 {
+				m.inputMode = true
+				m.inputAction = "create_ticket"
+				m.inputTarget = ""
+				m.inputBuffer = ""
+			}
+
 		}
 
 	case actionResultMsg:
@@ -430,9 +505,28 @@ func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 	}
 }
 
+// openPRCmd runs `gt pr create <prefix>-<id>` for the selected ticket.
+func (m dashboardModel) openPRCmd(ticketID int) tea.Cmd {
+	return func() tea.Msg {
+		id := fmt.Sprintf("%s-%d", m.ticketPrefix, ticketID)
+		cmd := exec.Command("gt", "pr", "create", id)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return actionResultMsg{err: fmt.Errorf("pr create %s: %w: %s", id, err, strings.TrimSpace(string(out)))}
+		}
+		return actionResultMsg{text: fmt.Sprintf("PR created for %s", id)}
+	}
+}
+
 // flatTickets returns the flat ordered list of visible ticket nodes (same order as rendered).
+// When showClosed is true, all closed tickets are included regardless of age.
 func (m dashboardModel) flatTickets() []flatNode {
-	cutoff := time.Now().Add(-4 * time.Hour)
+	var cutoff time.Time
+	if m.showClosed {
+		cutoff = time.Time{} // zero time: filterStaleClosedNodes keeps everything
+	} else {
+		cutoff = time.Now().Add(-4 * time.Hour)
+	}
 	filtered := filterStaleClosedNodes(m.data.roots, cutoff)
 	return flattenTree(filtered, 0)
 }
@@ -470,14 +564,28 @@ func (m dashboardModel) View() string {
 
 	var footer string
 	if m.inputMode {
-		label := "nudge " + m.inputTarget
+		var label string
+		switch m.inputAction {
+		case "nudge":
+			label = "nudge " + m.inputTarget
+		case "status":
+			label = fmt.Sprintf("status %s-%s", m.ticketPrefix, m.inputTarget)
+		case "create_ticket":
+			label = "new ticket title"
+		default:
+			label = m.inputAction
+		}
 		footer = boldStyle.Render(fmt.Sprintf(" [%s] > %s█", label, m.inputBuffer))
 	} else {
 		hint := " q quit  r refresh  tab switch panel  j/k navigate"
 		if m.focusedPanel == 0 {
 			hint += "  a attach  x kill  s stop  R restart  n nudge"
 		} else {
-			hint += "  enter expand/collapse"
+			closed := "show-closed"
+			if m.showClosed {
+				closed = "hide-closed"
+			}
+			hint += fmt.Sprintf("  enter expand/collapse  o open-PR  c change-status  C %s  f new-ticket", closed)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
 		parts := []string{hint}
@@ -505,7 +613,7 @@ func (m dashboardModel) renderAgents(width, height int) string {
 			status := colorStatus(a.Status)
 			issue := ""
 			if a.CurrentIssue.Valid {
-				issue = fmt.Sprintf(" → nc-%d", a.CurrentIssue.Int64)
+				issue = fmt.Sprintf(" → %s-%d", m.ticketPrefix, a.CurrentIssue.Int64)
 			}
 			age := ""
 			if a.StatusChangedAt.Valid {

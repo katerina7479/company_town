@@ -609,6 +609,228 @@ func TestNudge_emptyBufferEnterDoesNotSendKeys(t *testing.T) {
 	}
 }
 
+// --- NC-11: ticket status change (o/c keys) ---
+
+func TestStatusChange_invalidStatusRejected(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	issueID, err := m.issues.Create("test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Read initial status (Create defaults to "draft")
+	initial, err := m.issues.Get(issueID)
+	if err != nil {
+		t.Fatalf("Get initial: %v", err)
+	}
+	initialStatus := initial.Status
+
+	m.data.roots = []*repo.IssueNode{{Issue: &repo.Issue{ID: issueID, Status: initialStatus}}}
+	m.focusedPanel = 1
+	m.ticketCursor = 0
+
+	// Press "c" to enter status-change mode
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("c")})
+	dm := updated.(dashboardModel)
+	if !dm.inputMode || dm.inputAction != "status" {
+		t.Fatalf("expected inputMode=true, inputAction=status; got mode=%v action=%q", dm.inputMode, dm.inputAction)
+	}
+
+	// Type an invalid status and press Enter
+	for _, ch := range "bogus" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+	if dm.statusMsg == "" {
+		t.Error("expected statusMsg set for invalid status")
+	}
+	// Ticket status should remain unchanged
+	got, err := m.issues.Get(issueID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != initialStatus {
+		t.Errorf("ticket status should still be %q, got %q", initialStatus, got.Status)
+	}
+}
+
+func TestStatusChange_validStatusAccepted(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	issueID, err := m.issues.Create("another ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m.data.roots = []*repo.IssueNode{{Issue: &repo.Issue{ID: issueID, Status: "open"}}}
+	m.focusedPanel = 1
+	m.ticketCursor = 0
+
+	// Press "c", type "in_progress", Enter
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("c")})
+	dm := updated.(dashboardModel)
+
+	for _, ch := range "in_progress" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+	// Ticket should be updated
+	got, err := m.issues.Get(issueID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("expected ticket status 'in_progress', got %q", got.Status)
+	}
+}
+
+// --- NC-12: show/hide closed tickets and new-ticket creation ---
+
+func TestShowClosed_toggleOnC(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	if m.showClosed {
+		t.Fatal("showClosed should be false initially")
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("C")})
+	dm := updated.(dashboardModel)
+	if !dm.showClosed {
+		t.Error("showClosed should be true after C")
+	}
+
+	upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("C")})
+	dm = upd.(dashboardModel)
+	if dm.showClosed {
+		t.Error("showClosed should be false after second C")
+	}
+}
+
+func TestShowClosed_zeroTimeCutoffIncludesAll(t *testing.T) {
+	staleTime := time.Now().Add(-100 * time.Hour)
+	staleNode := makeNode("closed", &staleTime)
+
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.data.roots = []*repo.IssueNode{staleNode}
+
+	// Without showClosed: stale closed ticket should be filtered out.
+	m.showClosed = false
+	flat := m.flatTickets()
+	if len(flat) != 0 {
+		t.Errorf("expected stale closed ticket hidden, got %d entries", len(flat))
+	}
+
+	// With showClosed: stale closed ticket must appear.
+	m.showClosed = true
+	flat = m.flatTickets()
+	if len(flat) != 1 {
+		t.Errorf("expected stale closed ticket shown when showClosed=true, got %d entries", len(flat))
+	}
+}
+
+func TestCreateTicket_createsInDB(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+
+	// Press "f" to enter create-ticket mode
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm := updated.(dashboardModel)
+	if !dm.inputMode || dm.inputAction != "create_ticket" {
+		t.Fatalf("expected inputMode=true, inputAction=create_ticket; got mode=%v action=%q", dm.inputMode, dm.inputAction)
+	}
+
+	// Type a title and press Enter
+	for _, ch := range "my new ticket" {
+		upd, _ := dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+
+	// Verify the ticket was created
+	issues, err := m.issues.ListHierarchy()
+	if err != nil {
+		t.Fatalf("ListHierarchy: %v", err)
+	}
+	found := false
+	for _, n := range issues {
+		if n.Title == "my new ticket" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected 'my new ticket' to exist in DB after create")
+	}
+}
+
+func TestCreateTicket_emptyTitleNoOp(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+
+	// Press "f", then Enter immediately without typing
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm := updated.(dashboardModel)
+
+	upd, _ := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+
+	// No tickets should have been created
+	issues, err := m.issues.ListHierarchy()
+	if err != nil {
+		t.Fatalf("ListHierarchy: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Errorf("expected no tickets created on empty title, got %d", len(issues))
+	}
+}
+
 func containsAll(s string, substrings ...string) bool {
 	for _, sub := range substrings {
 		found := false
