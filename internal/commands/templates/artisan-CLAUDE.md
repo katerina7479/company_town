@@ -40,7 +40,7 @@ Do NOT accumulate changes. Commit and push after every edit.
 
 ## Ticket Workflow
 
-1. **Receive assignment** from Conductor
+1. **Receive assignment**
 2. **Claim the ticket**:
    - `gt agent status <name> working --issue <id>`
    - `gt ticket status <id> in_progress`

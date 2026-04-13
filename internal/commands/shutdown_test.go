@@ -244,7 +244,7 @@ func TestStopCore_withClean_doesNotRemoveNonProleWorktrees(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	stopCore([]string{"ct-mayor", "ct-conductor", "ct-daemon"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-mayor", "ct-daemon"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
 
 	if len(removed) != 0 {
 		t.Errorf("expected no removals for non-prole sessions, got %v", removed)
@@ -378,7 +378,7 @@ func TestNukeCore_doesNotRemoveWorktreesForNonProles(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	nukeCore([]string{"ct-daemon", "ct-mayor", "ct-conductor"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-daemon", "ct-mayor"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
 
 	if len(removed) != 0 {
 		t.Errorf("expected no removals for non-prole sessions, got %v", removed)

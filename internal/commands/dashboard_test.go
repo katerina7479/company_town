@@ -3,6 +3,8 @@ package commands
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -302,18 +304,18 @@ func TestStopAgentCmd_success(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "conductor"}
+	agent := &repo.Agent{Name: "reviewer"}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
 	if result.err != nil {
 		t.Fatalf("expected no error, got %v", result.err)
 	}
-	if result.text != "Sent stop signal to conductor" {
+	if result.text != "Sent stop signal to reviewer" {
 		t.Errorf("unexpected success text: %q", result.text)
 	}
-	if sentTo != "ct-conductor" {
-		t.Errorf("expected sendKeys to 'ct-conductor', got %q", sentTo)
+	if sentTo != "ct-reviewer" {
+		t.Errorf("expected sendKeys to 'ct-reviewer', got %q", sentTo)
 	}
 	if sentMsg == "" {
 		t.Error("expected non-empty stop message sent to agent")
@@ -328,7 +330,7 @@ func TestStopAgentCmd_noSessionError(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "conductor"}
+	agent := &repo.Agent{Name: "reviewer"}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
@@ -348,7 +350,7 @@ func TestStopAgentCmd_sendKeysFails(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "conductor"}
+	agent := &repo.Agent{Name: "reviewer"}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
@@ -1053,6 +1055,160 @@ func TestWordWrap_multipleInputLinesPreserved(t *testing.T) {
 		t.Errorf("unexpected multiline result: %q", got)
 	}
 }
+
+// --- daemon tick file tests (NC-57) ---
+
+func TestFetch_populatesLastDaemonTickFromFile(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+
+	dir := t.TempDir()
+	tickFile := filepath.Join(dir, "daemon-tick")
+	tickTime := time.Now().UTC().Truncate(time.Millisecond)
+	if err := os.WriteFile(tickFile, []byte(tickTime.Format(time.RFC3339Nano)), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m.tickFile = tickFile
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick == nil {
+		t.Fatal("expected lastDaemonTick to be populated from tick file")
+	}
+	if !msg.lastDaemonTick.Equal(tickTime) {
+		t.Errorf("expected tick time %v, got %v", tickTime, *msg.lastDaemonTick)
+	}
+}
+
+func TestFetch_lastDaemonTickNilWhenNoFile(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.tickFile = filepath.Join(t.TempDir(), "nonexistent-daemon-tick")
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick != nil {
+		t.Errorf("expected lastDaemonTick=nil when file missing, got %v", msg.lastDaemonTick)
+	}
+}
+
+func TestFetch_lastDaemonTickNilWhenTickFileEmpty(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+
+	dir := t.TempDir()
+	tickFile := filepath.Join(dir, "daemon-tick")
+	if err := os.WriteFile(tickFile, []byte(""), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m.tickFile = tickFile
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick != nil {
+		t.Errorf("expected lastDaemonTick=nil for empty tick file, got %v", msg.lastDaemonTick)
+	}
+}
+
+func TestFetch_lastDaemonTickNilWhenTickFileDisabled(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.tickFile = "" // disabled
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick != nil {
+		t.Errorf("expected lastDaemonTick=nil when tickFile disabled, got %v", msg.lastDaemonTick)
+	}
+}
+
+// --- renderDaemonLine state tests (NC-57 reviewer deviations 1+3) ---
+
+func TestRenderDaemonLine_freshShowsCheck(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 10 * time.Second,
+		data: dashboardData{
+			lastDaemonTick: ptrTime(time.Now().Add(-3 * time.Second)),
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "✓") {
+		t.Errorf("fresh daemon should render with ✓, got %q", out)
+	}
+	if strings.Contains(out, "⚠") || strings.Contains(out, "✗") {
+		t.Errorf("fresh daemon should not render warning/missing markers, got %q", out)
+	}
+	if !strings.Contains(out, "daemon:") {
+		t.Errorf("expected 'daemon:' label, got %q", out)
+	}
+}
+
+func TestRenderDaemonLine_staleShowsWarning(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 10 * time.Second, // stale threshold = 30s floor
+		data: dashboardData{
+			lastDaemonTick: ptrTime(time.Now().Add(-2 * time.Minute)),
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "⚠") {
+		t.Errorf("stale daemon should render with ⚠, got %q", out)
+	}
+	if strings.Contains(out, "✓") {
+		t.Errorf("stale daemon should not render ✓, got %q", out)
+	}
+	if !strings.Contains(out, "expected every") {
+		t.Errorf("stale daemon should include the interval hint, got %q", out)
+	}
+}
+
+func TestRenderDaemonLine_missingShowsCross(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 10 * time.Second,
+		data: dashboardData{
+			lastDaemonTick: nil,
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "✗") {
+		t.Errorf("missing daemon should render with ✗, got %q", out)
+	}
+	if !strings.Contains(out, "not running") {
+		t.Errorf("missing daemon should say 'not running', got %q", out)
+	}
+	if strings.Contains(out, "✓") || strings.Contains(out, "⚠") {
+		t.Errorf("missing daemon should not render fresh/stale markers, got %q", out)
+	}
+}
+
+// Stale threshold floor: a 1-second polling interval still yields a 30s
+// threshold, so a 20s-old heartbeat should render fresh (not stale).
+func TestRenderDaemonLine_staleFloorIs30Seconds(t *testing.T) {
+	m := dashboardModel{
+		pollingInterval: 1 * time.Second,
+		data: dashboardData{
+			lastDaemonTick: ptrTime(time.Now().Add(-20 * time.Second)),
+		},
+	}
+	out := m.renderDaemonLine()
+	if !strings.Contains(out, "✓") {
+		t.Errorf("age 20s with 1s interval should be fresh (30s floor), got %q", out)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
 
 // --- renderIssueRow / selected-row wrapping tests (NC-45) ---
 
