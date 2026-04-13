@@ -583,8 +583,11 @@ func TestIssueRepo_ClearAssigneeByAgent_repairingTicket(t *testing.T) {
 	if issue.Assignee.Valid {
 		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
 	}
-	if issue.Status != "open" {
-		t.Errorf("expected status='open' (reverted from repairing), got %q", issue.Status)
+	// repairing tickets retain their status so the next prole inherits the
+	// repair cycle and reads the existing reviewer feedback, rather than
+	// treating the ticket as fresh work.
+	if issue.Status != "repairing" {
+		t.Errorf("expected status='repairing' (retained across assignee clearance), got %q", issue.Status)
 	}
 }
 

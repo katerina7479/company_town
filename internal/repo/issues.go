@@ -257,15 +257,16 @@ func (r *IssueRepo) BusyAssignees() (map[string]bool, error) {
 }
 
 // ClearAssigneeByAgent clears the assignee on every open, in_progress, or
-// repairing issue currently assigned to `name`, and reverts any in_progress
-// or repairing issues back to open so they become selectable again. Used
-// during dead-prole reconcile — the prole row is about to be deleted, its
-// work needs to return to the pool.
+// repairing issue currently assigned to `name`. in_progress tickets revert to
+// open (the prole never really started). repairing tickets retain their status
+// so the next prole inherits the repair cycle — the reviewer's feedback still
+// needs to be addressed. Used during dead-prole reconcile — the prole row is
+// about to be deleted, its work needs to return to the pool.
 func (r *IssueRepo) ClearAssigneeByAgent(name string) (int, error) {
 	result, err := r.db.Exec(
 		`UPDATE issues
 		 SET assignee = NULL,
-		     status = CASE WHEN status IN ('in_progress', 'repairing') THEN 'open' ELSE status END,
+		     status = CASE WHEN status = 'in_progress' THEN 'open' ELSE status END,
 		     updated_at = CURRENT_TIMESTAMP
 		 WHERE assignee = ?
 		   AND status IN ('open', 'in_progress', 'repairing')`,
