@@ -564,10 +564,37 @@ func TestIssueRepo_ClearAssigneeByAgent_inProgressTicket(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_ClearAssigneeByAgent_repairingTicket(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Repairing ticket", "task", nil, nil, nil)
+	repo.UpdateStatus(id, "repairing")
+	repo.SetAssignee(id, "iron")
+
+	n, err := repo.ClearAssigneeByAgent("iron")
+	if err != nil {
+		t.Fatalf("ClearAssigneeByAgent: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row affected, got %d", n)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+	// repairing tickets retain their status so the next prole inherits the
+	// repair cycle and reads the existing reviewer feedback, rather than
+	// treating the ticket as fresh work.
+	if issue.Status != "repairing" {
+		t.Errorf("expected status='repairing' (retained across assignee clearance), got %q", issue.Status)
+	}
+}
+
 func TestIssueRepo_ClearAssigneeByAgent_leavesOtherStatuses(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	for _, status := range []string{"in_review", "pr_open", "repairing"} {
+	for _, status := range []string{"in_review", "pr_open"} {
 		id, _ := repo.Create("Ticket "+status, "task", nil, nil, nil)
 		repo.UpdateStatus(id, status)
 		repo.SetAssignee(id, "iron")
@@ -578,7 +605,7 @@ func TestIssueRepo_ClearAssigneeByAgent_leavesOtherStatuses(t *testing.T) {
 		t.Fatalf("ClearAssigneeByAgent: %v", err)
 	}
 	if n != 0 {
-		t.Errorf("expected 0 rows affected (non-open/in_progress statuses skipped), got %d", n)
+		t.Errorf("expected 0 rows affected (in_review/pr_open statuses skipped), got %d", n)
 	}
 }
 

@@ -85,6 +85,88 @@ func TestTicketCreate_withoutDescription(t *testing.T) {
 	}
 }
 
+func TestTicketCreate_flagsBeforeTitle(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"--type", "bug", "--priority", "P0", "My real title"})
+	if err != nil {
+		t.Fatalf("ticketCreate: %v", err)
+	}
+
+	issue, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Title != "My real title" {
+		t.Errorf("expected title %q, got %q", "My real title", issue.Title)
+	}
+	if issue.IssueType != "bug" {
+		t.Errorf("expected type %q, got %q", "bug", issue.IssueType)
+	}
+	if !issue.Priority.Valid || issue.Priority.String != "P0" {
+		t.Errorf("expected priority P0, got %q (valid=%v)", issue.Priority.String, issue.Priority.Valid)
+	}
+}
+
+func TestTicketCreate_flagsInterleaved(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"--type", "bug", "Title in middle", "--priority", "P1"})
+	if err != nil {
+		t.Fatalf("ticketCreate: %v", err)
+	}
+
+	issue, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Title != "Title in middle" {
+		t.Errorf("expected title %q, got %q", "Title in middle", issue.Title)
+	}
+	if issue.IssueType != "bug" {
+		t.Errorf("expected type %q, got %q", "bug", issue.IssueType)
+	}
+	if !issue.Priority.Valid || issue.Priority.String != "P1" {
+		t.Errorf("expected priority P1, got %q", issue.Priority.String)
+	}
+}
+
+func TestTicketCreate_missingTitle(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"--type", "bug", "--priority", "P0"})
+	if err == nil {
+		t.Fatal("expected error when title is missing")
+	}
+	if !strings.Contains(err.Error(), "title is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestTicketCreate_multiplePositionals(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"first", "second"})
+	if err == nil {
+		t.Fatal("expected error when multiple positional args are supplied")
+	}
+	if !strings.Contains(err.Error(), "expected one title") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestTicketCreate_unknownFlag(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"--bogus", "x", "title"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestTicketCreate_descriptionMissingValue(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
@@ -94,6 +176,39 @@ func TestTicketCreate_descriptionMissingValue(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--description requires a value") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestTicketCreate_invalidType(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"test", "--type", "garbage"})
+	if err == nil {
+		t.Fatal("expected error for invalid --type, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid type") {
+		t.Errorf("expected 'invalid type' error, got: %v", err)
+	}
+	// No ticket should have been created.
+	all, _ := issues.List("open")
+	if len(all) != 0 {
+		t.Errorf("expected no tickets created, got %d", len(all))
+	}
+}
+
+func TestTicketCreate_validType(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketCreate(issues, "nc", []string{"test", "--type", "bug"})
+	if err != nil {
+		t.Fatalf("unexpected error for valid --type: %v", err)
+	}
+	issue, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.IssueType != "bug" {
+		t.Errorf("expected issue_type='bug', got %q", issue.IssueType)
 	}
 }
 

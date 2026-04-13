@@ -51,6 +51,7 @@ type Daemon struct {
 	stop          chan struct{}
 	sendKeys      func(session, msg string) error
 	sessionExists func(session string) bool
+	killSession   func(session string) error
 	lastNudged          map[string]time.Time
 	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
 	nudgeCooldown       time.Duration
@@ -121,6 +122,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		stop:          make(chan struct{}),
 		sendKeys:      session.SendKeys,
 		sessionExists: session.Exists,
+		killSession:   session.Kill,
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
 		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
@@ -666,11 +668,24 @@ func (d *Daemon) handleDeadSessions() {
 
 	deleted := 0
 	for _, agent := range agents {
-		if agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String) {
+		sessionAlive := agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String)
+		// Skip agents with a live session unless they are already marked dead.
+		// A dead-status prole with a live session still needs to be cleaned up.
+		if sessionAlive && agent.Status != "dead" {
 			continue
 		}
 		if agent.Type == "prole" {
-			d.logger.Printf("prole %s has no live tmux session — deleting", agent.Name)
+			if sessionAlive {
+				// Zombie: row is dead but tmux session is still running — kill it.
+				if err := d.killSession(agent.TmuxSession.String); err != nil {
+					d.logger.Printf("error killing zombie session %s for %s: %v",
+						agent.TmuxSession.String, agent.Name, err)
+				} else {
+					d.logger.Printf("killed zombie tmux session %s for dead prole %s",
+						agent.TmuxSession.String, agent.Name)
+				}
+			}
+			d.logger.Printf("prole %s is dead — cleaning up", agent.Name)
 			if n, err := d.issues.ClearAssigneeByAgent(agent.Name); err != nil {
 				d.logger.Printf("error clearing orphaned assignments for %s: %v", agent.Name, err)
 			} else if n > 0 {
