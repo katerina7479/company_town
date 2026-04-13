@@ -15,6 +15,10 @@ import (
 	"github.com/katerina7479/company_town/internal/session"
 )
 
+// Package-level vars for injection in tests.
+var createInteractiveFn func(session.AgentSessionConfig) error = session.CreateInteractive
+var tmuxExistsFn func(string) bool = tmuxExists
+
 // Start launches a named agent in a tmux session.
 func Start(args []string) error {
 	if len(args) < 1 {
@@ -30,7 +34,12 @@ func Start(args []string) error {
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	events := eventlog.NewLogger(ctDir)
 	agents := repo.NewAgentRepo(conn, events)
-	name := args[0]
+	return startAgentWithDeps(cfg, agents, args[0])
+}
+
+// startAgentWithDeps is the injectable core of Start. Extracted for testability.
+func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string) error {
+	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 
 	var agentType, templateType, model, agentDir, prompt string
 
@@ -110,7 +119,7 @@ func Start(args []string) error {
 
 	sessionName := session.SessionName(name)
 
-	if tmuxExists(sessionName) {
+	if tmuxExistsFn(sessionName) {
 		fmt.Printf("%s is already running (session: %s)\n", name, sessionName)
 		return nil
 	}
@@ -123,7 +132,7 @@ func Start(args []string) error {
 		}
 	}
 
-	if err := agents.UpdateStatus(name, "working"); err != nil {
+	if err := agents.UpdateStatus(name, "idle"); err != nil {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
 
@@ -131,7 +140,7 @@ func Start(args []string) error {
 		return fmt.Errorf("recording tmux session for %s: %w", name, err)
 	}
 
-	if err := session.CreateInteractive(session.AgentSessionConfig{
+	if err := createInteractiveFn(session.AgentSessionConfig{
 		Name:     sessionName,
 		WorkDir:  cfg.ProjectRoot,
 		Model:    model,
