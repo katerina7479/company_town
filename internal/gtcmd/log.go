@@ -12,6 +12,8 @@ import (
 	"github.com/katerina7479/company_town/internal/cmdlog"
 )
 
+const noLogMessage = "no command log yet (has any `gt` or `ct` command run since the middleware landed?)"
+
 // Log dispatches gt log subcommands.
 func Log(args []string) error {
 	if len(args) < 1 {
@@ -35,7 +37,7 @@ func Log(args []string) error {
 }
 
 // logTail prints the last N lines of the command log, human-formatted.
-// Flags: -n <N> (default 20), --json (raw JSONL).
+// Flags: -n <N> (default 20, clamped to [1, 10000]), --json (raw JSONL).
 func logTail(logPath string, args []string) error {
 	n := 20
 	jsonMode := false
@@ -51,6 +53,9 @@ func logTail(logPath string, args []string) error {
 			if err != nil || v <= 0 {
 				return fmt.Errorf("invalid -n value: %s", args[i])
 			}
+			if v > 10000 {
+				v = 10000
+			}
 			n = v
 		case "--json":
 			jsonMode = true
@@ -59,25 +64,38 @@ func logTail(logPath string, args []string) error {
 		}
 	}
 
+	// Friendly message for missing file — not an error.
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		fmt.Println(noLogMessage)
+		return nil
+	}
+
 	lines, err := readLastN(logPath, n)
 	if err != nil {
 		return err
 	}
 
+	var malformed int
 	for _, line := range lines {
 		if jsonMode {
 			fmt.Println(line)
 			continue
 		}
-		renderLine(line)
+		if !renderLine(line) {
+			malformed++
+		}
+	}
+	if malformed > 0 {
+		fmt.Fprintf(os.Stderr, "warning: skipped %d malformed entries\n", malformed)
 	}
 	return nil
 }
 
-// logShow filters the command log by entity, actor, and/or since, then prints.
-// Flags: --entity <id>, --actor <name>, --since <duration>, --json.
+// logShow filters the command log by entity, actor, command, and/or since, then prints.
+// Flags: --entity <id>, --actor <name>, --command <substring>, --since <duration>, --json.
+// At least one filter is required. Multiple filters use AND semantics.
 func logShow(logPath string, args []string) error {
-	var entityFilter, actorFilter string
+	var entityFilter, actorFilter, commandFilter string
 	var sinceFilter time.Time
 	jsonMode := false
 
@@ -95,6 +113,12 @@ func logShow(logPath string, args []string) error {
 			}
 			i++
 			actorFilter = args[i]
+		case "--command":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--command requires a value")
+			}
+			i++
+			commandFilter = args[i]
 		case "--since":
 			if i+1 >= len(args) {
 				return fmt.Errorf("--since requires a value")
@@ -112,19 +136,22 @@ func logShow(logPath string, args []string) error {
 		}
 	}
 
-	if entityFilter == "" && actorFilter == "" && sinceFilter.IsZero() {
-		return fmt.Errorf("usage: gt log show --entity <id> | --actor <name> | --since <duration>")
+	if entityFilter == "" && actorFilter == "" && commandFilter == "" && sinceFilter.IsZero() {
+		return fmt.Errorf("usage: gt log show --entity <id> | --actor <name> | --command <substring> | --since <duration>")
 	}
 
+	// Friendly message for missing file — not an error.
 	f, err := os.Open(logPath)
 	if os.IsNotExist(err) {
-		return fmt.Errorf("commands.log not found at %s (no commands have been logged yet)", logPath)
+		fmt.Println(noLogMessage)
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("opening commands.log: %w", err)
 	}
 	defer f.Close()
 
+	var malformed int
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -134,7 +161,8 @@ func logShow(logPath string, args []string) error {
 
 		var entry cmdlog.Entry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue // skip malformed lines
+			malformed++
+			continue
 		}
 
 		if !sinceFilter.IsZero() && entry.Timestamp.Before(sinceFilter) {
@@ -146,12 +174,18 @@ func logShow(logPath string, args []string) error {
 		if entityFilter != "" && !matchesEntity(entry, entityFilter) {
 			continue
 		}
+		if commandFilter != "" && !strings.Contains(strings.Join(entry.Args, " "), commandFilter) {
+			continue
+		}
 
 		if jsonMode {
 			fmt.Println(line)
 		} else {
 			renderEntry(entry)
 		}
+	}
+	if malformed > 0 {
+		fmt.Fprintf(os.Stderr, "warning: skipped %d malformed entries\n", malformed)
 	}
 	return scanner.Err()
 }
@@ -160,6 +194,7 @@ func logShow(logPath string, args []string) error {
 // Filter forms:
 //   - "nc-56" or "CT-100" -> matches entity "ticket=<number>"
 //   - "type=id" (e.g. "ticket=56", "agent=copper") -> exact entity match
+//   - bare number (e.g. "56") -> matches any entity with that id across all types
 //   - bare name (e.g. "copper") -> matches entity "agent=<name>"
 func matchesEntity(entry cmdlog.Entry, filter string) bool {
 	canonical := canonicalEntity(filter)
@@ -172,7 +207,8 @@ func matchesEntity(entry cmdlog.Entry, filter string) bool {
 }
 
 // canonicalEntity converts a user-supplied entity filter to the form stored
-// in log entries ("type=id"). E.g. "nc-56" -> "ticket=56", "copper" -> "agent=copper".
+// in log entries ("type=id"). E.g. "nc-56" -> "ticket=56", "copper" -> "agent=copper",
+// "56" -> "=56" (matches any entity type with id 56 via substring match).
 func canonicalEntity(s string) string {
 	// Already in "type=id" form.
 	if strings.Contains(s, "=") {
@@ -185,17 +221,18 @@ func canonicalEntity(s string) string {
 			return "ticket=" + suffix
 		}
 	}
-	// Bare name -- assume agent.
+	// Bare number — "=N" matches any entity with that id via strings.Contains.
+	if _, err := strconv.Atoi(s); err == nil {
+		return "=" + s
+	}
+	// Bare name — assume agent.
 	return "agent=" + s
 }
 
 // readLastN returns the last n non-empty lines from path.
-// Returns nil (no error) if the file does not exist.
+// Caller is responsible for checking file existence before calling.
 func readLastN(path string, n int) ([]string, error) {
 	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, fmt.Errorf("opening commands.log: %w", err)
 	}
@@ -217,13 +254,14 @@ func readLastN(path string, n int) ([]string, error) {
 	return lines, nil
 }
 
-// renderLine parses a raw JSONL line and renders it; skips malformed lines.
-func renderLine(raw string) {
+// renderLine parses a raw JSONL line and renders it. Returns false for malformed lines.
+func renderLine(raw string) bool {
 	var entry cmdlog.Entry
 	if err := json.Unmarshal([]byte(raw), &entry); err != nil {
-		return
+		return false
 	}
 	renderEntry(entry)
+	return true
 }
 
 // renderEntry prints a human-readable single-line summary of an entry,
