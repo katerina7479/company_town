@@ -2410,9 +2410,12 @@ func TestHandlePREvents_mergeableAfterConflict_movesToPROpen(t *testing.T) {
 	}
 }
 
-func TestHandlePREvents_dirtyMergeability_movesToMergeConflict(t *testing.T) {
-	architectSession := "ct-architect"
-	d, issues, _, _ := newTestDaemonWithSessions(t, []string{architectSession})
+func TestHandlePREvents_dirtyMergeability_isNoop(t *testing.T) {
+	// DIRTY is a value of the mergeStateStatus field, not the mergeable field.
+	// getPRStateFn only fetches the mergeable field, so "DIRTY" arriving in
+	// the mergeable slot is unrecognised — it falls through to checkForHumanComments
+	// without touching the ticket status.
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "pr_open")
@@ -2425,8 +2428,71 @@ func TestHandlePREvents_dirtyMergeability_movesToMergeConflict(t *testing.T) {
 	d.handlePREvents()
 
 	updated, _ := issues.Get(id)
+	if updated.Status != "pr_open" {
+		t.Errorf("expected status=pr_open (no change for DIRTY), got %q", updated.Status)
+	}
+}
+
+// TestHandlePREvents_unknownIsNoop guards against the UNKNOWN transient state
+// flipping a merge_conflict ticket back to pr_open. GitHub returns UNKNOWN for
+// ~5s after any push while it re-computes mergeability asynchronously.
+func TestHandlePREvents_unknownIsNoop(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 112)
+
+	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
+		return "OPEN", "UNKNOWN", false, nil
+	}
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
 	if updated.Status != "merge_conflict" {
-		t.Errorf("expected status=merge_conflict for DIRTY PR, got %q", updated.Status)
+		t.Errorf("expected status=merge_conflict unchanged on UNKNOWN mergeability, got %q", updated.Status)
+	}
+}
+
+// TestHandlePRConflicting_skipsNonPROpenStatus verifies that the conflict handler
+// only fires when the ticket is in pr_open. The non-obvious case is under_review:
+// the reviewer still owns the ticket in that state and the daemon must not grab it
+// even if the branch is dirty — the reviewer decides what to do with the PR.
+func TestHandlePRConflicting_skipsNonPROpenStatus(t *testing.T) {
+	statuses := []struct {
+		status  string
+		comment string
+	}{
+		{"draft", ""},
+		{"open", ""},
+		{"in_progress", ""},
+		{"in_review", ""},
+		{"under_review", "reviewer owns this ticket — daemon must not touch it"},
+		{"repairing", ""},
+		{"reviewed", ""},
+		{"closed", ""},
+	}
+
+	for _, tc := range statuses {
+		t.Run(tc.status, func(t *testing.T) {
+			d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+			id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+			issues.UpdateStatus(id, tc.status)
+			issues.SetPR(id, 200)
+
+			d.getPRStateFn = func(prNum int) (string, string, bool, error) {
+				return "OPEN", "CONFLICTING", false, nil
+			}
+
+			d.handlePREvents()
+
+			updated, _ := issues.Get(id)
+			if updated.Status != tc.status {
+				t.Errorf("status %q: expected no change (got %q)", tc.status, updated.Status)
+			}
+		})
 	}
 }
 

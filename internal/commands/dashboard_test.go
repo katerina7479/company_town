@@ -1364,3 +1364,22 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 		t.Errorf("renderIssueRow for epic at depth=1 should contain type letter E, got: %q", row)
 	}
 }
+
+func TestColorStatus_mergeConflict(t *testing.T) {
+	// merge_conflict must render as a non-empty styled string distinct from
+	// the repairing style, so the dashboard operator can visually distinguish
+	// "needs conflict resolution" from "prole is fixing reviewer feedback".
+	mc := colorStatus("merge_conflict")
+	if mc == "" {
+		t.Fatal("colorStatus(merge_conflict) returned empty string")
+	}
+	// The rendered output must contain the status text.
+	if !strings.Contains(mc, "merge_conflict") {
+		t.Errorf("colorStatus(merge_conflict) output %q does not contain status text", mc)
+	}
+	// It must differ from the repairing style.
+	rep := colorStatus("repairing")
+	if mc == rep {
+		t.Errorf("colorStatus(merge_conflict) == colorStatus(repairing): expected distinct styles")
+	}
+}

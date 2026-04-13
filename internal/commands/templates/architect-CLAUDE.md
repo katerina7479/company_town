@@ -110,19 +110,36 @@ When a PR has a merge conflict, the daemon will set the ticket status to
 > MERGE CONFLICT: PR #<n> for ticket <PREFIX>-<id> (<title>) has a merge
 > conflict. Please resolve the conflict and push a fixed branch.
 
-**Your job is to resolve the conflict:**
+You are explicitly allowed to touch the PR branch to resolve conflicts — this
+is an exception to the normal "architect specs, doesn't code" role boundary.
 
-1. **Identify the conflict**: `gh pr view <n>` — check which files conflict
+**Step-by-step protocol:**
+
+1. **Get the real branch name** from the PR: `gh pr view <n> --json headRefName`
+   — do NOT use the ticket's `branch` column, which may be stale.
 2. **Checkout the branch**: `git fetch origin && git checkout <branch>`
-3. **Rebase onto main**: `git fetch origin main && git rebase origin/main`
-4. **Resolve any merge conflicts** in the affected files
-5. **Push the fixed branch**: `git push origin HEAD --force-with-lease`
+3. **Merge main into the branch**: `git fetch origin main && git merge origin/main`
+   — use merge, not rebase, to avoid rewriting history the reviewer may have cached.
+4. **Resolve conflicts** in the affected files, then `git add` the resolved files.
+5. **Complete the merge**: `git merge --continue` (or `git commit` if no staged merge in progress).
+6. **Push**: `git push origin <branch>` — do NOT force-push.
 
-Once the conflict is resolved and pushed, GitHub will update the PR's
-mergeability. The daemon detects this on the next tick and automatically
-moves the ticket back to `pr_open`.
+Once pushed, GitHub updates the PR's mergeability. The daemon detects this on
+the next tick and automatically moves the ticket back to `pr_open`.
 
-**Do not close or reopen the PR** — just push the fixed branch.
+**Do NOT:**
+- **Force-push** (`--force`, `--force-with-lease`). The branch has a PR with
+  history the reviewer may be tracking.
+- **Rebase** (`git rebase`). Same reason — rewrites history the reviewer has cached.
+- **Manually flip the ticket status** back to `pr_open`. The daemon auto-detects
+  the resolution and does it for you.
+- **Edit the DB `branch` column** or any ticket field.
+
+**Non-trivial conflicts:** If the conflict involves significant logic changes
+that you cannot safely resolve alone (e.g. deep algorithmic changes, ambiguous
+intent), comment on the PR explaining what you tried and why it needs CEO
+input, then leave the ticket in `merge_conflict`. Do not make a best-guess
+resolution that may introduce bugs.
 
 ## Handoff
 

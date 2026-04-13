@@ -405,7 +405,7 @@ func (d *Daemon) poll() {
 //	drafts       — draft tickets found this tick
 //	assign       — selectable tickets / available slots / actually assigned
 //	inReview     — in_review tickets with a PR number
-//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved / conflict / conflict-resolved
+//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved
 //	epics        — completable epics found
 //	quality      — "ran" when baseline executed, "skip" when interval-guarded
 func logTickSummary(logger *log.Logger, obs tickObservations) {
@@ -1011,13 +1011,17 @@ func (d *Daemon) handlePREvents() {
 }
 
 // handleOpenPR dispatches OPEN PR events based on mergeability and current ticket status.
+// UNKNOWN is a no-op: GitHub returns this transiently while re-computing mergeability
+// (e.g. for ~5s after a push). Neither transition fires — we check for human comments
+// but do not change ticket status, so a merge_conflict ticket never flips back to pr_open
+// until GitHub explicitly confirms MERGEABLE.
+// under_review is also a no-op for conflict detection: the reviewer still owns the ticket
+// in that state, so the daemon must not grab it even if the branch is dirty.
 func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable string) {
-	conflicting := mergeable == "CONFLICTING" || mergeable == "DIRTY"
-
 	switch {
-	case conflicting && issue.Status == "pr_open":
+	case mergeable == "CONFLICTING" && issue.Status == "pr_open":
 		d.handlePRConflict(issue, prNum)
-	case !conflicting && issue.Status == "merge_conflict":
+	case mergeable == "MERGEABLE" && issue.Status == "merge_conflict":
 		d.handlePRConflictResolved(issue, prNum)
 	default:
 		d.checkForHumanComments(issue, prNum)
