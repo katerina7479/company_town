@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -144,21 +145,6 @@ type flatNode struct {
 	depth int
 }
 
-// validTicketStatuses is the set of status values accepted by the dashboard's
-// status-change input. Validated here so a typo cannot silently corrupt the DB.
-var validTicketStatuses = map[string]bool{
-	"draft":        true,
-	"open":         true,
-	"in_progress":  true,
-	"in_review":    true,
-	"under_review": true,
-	"pr_open":      true,
-	"reviewed":     true,
-	"repairing":    true,
-	"on_hold":      true,
-	"closed":       true,
-}
-
 // dashboardModel is the bubbletea model for the dashboard.
 type dashboardModel struct {
 	conn   interface{ Close() error }
@@ -266,7 +252,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				case "status":
 					if m.inputBuffer != "" {
-						if !validTicketStatuses[m.inputBuffer] {
+						if !slices.Contains(repo.ValidStatuses, m.inputBuffer) {
 							m.statusMsg = fmt.Sprintf("invalid status %q", m.inputBuffer)
 						} else if id, err := strconv.Atoi(m.inputTarget); err != nil {
 							m.statusMsg = "internal error: bad ticket id"
