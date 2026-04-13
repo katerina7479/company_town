@@ -3,7 +3,9 @@ package commands
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -122,9 +124,10 @@ func formatDuration(d time.Duration) string {
 
 // dashboardData holds a snapshot fetched from the database.
 type dashboardData struct {
-	agents []*repo.Agent
-	roots  []*repo.IssueNode
-	err    error
+	agents         []*repo.Agent
+	roots          []*repo.IssueNode
+	lastDaemonTick *time.Time
+	err            error
 }
 
 // tickMsg triggers a periodic refresh.
@@ -163,6 +166,7 @@ type dashboardModel struct {
 	height int
 
 	ticketPrefix string // from config, used in status-change label
+	tickFile     string // path to daemon-tick file; empty disables reading
 
 	focusedPanel int // 0 = agents, 1 = tickets
 	agentCursor  int
@@ -189,6 +193,7 @@ func newDashboardModel() (*dashboardModel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
+	ctDir := filepath.Join(cfg.ProjectRoot, ".company_town")
 	return &dashboardModel{
 		conn:          conn,
 		agents:        repo.NewAgentRepo(conn, nil),
@@ -200,6 +205,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		sleepFn:       time.Sleep,
 		expanded:      make(map[int]bool),
 		ticketPrefix:  cfg.TicketPrefix,
+		tickFile:      filepath.Join(ctDir, "daemon-tick"),
 	}, nil
 }
 
@@ -212,7 +218,15 @@ func (m *dashboardModel) fetch() tea.Msg {
 	if err != nil {
 		return dataMsg{err: err}
 	}
-	return dataMsg{agents: agents, roots: roots}
+	var lastTick *time.Time
+	if m.tickFile != "" {
+		if data, err := os.ReadFile(m.tickFile); err == nil {
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data))); err == nil {
+				lastTick = &t
+			}
+		}
+	}
+	return dataMsg{agents: agents, roots: roots, lastDaemonTick: lastTick}
 }
 
 func tickCmd() tea.Cmd {
@@ -567,6 +581,11 @@ func (m dashboardModel) View() string {
 			hint += fmt.Sprintf("  enter expand  o open PR  c change status  C new ticket  f[%s]filter closed", filterFlag)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
+		daemonTickStr := "daemon: never"
+		if m.data.lastDaemonTick != nil {
+			daemonTickStr = fmt.Sprintf("daemon: %s ago", formatDuration(time.Since(*m.data.lastDaemonTick)))
+		}
+		hint += "  " + daemonTickStr
 		parts := []string{hint}
 		if m.statusMsg != "" {
 			parts = append(parts, "  "+m.statusMsg)

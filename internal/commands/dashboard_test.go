@@ -3,6 +3,8 @@ package commands
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1050,5 +1052,83 @@ func TestWordWrap_multipleInputLinesPreserved(t *testing.T) {
 	}
 	if lines[0] != "line one" || lines[1] != "line two" {
 		t.Errorf("unexpected multiline result: %q", got)
+	}
+}
+
+// --- daemon tick file tests (NC-57) ---
+
+func TestFetch_populatesLastDaemonTickFromFile(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+
+	dir := t.TempDir()
+	tickFile := filepath.Join(dir, "daemon-tick")
+	tickTime := time.Now().Truncate(time.Second)
+	if err := os.WriteFile(tickFile, []byte(tickTime.Format(time.RFC3339)), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m.tickFile = tickFile
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick == nil {
+		t.Fatal("expected lastDaemonTick to be populated from tick file")
+	}
+	if !msg.lastDaemonTick.Equal(tickTime) {
+		t.Errorf("expected tick time %v, got %v", tickTime, *msg.lastDaemonTick)
+	}
+}
+
+func TestFetch_lastDaemonTickNilWhenNoFile(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.tickFile = filepath.Join(t.TempDir(), "nonexistent-daemon-tick")
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick != nil {
+		t.Errorf("expected lastDaemonTick=nil when file missing, got %v", msg.lastDaemonTick)
+	}
+}
+
+func TestFetch_lastDaemonTickNilWhenTickFileEmpty(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+
+	dir := t.TempDir()
+	tickFile := filepath.Join(dir, "daemon-tick")
+	if err := os.WriteFile(tickFile, []byte(""), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	m.tickFile = tickFile
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick != nil {
+		t.Errorf("expected lastDaemonTick=nil for empty tick file, got %v", msg.lastDaemonTick)
+	}
+}
+
+func TestFetch_lastDaemonTickNilWhenTickFileDisabled(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.tickFile = "" // disabled
+
+	msg := m.fetch().(dataMsg)
+	if msg.lastDaemonTick != nil {
+		t.Errorf("expected lastDaemonTick=nil when tickFile disabled, got %v", msg.lastDaemonTick)
 	}
 }

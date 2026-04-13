@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -1807,4 +1809,38 @@ func TestMakeRestartFn_AcceptsArchitect(t *testing.T) {
 	if err != nil && strings.Contains(err.Error(), "unsupported agent type") {
 		t.Errorf("makeRestartFn rejected architect agent type: %v", err)
 	}
+}
+
+// --- daemon tick file tests (NC-57) ---
+
+func TestPoll_writesTickFile(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	dir := t.TempDir()
+	tickFile := filepath.Join(dir, "daemon-tick")
+	d.tickFile = tickFile
+
+	before := time.Now().Truncate(time.Second)
+	d.poll()
+
+	data, err := os.ReadFile(tickFile)
+	if err != nil {
+		t.Fatalf("tick file not written: %v", err)
+	}
+
+	tick, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("invalid timestamp in tick file: %v", err)
+	}
+	if tick.Before(before) {
+		t.Errorf("tick time %v is before poll start %v", tick, before)
+	}
+}
+
+func TestPoll_skipsTickFileWhenEmpty(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	d.tickFile = "" // disabled
+
+	// Should not panic or attempt to write.
+	d.poll()
 }

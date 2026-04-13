@@ -59,6 +59,10 @@ type Daemon struct {
 
 	// Review comment fetching (injectable for tests)
 	getReviewCommentsFn func(prNum int) ([]prComment, error)
+
+	// tickFile is the path to the file where the last poll timestamp is written.
+	// Empty string disables the write (e.g., in tests).
+	tickFile string
 }
 
 // New creates a new Daemon.
@@ -113,6 +117,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		restartCooldown:    time.Duration(cfg.RestartCooldownSeconds) * time.Second,
 		lastRestartedAt:    make(map[string]time.Time),
 		restartAgent:       makeRestartFn(cfg, agentRepo, logger),
+		tickFile:           filepath.Join(ctDir, "daemon-tick"),
 	}, nil
 }
 
@@ -328,6 +333,9 @@ func (d *Daemon) poll() {
 	d.handlePREvents()
 	d.handleEpicAutoClose()
 	d.handleQualityBaseline()
+	if d.tickFile != "" {
+		_ = os.WriteFile(d.tickFile, []byte(d.nowFn().Format(time.RFC3339)), 0644)
+	}
 }
 
 // handleStaleWorktrees prunes git worktrees belonging to dead prole agents when they
