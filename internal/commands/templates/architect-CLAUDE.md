@@ -156,12 +156,29 @@ When context reaches the threshold (or you're instructed to hand off):
 
 The next Architect session reads `handoff.md` on start and resumes.
 
+## Triage: ticket in unexpected state?
+
+If a ticket is in a state that doesn't make sense, run:
+
+```bash
+gt log show --entity <ticket-id>   # e.g. gt log show --entity nc-56
+```
+
+This shows every `gt`/`ct` command that touched the ticket — actor, args,
+before/after values, and timestamp. Start here before reading `daemon.log`.
+
 ## Key Commands
 
 ```bash
 # Tickets
 gt ticket create <title> --parent <id> --specialty <s>
 gt ticket status <id> <status>
+
+# Audit log
+gt log tail [-n N]
+gt log show --entity <ticket-id>
+gt log show --actor <name>
+gt log show --since <duration>
 
 # System
 gt status

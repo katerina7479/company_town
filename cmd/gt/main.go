@@ -19,7 +19,7 @@ func main() {
 
 	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "ticket", "prole", "agent", "pr", "create", "start", "stop", "status", "check", "migrate":
+	case "ticket", "prole", "agent", "pr", "create", "start", "stop", "status", "check", "migrate", "log":
 		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
@@ -49,6 +49,8 @@ func main() {
 			return gtcmd.Create(args)
 		case "migrate":
 			return gtcmd.Migrate()
+		case "log":
+			return gtcmd.Log(args)
 		}
 		return nil
 	})
@@ -91,5 +93,6 @@ Commands:
   stop <agent>                                                   Stop an agent (graceful)
   status                                                         Print system status
   check <run|list|history>                                       Run and view quality checks
-  migrate                                                        Apply pending database migrations`)
+  migrate                                                        Apply pending database migrations
+  log <tail|show> [flags]                                        Read the command audit log`)
 }
