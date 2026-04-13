@@ -212,7 +212,7 @@ Migrations are embedded in `internal/db/migrations/` and run automatically on `c
 
 | Field | Purpose |
 |---|---|
-| `ticket_prefix` | Used in branch and PR titles (e.g. `nc` → `[NC-42]`, `prole/iron/42`). |
+| `ticket_prefix` | Used in branch and PR titles (e.g. `nc` → `[nc-42]`, `prole/iron/nc-42`). |
 | `github_repo` | SSH or HTTPS URL of the upstream repo. Proles push here. |
 | `dolt.host` / `dolt.port` / `dolt.database` | Local Dolt server location. |
 | `max_proles` | Hard cap on concurrent proles. The daemon respects this. |

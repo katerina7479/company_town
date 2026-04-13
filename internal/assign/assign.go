@@ -21,7 +21,7 @@ func Execute(cfg *config.Config, issues *repo.IssueRepo, agents *repo.AgentRepo,
 			return fmt.Errorf("creating prole %s: %w", proleName, err)
 		}
 	}
-	branch := fmt.Sprintf("prole/%s/%s-%d", proleName, cfg.TicketPrefix, ticketID)
+	branch := config.ProleBranchName(cfg.TicketPrefix, proleName, ticketID)
 	if err := issues.Assign(ticketID, proleName, branch); err != nil {
 		return fmt.Errorf("assigning ticket %d: %w", ticketID, err)
 	}
