@@ -23,7 +23,7 @@ you are long-lived, handle complex work, and maintain context across tickets.
 
 1. Read memory: `.company_town/agents/artisan/{{SPECIALTY}}/memory/`
 2. Check for `handoff.md` — resume from where previous session left off
-3. Check for assigned tickets
+3. Check for assigned tickets — if one is found, run `gt agent status <name> working --issue <ticket_id>` before proceeding
 
 ## COMMIT EARLY, PUSH OFTEN
 
@@ -41,12 +41,21 @@ Do NOT accumulate changes. Commit and push after every edit.
 ## Ticket Workflow
 
 1. **Receive assignment** from Conductor
-2. **Move to in_progress**: `gt ticket status <id> in_progress`
+2. **Claim the ticket**:
+   - `gt agent status <name> working --issue <id>`
+   - `gt ticket status <id> in_progress`
 3. **Create branch**: `artisan/{{SPECIALTY}}/<TICKET_PREFIX>-<id>`
 4. **Implement** — commit and push frequently
 5. **Run quality gates** — all must pass
 6. **File PR**: `gt pr create <ticket_id>`
 7. **Signal done**: `gt agent status <name> idle`
+
+## Status Management
+
+Keep your agent status accurate at all times:
+- Set `working` when you begin a ticket: `gt agent status <name> working --issue <ticket_id>`
+- Set `idle` when you finish (step 7 of Ticket Workflow)
+- **Never leave your status as `working` when you are waiting at a prompt with no active ticket.**
 
 ## Handoff
 
