@@ -35,12 +35,14 @@ type tickObservations struct {
 	assignSlots      int  // available prole slot count
 	assignPaired     int  // tickets actually assigned
 	inReview         int  // in_review tickets with a PR number
-	prEventsTotal    int  // tickets with PRs checked
-	prEventsMerged   int  // PRs merged this tick
-	prEventsRepairing int // open PRs moved to repairing (human comment)
-	prEventsClosed   int  // PRs closed without merge
-	epics            int  // completable epics found
-	qualitySkip      bool // quality baseline was interval-guarded
+	prEventsTotal            int  // tickets with PRs checked
+	prEventsMerged           int  // PRs merged this tick
+	prEventsRepairing        int  // open PRs moved to repairing (human comment)
+	prEventsClosed           int  // PRs closed without merge
+	prEventsConflict         int  // pr_open PRs moved to merge_conflict
+	prEventsConflictResolved int  // merge_conflict PRs moved back to pr_open
+	epics                    int  // completable epics found
+	qualitySkip              bool // quality baseline was interval-guarded
 }
 
 // Daemon polls for state changes and routes work to agents.
@@ -93,6 +95,9 @@ type Daemon struct {
 
 	// Review comment fetching (injectable for tests)
 	getReviewCommentsFn func(prNum int) ([]prComment, error)
+
+	// PR state fetching (injectable for tests)
+	getPRStateFn func(prNum int) (state, mergeable string, merged bool, err error)
 
 	// tickFile is the path to the file where the last poll timestamp is written.
 	// Empty string disables the write (e.g., in tests).
@@ -418,7 +423,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //
 // Format:
 //
-//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N epics=N quality=skip|ran
+//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N/N/N epics=N quality=skip|ran
 //
 // Fields:
 //
@@ -428,7 +433,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //	drafts       — draft tickets found this tick
 //	assign       — selectable tickets / available slots / actually assigned
 //	inReview     — in_review tickets with a PR number
-//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge
+//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved
 //	epics        — completable epics found
 //	quality      — "ran" when baseline executed, "skip" when interval-guarded
 func logTickSummary(logger *log.Logger, obs tickObservations) {
@@ -440,7 +445,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 	if obs.qualitySkip {
 		quality = "skip"
 	}
-	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d epics=%d quality=%s",
+	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d/%d/%d epics=%d quality=%s",
 		obs.dead,
 		worktrees,
 		obs.prBackfillFound, obs.prBackfillDone,
@@ -448,6 +453,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 		obs.assignCandidates, obs.assignSlots, obs.assignPaired,
 		obs.inReview,
 		obs.prEventsTotal, obs.prEventsMerged, obs.prEventsRepairing, obs.prEventsClosed,
+		obs.prEventsConflict, obs.prEventsConflictResolved,
 		obs.epics,
 		quality,
 	)
@@ -1015,7 +1021,7 @@ func (d *Daemon) handlePREvents() {
 		}
 
 		prNum := int(issue.PRNumber.Int64)
-		state, merged, err := d.getPRState(prNum)
+		state, mergeable, merged, err := d.getPRState(prNum)
 		if err != nil {
 			d.logger.Printf("error checking PR #%d: %v", prNum, err)
 			continue
@@ -1027,8 +1033,26 @@ func (d *Daemon) handlePREvents() {
 		case state == "CLOSED":
 			d.handlePRClosed(issue)
 		case state == "OPEN":
-			d.checkForHumanComments(issue, prNum)
+			d.handleOpenPR(issue, prNum, mergeable)
 		}
+	}
+}
+
+// handleOpenPR dispatches OPEN PR events based on mergeability and current ticket status.
+// UNKNOWN is a no-op: GitHub returns this transiently while re-computing mergeability
+// (e.g. for ~5s after a push). Neither transition fires — we check for human comments
+// but do not change ticket status, so a merge_conflict ticket never flips back to pr_open
+// until GitHub explicitly confirms MERGEABLE.
+// under_review is also a no-op for conflict detection: the reviewer still owns the ticket
+// in that state, so the daemon must not grab it even if the branch is dirty.
+func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable string) {
+	switch {
+	case mergeable == "CONFLICTING" && issue.Status == "pr_open":
+		d.handlePRConflict(issue, prNum)
+	case mergeable == "MERGEABLE" && issue.Status == "merge_conflict":
+		d.handlePRConflictResolved(issue, prNum)
+	default:
+		d.checkForHumanComments(issue, prNum)
 	}
 }
 
@@ -1084,6 +1108,58 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 	}
 }
 
+// handlePRConflict moves a pr_open ticket to merge_conflict and nudges the architect.
+func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
+	d.logger.Printf("PR #%d has merge conflict for ticket %s-%d — moving to merge_conflict",
+		prNum, d.cfg.TicketPrefix, issue.ID)
+
+	if err := d.issues.UpdateStatus(issue.ID, "merge_conflict"); err != nil {
+		d.logger.Printf("error moving ticket %d to merge_conflict: %v", issue.ID, err)
+		return
+	}
+
+	if d.obs != nil {
+		d.obs.prEventsConflict++
+	}
+
+	architectSession := session.SessionName("architect")
+	if !d.sessionExists(architectSession) {
+		return
+	}
+
+	nudgeKey := fmt.Sprintf("merge_conflict:%d", issue.ID)
+	digest := fmt.Sprintf("%s-%d:conflict", d.cfg.TicketPrefix, issue.ID)
+	if !d.digestChanged(nudgeKey, digest) || !d.shouldNudge(nudgeKey) {
+		return
+	}
+
+	msg := fmt.Sprintf("MERGE CONFLICT: PR #%d for ticket %s-%d (%s) has a merge conflict. "+
+		"Please resolve the conflict and push a fixed branch.",
+		prNum, d.cfg.TicketPrefix, issue.ID, issue.Title)
+
+	if err := d.sendKeys(architectSession, msg); err != nil {
+		d.logger.Printf("error nudging architect about merge conflict on ticket %d: %v", issue.ID, err)
+	} else {
+		d.logger.Printf("nudged architect: merge conflict on ticket %s-%d", d.cfg.TicketPrefix, issue.ID)
+		d.recordNudge(nudgeKey, digest)
+	}
+}
+
+// handlePRConflictResolved moves a merge_conflict ticket back to pr_open when the conflict clears.
+func (d *Daemon) handlePRConflictResolved(issue *repo.Issue, prNum int) {
+	d.logger.Printf("PR #%d conflict resolved for ticket %s-%d — moving back to pr_open",
+		prNum, d.cfg.TicketPrefix, issue.ID)
+
+	if err := d.issues.UpdateStatus(issue.ID, "pr_open"); err != nil {
+		d.logger.Printf("error moving ticket %d back to pr_open: %v", issue.ID, err)
+		return
+	}
+
+	if d.obs != nil {
+		d.obs.prEventsConflictResolved++
+	}
+}
+
 func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 	// Only act when the ticket is in pr_open. During under_review the AI reviewer
 	// owns the ticket — any review posted in that window is its own work.
@@ -1126,23 +1202,27 @@ type prComment struct {
 	Body   string
 }
 
-func (d *Daemon) getPRState(prNum int) (state string, merged bool, err error) {
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt")
+func (d *Daemon) getPRState(prNum int) (state, mergeable string, merged bool, err error) {
+	if d.getPRStateFn != nil {
+		return d.getPRStateFn(prNum)
+	}
+	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt,mergeable")
 	cmd.Dir = d.cfg.ProjectRoot
 	out, err := runCmd(cmd)
 	if err != nil {
-		return "", false, fmt.Errorf("gh pr view: %w", err)
+		return "", "", false, fmt.Errorf("gh pr view: %w", err)
 	}
 
 	var result struct {
-		State    string  `json:"state"`
-		MergedAt *string `json:"mergedAt"`
+		State     string  `json:"state"`
+		MergedAt  *string `json:"mergedAt"`
+		Mergeable string  `json:"mergeable"`
 	}
 	if err := json.Unmarshal(out, &result); err != nil {
-		return "", false, fmt.Errorf("parsing PR state: %w", err)
+		return "", "", false, fmt.Errorf("parsing PR state: %w", err)
 	}
 
-	return result.State, result.MergedAt != nil, nil
+	return result.State, result.Mergeable, result.MergedAt != nil, nil
 }
 
 func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
