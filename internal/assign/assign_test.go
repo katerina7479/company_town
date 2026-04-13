@@ -54,7 +54,7 @@ func TestExecute_existingProle(t *testing.T) {
 	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
 		t.Errorf("expected assignee=copper, got %v", issue.Assignee)
 	}
-	wantBranch := "prole/copper/1"
+	wantBranch := "prole/copper/nc-1"
 	if !issue.Branch.Valid || issue.Branch.String != wantBranch {
 		t.Errorf("expected branch=%q, got %v", wantBranch, issue.Branch)
 	}
