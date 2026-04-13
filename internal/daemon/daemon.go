@@ -480,41 +480,41 @@ func (d *Daemon) handleIdleProleWorktrees() {
 }
 
 // handleIdleAssignedProles nudges idle proles that still have an assigned ticket
-// in open or repairing status. This covers the case where a prole returned to
-// idle (e.g. after filing a PR) but was re-assigned (e.g. sent back for repairs)
-// without its session being restarted — the normal assignment handler skips it
-// because the ticket already has an assignee, and the stuck-agent handler skips
-// it because the prole is not in working status. This handler closes that gap.
+// in open, in_progress, or repairing status. This covers the reconciler blind spot
+// where a prole returned to idle (e.g. after filing a PR or mid-session crash) but
+// its ticket still lists it as assignee — handleAssignments skips the ticket because
+// it already has an assignee, and handleStuckAgents skips the prole because it is
+// not in working status.
+//
+// Iterates from the tickets table (canonical source of truth), not the agents table.
+// This also catches the drift case where agents.current_issue was cleared but
+// tickets.assignee was not, which agent-first iteration would silently miss.
 //
 // Nudge key: "prole-resume:<name>:<ticket-id>" — per (prole, ticket) so a new
 // assignment re-primes immediately while a stuck prole is not spammed.
 func (d *Daemon) handleIdleAssignedProles() {
-	idleAgents, err := d.agents.FindIdle(nil)
+	candidates, err := d.issues.ListAssignedInStatuses("open", "in_progress", "repairing")
 	if err != nil {
-		d.logger.Printf("error listing idle agents: %v", err)
+		d.logger.Printf("handleIdleAssignedProles: listing candidates: %v", err)
 		return
 	}
 
-	for _, agent := range idleAgents {
+	for _, issue := range candidates {
+		if !issue.Assignee.Valid || issue.Assignee.String == "" {
+			continue
+		}
+		agentName := issue.Assignee.String
+
+		agent, err := d.agents.Get(agentName)
+		if err != nil {
+			// Agent not registered yet — not our concern.
+			continue
+		}
 		if agent.Type != "prole" {
 			continue
 		}
-		if !agent.CurrentIssue.Valid {
-			continue
-		}
-		ticketID := int(agent.CurrentIssue.Int64)
-
-		issue, err := d.issues.Get(ticketID)
-		if err != nil {
-			d.logger.Printf("handleIdleAssignedProles: getting ticket %d for prole %s: %v",
-				ticketID, agent.Name, err)
-			continue
-		}
-
-		if issue.Status != "open" && issue.Status != "repairing" {
-			continue
-		}
-		if !issue.Assignee.Valid || issue.Assignee.String != agent.Name {
+		if agent.Status != "idle" {
+			// Already working — no nudge needed.
 			continue
 		}
 
@@ -526,7 +526,7 @@ func (d *Daemon) handleIdleAssignedProles() {
 			continue
 		}
 
-		nudgeKey := fmt.Sprintf("prole-resume:%s:%d", agent.Name, ticketID)
+		nudgeKey := fmt.Sprintf("prole-resume:%s:%d", agentName, issue.ID)
 		if !d.shouldNudge(nudgeKey) {
 			continue
 		}
@@ -534,13 +534,13 @@ func (d *Daemon) handleIdleAssignedProles() {
 		msg := fmt.Sprintf(
 			"You are idle but ticket %s-%d is still assigned to you in [%s]. "+
 				"Please run 'gt ticket show %d', begin work on it per your startup protocol, and push when ready.",
-			d.cfg.TicketPrefix, ticketID, issue.Status, ticketID,
+			d.cfg.TicketPrefix, issue.ID, issue.Status, issue.ID,
 		)
 		if err := d.sendKeys(agent.TmuxSession.String, msg); err != nil {
-			d.logger.Printf("error nudging idle prole %s: %v", agent.Name, err)
+			d.logger.Printf("error nudging idle prole %s: %v", agentName, err)
 			continue
 		}
-		d.logger.Printf("nudged idle prole %s to resume %s-%d", agent.Name, d.cfg.TicketPrefix, ticketID)
+		d.logger.Printf("nudged idle prole %s to resume %s-%d", agentName, d.cfg.TicketPrefix, issue.ID)
 		d.recordNudge(nudgeKey, "")
 	}
 }
