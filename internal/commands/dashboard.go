@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"regexp"
 	"strings"
 	"time"
 
@@ -429,7 +430,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if node.PRNumber.Valid {
 						return m, m.openPRCmd(int(node.PRNumber.Int64))
 					}
-					m.statusMsg = "no PR for this ticket"
+					m.statusMsg = fmt.Sprintf("no PR for ticket %s-%d", m.ticketPrefix, node.ID)
 				}
 			}
 
@@ -537,12 +538,28 @@ func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 	}
 }
 
-// defaultOpenPR opens a PR in the browser via gh, capturing stderr so errors are surfaced.
+// ansiRe matches ANSI CSI escape sequences (e.g. color codes from gh output).
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// cleanStderr sanitises captured stderr for display in the dashboard status
+// line: strips ANSI CSI sequences and truncates to 200 bytes so the footer
+// stays on one line.
+func cleanStderr(s string) string {
+	s = ansiRe.ReplaceAllString(strings.TrimSpace(s), "")
+	const limit = 200
+	if len(s) > limit {
+		return s[:limit] + "..."
+	}
+	return s
+}
+
+// defaultOpenPR opens a PR in the browser via gh, capturing stderr so errors
+// are surfaced. Passes raw stderr through cleanStderr before wrapping.
 func defaultOpenPR(prNumber int) error {
 	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNumber), "--web")
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) > 0 {
-		return fmt.Errorf("%w\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%w: %s", err, cleanStderr(string(out)))
 	}
 	return err
 }

@@ -1440,3 +1440,26 @@ func TestOpenPRCmd_surfacesStderr(t *testing.T) {
 		t.Errorf("error %q does not include stderr text", msg.err.Error())
 	}
 }
+
+func TestCleanStderr_truncatesLongInput(t *testing.T) {
+	// 1KB of stderr — must be capped at 200 + "..." = 203 bytes
+	long := strings.Repeat("x", 1024)
+	got := cleanStderr(long)
+	if len(got) > 210 {
+		t.Errorf("cleanStderr length %d exceeds 210; status line would overflow", len(got))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("cleanStderr %q should end with ...", got)
+	}
+}
+
+func TestCleanStderr_stripsANSI(t *testing.T) {
+	input := "\x1b[31mred error text\x1b[0m"
+	got := cleanStderr(input)
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("cleanStderr still contains ANSI codes: %q", got)
+	}
+	if !strings.Contains(got, "red error text") {
+		t.Errorf("cleanStderr %q does not contain the plain text", got)
+	}
+}
