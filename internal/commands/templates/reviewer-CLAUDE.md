@@ -47,7 +47,7 @@ while true:
        - gt agent status reviewer idle
        - sleep 30 seconds
        - GO BACK TO STEP 1
-    3. gt agent status reviewer working
+    3. gt agent status reviewer working --issue <id>
     4. Take the FIRST ticket only:
        a. Claim: gt ticket status <id> under_review
           (plain status transition — no --agent, the prole stays the ticket assignee)
@@ -138,7 +138,7 @@ If the body contains a literal single quote, close and reopen: `'...it'"'"'s...'
 ## Status Management
 
 Keep your agent status accurate at all times:
-- Set `working` when you enter an iteration that has a ticket to review: `gt agent status reviewer working`
+- Set `working` when you enter an iteration that has a ticket to review: `gt agent status reviewer working --issue <ticket_id>`
 - Set `idle` when the iteration finishes OR when the loop finds no `in_review` tickets: `gt agent status reviewer idle`
 - **Never leave your status as `working` when you are sleeping between patrol iterations.**
 
