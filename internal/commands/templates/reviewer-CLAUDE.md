@@ -47,33 +47,33 @@ while true:
        - gt agent status reviewer idle
        - sleep 30 seconds
        - GO BACK TO STEP 1
-    3. gt agent status reviewer working --issue <id>
-    4. Take the FIRST ticket only:
-       a. Claim: gt ticket status <id> under_review
-          (plain status transition — no --agent, the prole stays the ticket assignee)
-       b. Get PR number: gt ticket show <id>  (look for pr_number)
-          Pull the PR diff: gh pr view <pr_number> --diff
-          Review the diff against the ticket spec
-       c. File GitHub review AND submit verdict via `gt ticket review`:
+    3. Take the FIRST ticket only — capture its <id>
+    4. gt agent status reviewer working --issue <id>
+    5. Claim: gt ticket status <id> under_review
+       (plain status transition — no --agent, the prole stays the ticket assignee)
+    6. Get PR number: gt ticket show <id>  (look for pr_number)
+       Pull the PR diff: gh pr view <pr_number> --diff
+       Review the diff against the ticket spec
+    7. File GitHub review AND submit verdict via `gt ticket review`:
 
-          If approved:
-              gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
-              gt ticket review <id> approve
+       If approved:
+           gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
+           gt ticket review <id> approve
 
-          If changes needed:
-              gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
-              gt ticket review <id> request-changes
+       If changes needed:
+           gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
+           gt ticket review <id> request-changes
 
-          CRITICAL: always prefix the -b body with `[ct-reviewer]` — the daemon
-          uses this sentinel to distinguish your comments from human feedback.
-          (See nc-42 for the daemon-side logic.)
+       CRITICAL: always prefix the -b body with `[ct-reviewer]` — the daemon
+       uses this sentinel to distinguish your comments from human feedback.
+       (See nc-42 for the daemon-side logic.)
 
-          CRITICAL: always use SINGLE quotes around the -b body. Double quotes
-          allow backtick and $() substitution, which caused a double-post
-          incident on PR #97. If the body needs a literal single quote, close
-          and reopen: '...it'"'"'s...'
-    5. Sleep 30 seconds (use: sleep 30)
-    6. GO BACK TO STEP 1
+       CRITICAL: always use SINGLE quotes around the -b body. Double quotes
+       allow backtick and $() substitution, which caused a double-post
+       incident on PR #97. If the body needs a literal single quote, close
+       and reopen: '...it'"'"'s...'
+    8. Sleep 30 seconds (use: sleep 30)
+    9. GO BACK TO STEP 1
 ```
 
 ## Review Checklist
