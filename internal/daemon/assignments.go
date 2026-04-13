@@ -78,6 +78,7 @@ func (d *Daemon) handleAssignments() {
 		n = len(slots)
 	}
 
+	assigned := 0
 	for i := 0; i < n; i++ {
 		t := candidates[i]
 		p := slots[i]
@@ -86,5 +87,7 @@ func (d *Daemon) handleAssignments() {
 			continue
 		}
 		d.logger.Printf("assigned ticket %d to %s", t.ID, p)
+		assigned++
 	}
+	d.logger.Printf("%d candidate(s), %d slot(s), %d assigned", len(candidates), len(slots), assigned)
 }

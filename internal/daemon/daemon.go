@@ -336,17 +336,30 @@ func ticketDigest(ids []int) string {
 }
 
 func (d *Daemon) poll() {
-	d.handleDeadSessions()
-	d.handleStaleWorktrees()
-	d.handleIdleProleWorktrees()
-	d.handleBackfillPRNumbers()
-	d.handleDraftTickets()
-	d.handleAssignments()
-	d.handleInReviewTickets()
-	d.handlePREvents()
-	d.handleEpicAutoClose()
-	d.handleQualityBaseline()
+	start := d.nowFn()
+	d.logger.Printf("[poll] tick start")
+
+	d.runStep("deadSessions", d.handleDeadSessions)
+	d.runStep("staleWorktrees", d.handleStaleWorktrees)
+	d.runStep("idleProleWorktrees", d.handleIdleProleWorktrees)
+	d.runStep("backfillPRNumbers", d.handleBackfillPRNumbers)
+	d.runStep("draftTickets", d.handleDraftTickets)
+	d.runStep("assignments", d.handleAssignments)
+	d.runStep("inReviewTickets", d.handleInReviewTickets)
+	d.runStep("prEvents", d.handlePREvents)
+	d.runStep("epicAutoClose", d.handleEpicAutoClose)
+	d.runStep("qualityBaseline", d.handleQualityBaseline)
+
+	d.logger.Printf("[poll] tick done (%dms)", d.nowFn().Sub(start).Milliseconds())
 	d.writeHeartbeat()
+}
+
+// runStep logs entry and elapsed time for a single poll step.
+func (d *Daemon) runStep(name string, fn func()) {
+	d.logger.Printf("[poll] step %s: enter", name)
+	start := d.nowFn()
+	fn()
+	d.logger.Printf("[poll] step %s: done (%dms)", name, d.nowFn().Sub(start).Milliseconds())
 }
 
 // writeHeartbeat stamps the current UTC time into d.tickFile so the dashboard
@@ -371,7 +384,8 @@ func (d *Daemon) writeHeartbeat() {
 // worktreeInterval so it does not spawn git subprocesses on every poll tick.
 func (d *Daemon) handleStaleWorktrees() {
 	if d.worktreeInterval > 0 && !d.nowFn().After(d.lastWorktreePrune.Add(d.worktreeInterval)) {
-		return // not yet time
+		d.logger.Printf("skipped (interval guard)")
+		return
 	}
 	if err := d.pruneStaleWorktrees(); err != nil {
 		d.logger.Printf("error pruning stale worktrees: %v", err)
@@ -388,6 +402,7 @@ func (d *Daemon) handleIdleProleWorktrees() {
 		return
 	}
 	if d.worktreeResetInterval > 0 && !d.nowFn().After(d.lastWorktreeReset.Add(d.worktreeResetInterval)) {
+		d.logger.Printf("skipped (interval guard)")
 		return
 	}
 	if err := d.resetIdleProleWorktrees(); err != nil {
@@ -400,7 +415,8 @@ func (d *Daemon) handleIdleProleWorktrees() {
 // to look up a matching open PR on GitHub. Guarded by prBackfillInterval.
 func (d *Daemon) handleBackfillPRNumbers() {
 	if d.prBackfillInterval > 0 && !d.nowFn().After(d.lastPRBackfill.Add(d.prBackfillInterval)) {
-		return // not yet time
+		d.logger.Printf("skipped (interval guard)")
+		return
 	}
 
 	tickets, err := d.issues.ListMissingPR()
@@ -464,6 +480,7 @@ func (d *Daemon) handleEpicAutoClose() {
 		return
 	}
 
+	d.logger.Printf("%d completable epic(s) found", len(epics))
 	for _, epic := range epics {
 		d.logger.Printf("auto-closing epic %s-%d (%s): all sub-tasks closed",
 			d.cfg.TicketPrefix, epic.ID, epic.Title)
@@ -546,7 +563,8 @@ func (d *Daemon) handleQualityBaseline() {
 		return // disabled
 	}
 	if !d.nowFn().After(d.lastQualityBaseline.Add(d.qualityInterval)) {
-		return // not yet time
+		d.logger.Printf("skipped (interval guard)")
+		return
 	}
 
 	d.logger.Printf("running quality baseline")
@@ -568,6 +586,8 @@ func (d *Daemon) handleDeadSessions() {
 		return
 	}
 
+	d.logger.Printf("%d agent(s) to check", len(agents))
+	deleted, marked := 0, 0
 	for _, agent := range agents {
 		if agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String) {
 			continue
@@ -581,6 +601,8 @@ func (d *Daemon) handleDeadSessions() {
 			}
 			if err := d.agents.Delete(agent.Name); err != nil {
 				d.logger.Printf("error deleting prole %s: %v", agent.Name, err)
+			} else {
+				deleted++
 			}
 			continue
 		}
@@ -591,8 +613,11 @@ func (d *Daemon) handleDeadSessions() {
 			agent.TmuxSession.String, agent.Name)
 		if err := d.agents.UpdateStatus(agent.Name, "dead"); err != nil {
 			d.logger.Printf("error marking agent %s dead: %v", agent.Name, err)
+		} else {
+			marked++
 		}
 	}
+	d.logger.Printf("%d prole(s) deleted, %d agent(s) marked dead", deleted, marked)
 }
 
 
@@ -786,6 +811,7 @@ func (d *Daemon) handlePREvents() {
 		return
 	}
 
+	d.logger.Printf("%d ticket(s) with PRs to check", len(tickets))
 	for _, issue := range tickets {
 		if !issue.PRNumber.Valid {
 			continue
