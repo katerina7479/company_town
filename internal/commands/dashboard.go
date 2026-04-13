@@ -622,20 +622,22 @@ func (m dashboardModel) renderTickets(width, height int) string {
 	sb.WriteString(headerStyle.Render("Tickets") + "\n\n")
 
 	focused := m.focusedPanel == 1
-	rowWidth := width
+	// innerWidth is the content area width: outer width minus border (2) and padding (2).
+	innerWidth := width - 4
+	rowWidth := innerWidth
 
 	flat := m.flatTickets()
 	if len(flat) == 0 {
 		sb.WriteString(footerStyle.Render("(no tickets)"))
 	} else {
 		for i, fn := range flat {
-			line := renderIssueRow(fn.node, fn.depth, width)
+			line := renderIssueRow(fn.node, fn.depth, innerWidth)
 			if focused && i == m.ticketCursor {
 				line = selectedStyle.Width(rowWidth).Render(line)
 			}
 			sb.WriteString(line + "\n")
 			if m.expanded[fn.node.ID] {
-				sb.WriteString(renderTicketDetails(fn.node, fn.depth, width))
+				sb.WriteString(renderTicketDetails(fn.node, fn.depth, innerWidth))
 			}
 		}
 	}
@@ -705,10 +707,11 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	const priorityWidth = 5 // visible chars: "[P0] " or "     "
 	pri := priorityCell(node.Priority)
 
-	// Truncate title so the row fits inside the panel.
+	// Truncate title so the row fits inside the panel content area.
+	// width here is the inner content width (outer panel width minus border and padding).
 	// prefix + space + id + space + status + space + priority + space + pr + space + age + space + title
 	fixedLen := len(prefix) + 1 + len(idStr) + 1 + len(statusStr) + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
-	titleMax := width - fixedLen - 2
+	titleMax := width - fixedLen
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"

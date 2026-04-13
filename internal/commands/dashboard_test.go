@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	lipgloss "github.com/charmbracelet/lipgloss"
 
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
@@ -1050,5 +1051,68 @@ func TestWordWrap_multipleInputLinesPreserved(t *testing.T) {
 	}
 	if lines[0] != "line one" || lines[1] != "line two" {
 		t.Errorf("unexpected multiline result: %q", got)
+	}
+}
+
+// --- renderIssueRow / selected-row wrapping tests (NC-45) ---
+
+// makeFullNode builds an IssueNode with all fields populated, for row-width tests.
+func makeFullNode(status, title string) *repo.IssueNode {
+	return &repo.IssueNode{Issue: &repo.Issue{
+		ID:       99,
+		Status:   status,
+		Title:    title,
+		PRNumber: sql.NullInt64{Int64: 42, Valid: true},
+		Priority: sql.NullString{String: "P1", Valid: true},
+	}}
+}
+
+func TestRenderIssueRow_fitsContentWidth(t *testing.T) {
+	// Verify that renderIssueRow never produces a row visually wider than the
+	// given content width, regardless of status length or title length.
+	contentWidth := 100
+	statuses := []string{"open", "in_progress", "in_review", "repairing", "closed"}
+	longTitle := strings.Repeat("A", 200) // much longer than any realistic width
+
+	for _, status := range statuses {
+		node := makeFullNode(status, longTitle)
+		row := renderIssueRow(node, 0, contentWidth)
+		// lipgloss.Width strips ANSI codes and returns the visual cell width.
+		got := lipgloss.Width(row)
+		if got > contentWidth {
+			t.Errorf("status=%q: row visual width %d exceeds content width %d",
+				status, got, contentWidth)
+		}
+	}
+}
+
+func TestRenderIssueRow_selectedRowDoesNotWrap(t *testing.T) {
+	// Regression test for NC-45: selectedStyle.Width(innerWidth) must not cause
+	// the selected row to wrap to a second line inside the panel content area.
+	contentWidth := 100
+	node := makeFullNode("open", strings.Repeat("B", 200))
+
+	row := renderIssueRow(node, 0, contentWidth)
+	rendered := selectedStyle.Width(contentWidth).Render(row)
+
+	// If wrapping occurs, lipgloss.Height > 1.
+	if h := lipgloss.Height(rendered); h != 1 {
+		t.Errorf("selected row wrapped to %d lines (expected 1); content width=%d",
+			h, contentWidth)
+	}
+}
+
+func TestRenderIssueRow_selectedRowDoesNotWrapShortStatus(t *testing.T) {
+	// "open" (4 chars) is the shortest status; it maximises the padding the
+	// selectedStyle adds, which was the source of the original wrap.
+	contentWidth := 80
+	node := makeFullNode("open", strings.Repeat("C", 200))
+
+	row := renderIssueRow(node, 0, contentWidth)
+	rendered := selectedStyle.Width(contentWidth).Render(row)
+
+	if h := lipgloss.Height(rendered); h != 1 {
+		t.Errorf("selected 'open' row wrapped to %d lines (expected 1); content width=%d",
+			h, contentWidth)
 	}
 }
