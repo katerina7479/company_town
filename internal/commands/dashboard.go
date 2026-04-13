@@ -283,11 +283,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.inputAction {
 				case "nudge":
 					if m.inputBuffer != "" {
-						sname := session.SessionName(m.inputTarget)
-						if m.sessionExists(sname) {
-							if err := m.sendKeys(sname, m.inputBuffer); err != nil {
-								m.statusMsg = "nudge failed: " + err.Error()
-							}
+						sname := m.agentSessionName(m.inputTarget)
+						if sname == "" {
+							m.statusMsg = fmt.Sprintf("agent %s has no tmux session recorded", m.inputTarget)
+						} else if err := m.sendKeys(sname, m.inputBuffer); err != nil {
+							m.statusMsg = "nudge failed: " + err.Error()
+						} else {
+							m.statusMsg = "nudged " + m.inputTarget
 						}
 					}
 				case "create_ticket":
@@ -410,8 +412,11 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
 				agent := m.data.agents[m.agentCursor]
-				sname := session.SessionName(agent.Name)
-				if m.sessionExists(sname) {
+				if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
+					m.statusMsg = fmt.Sprintf("agent %s has no tmux session recorded", agent.Name)
+				} else if !m.sessionExists(agent.TmuxSession.String) {
+					m.statusMsg = fmt.Sprintf("session %s not running", agent.TmuxSession.String)
+				} else {
 					m.inputMode = true
 					m.inputAction = "nudge"
 					m.inputTarget = agent.Name
@@ -488,6 +493,21 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// agentSessionName returns the recorded tmux session name for the agent with the
+// given name, by looking it up in the most recent data snapshot. Returns empty
+// string if the agent is not found or has no session recorded.
+func (m dashboardModel) agentSessionName(name string) string {
+	for _, a := range m.data.agents {
+		if a.Name == name {
+			if a.TmuxSession.Valid && a.TmuxSession.String != "" {
+				return a.TmuxSession.String
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // killAgentCmd kills the agent's tmux session and marks it dead in the DB.
