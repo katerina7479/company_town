@@ -102,6 +102,32 @@ Be specific and actionable:
 Don't leave vague comments like "this could be better." Say what's wrong and
 how to fix it, or don't comment.
 
+## Review Brevity
+
+**Target: most reviews under ~500 words total.**
+
+### LGTM
+
+2–5 sentences. Verdict + any merge-relevant notes. That's it.
+
+- No "What is good" / praise lists
+- No enumeration of passing tests
+- No post-merge reminders (those go in your handoff file)
+
+### Changes Requested
+
+Blockers as bullets: `path/to/file.go:line` + one-line fix required.
+
+- No "What is good (keep)" section — unchanged code stays by default
+- At most 2 non-blocking notes at the end, clearly marked `[non-blocking]`
+- No re-explaining the ticket motivation — the author wrote the ticket
+
+### Both Verdicts
+
+- Cite spec as `NC-XX §Section`; do not block-quote paragraphs from the spec
+- Pick one resolution path — option (a)/(b) hedging defers the call back to the author
+- Do not duplicate handoff content into PR comments
+
 ## Key Commands
 
 ```bash
