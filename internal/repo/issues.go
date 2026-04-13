@@ -3,6 +3,7 @@ package repo
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/katerina7479/company_town/internal/eventlog"
@@ -487,6 +488,46 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 	}
 	return issues, rows.Err()
 }
+
+// ListAssignedInStatuses returns issues whose status is one of the given values
+// AND that have a non-empty assignee. The result is ordered by id.
+// Passing no statuses returns an empty slice.
+func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, len(statuses))
+	for i, s := range statuses {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+
+	query := `SELECT id, issue_type, status, title, description, specialty, branch,
+	                 pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+	          FROM issues
+	          WHERE status IN (` + strings.Join(placeholders, ", ") + `)
+	            AND assignee IS NOT NULL AND assignee != ''
+	          ORDER BY id`
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing assigned issues in statuses: %w", err)
+	}
+	defer rows.Close()
+
+	var issues []*Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
 
 // ListEpicsWithAllChildrenClosed returns epics that are not closed but have at
 // least one child and all children are closed.
