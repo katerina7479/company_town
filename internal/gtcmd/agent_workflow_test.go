@@ -338,6 +338,122 @@ func TestAgentRelease_safeWhenAlreadyIdle(t *testing.T) {
 	}
 }
 
+// --- do tests ---
+
+// doCfg returns a config where the prole has a workflow with a custom action "submit".
+func doCfg() *config.Config {
+	return &config.Config{
+		TicketPrefix: "nc",
+		Agents: config.AgentsConfig{
+			Prole: config.AgentConfig{
+				Model: "sonnet",
+				Workflow: &config.WorkflowConfig{
+					Actions: map[string]*config.WorkflowAction{
+						"submit": {
+							TicketTransition: &config.TicketTransition{From: "in_progress", To: "in_review"},
+						},
+						"noop": {}, // non-nil action with no TicketTransition
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestAgentDo_happyPath(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, doCfg())
+	mustRegisterAgent(t, deps.agents, "copper", "prole")
+	id := mustCreateTicket(t, deps.issues, "in_progress")
+	setEnv(t, "CT_AGENT_NAME", "copper")
+
+	if err := agentDo(deps, []string{"submit", idStr(id)}); err != nil {
+		t.Fatalf("agentDo: %v", err)
+	}
+
+	issue, _ := deps.issues.Get(id)
+	if issue.Status != "in_review" {
+		t.Errorf("expected status=in_review, got %q", issue.Status)
+	}
+	// Agent row must be untouched (do does not modify agent).
+	agent, _ := deps.agents.Get("copper")
+	if agent.Status != "idle" {
+		t.Errorf("expected agent status=idle (unchanged), got %q", agent.Status)
+	}
+}
+
+func TestAgentDo_statusMismatchSkips(t *testing.T) {
+	deps, buf := setupWorkflowTest(t, doCfg())
+	mustRegisterAgent(t, deps.agents, "copper", "prole")
+	id := mustCreateTicket(t, deps.issues, "open") // wrong status
+	setEnv(t, "CT_AGENT_NAME", "copper")
+
+	if err := agentDo(deps, []string{"submit", idStr(id)}); err != nil {
+		t.Fatalf("agentDo: %v", err)
+	}
+
+	// Ticket status must be unchanged.
+	issue, _ := deps.issues.Get(id)
+	if issue.Status != "open" {
+		t.Errorf("expected status=open (unchanged), got %q", issue.Status)
+	}
+	// A note should have been printed to stderr.
+	deps.stderr.Close()
+	if buf.Len() == 0 {
+		t.Error("expected a note on stderr for status mismatch, got nothing")
+	}
+}
+
+func TestAgentDo_unknownActionErrors(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, doCfg())
+	mustRegisterAgent(t, deps.agents, "copper", "prole")
+	id := mustCreateTicket(t, deps.issues, "in_progress")
+	setEnv(t, "CT_AGENT_NAME", "copper")
+
+	err := agentDo(deps, []string{"no_such_action", idStr(id)})
+	if err == nil {
+		t.Fatal("expected error for unknown action, got nil")
+	}
+}
+
+func TestAgentDo_nilTransitionNoops(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, doCfg())
+	mustRegisterAgent(t, deps.agents, "copper", "prole")
+	id := mustCreateTicket(t, deps.issues, "in_progress")
+	setEnv(t, "CT_AGENT_NAME", "copper")
+
+	// "noop" action has a nil entry in the map.
+	if err := agentDo(deps, []string{"noop", idStr(id)}); err != nil {
+		t.Fatalf("agentDo noop: %v", err)
+	}
+
+	issue, _ := deps.issues.Get(id)
+	if issue.Status != "in_progress" {
+		t.Errorf("expected status=in_progress (unchanged), got %q", issue.Status)
+	}
+}
+
+func TestAgentDo_missingCTAgentNameErrors(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, doCfg())
+	unsetEnv(t, "CT_AGENT_NAME")
+
+	err := agentDo(deps, []string{"submit", "1"})
+	if err == nil {
+		t.Fatal("expected error for missing CT_AGENT_NAME, got nil")
+	}
+}
+
+func TestAgentDo_noWorkflowActionsErrors(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, proleCfg()) // prole has nil workflow
+	mustRegisterAgent(t, deps.agents, "copper", "prole")
+	id := mustCreateTicket(t, deps.issues, "in_progress")
+	setEnv(t, "CT_AGENT_NAME", "copper")
+
+	err := agentDo(deps, []string{"submit", idStr(id)})
+	if err == nil {
+		t.Fatal("expected error when no workflow actions configured, got nil")
+	}
+}
+
 // idStr converts an int to string for test argument slices.
 func idStr(id int) string {
 	return strconv.Itoa(id)

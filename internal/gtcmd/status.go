@@ -28,6 +28,8 @@ func Status() error {
 		return err
 	}
 
+	driftEntries, driftErr := repo.CheckDrift(agents, issues, cfg.TicketPrefix)
+
 	fmt.Println("=== Agents ===")
 	if len(allAgents) == 0 {
 		fmt.Println("  (none registered)")
@@ -38,6 +40,13 @@ func Status() error {
 			issue = fmt.Sprintf("  → %s-%d", cfg.TicketPrefix, a.CurrentIssue.Int64)
 		}
 		fmt.Printf("  %-20s %-10s %s%s\n", a.Name, a.Type, a.Status, issue)
+	}
+
+	if driftErr == nil && len(driftEntries) > 0 {
+		fmt.Println("\n=== Drift Warnings ===")
+		for _, d := range driftEntries {
+			fmt.Printf("  ⚠ DRIFT  %s\n", d.Reason)
+		}
 	}
 
 	fmt.Println("\n=== Tickets ===")

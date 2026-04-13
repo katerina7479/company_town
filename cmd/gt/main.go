@@ -55,6 +55,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Emit a rate-limited stderr warning if the caller's agent row has drifted.
+	// Skip on read-only introspection commands to avoid noise.
+	skipDrift := cmd == "status" || cmd == "check"
+	gtcmd.WarnDriftOnStdErr(skipDrift)
 }
 
 func printUsage() {
