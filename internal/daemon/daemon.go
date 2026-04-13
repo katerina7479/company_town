@@ -225,6 +225,7 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 			Model:    model,
 			AgentDir: agentDir,
 			Prompt:   prompt,
+			EnvVars:  map[string]string{"CT_AGENT_NAME": agent.Name},
 		}); err != nil {
 			agents.UpdateStatus(agent.Name, "dead") //nolint:errcheck
 			return fmt.Errorf("creating session for %s: %w", agent.Name, err)

@@ -47,6 +47,7 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 		Model:    model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	})
 	if err != nil {
 		return err
@@ -207,6 +208,7 @@ func Artisan(specialty string) error {
 		Model:    artisanCfg.Model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	})
 	if err != nil {
 		return err

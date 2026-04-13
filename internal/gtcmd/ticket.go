@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/katerina7479/company_town/internal/assign"
+	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/eventlog"
@@ -340,10 +341,17 @@ func ticketStatus(issues *repo.IssueRepo, args []string) error {
 
 	status := args[1]
 
+	// Capture before value for annotation; tolerate lookup failure.
+	var before string
+	if t, err := issues.Get(id); err == nil {
+		before = t.Status
+	}
+
 	if err := issues.UpdateStatus(id, status); err != nil {
 		return err
 	}
 
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), before, status)
 	fmt.Printf("Ticket %d → %s\n", id, status)
 	return nil
 }

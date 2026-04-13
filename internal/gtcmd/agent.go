@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 )
@@ -78,6 +79,12 @@ func agentStatus(agents *repo.AgentRepo, args []string) error {
 		}
 	}
 
+	// Capture before status for annotation; tolerate lookup failure.
+	var before string
+	if a, err := agents.Get(name); err == nil {
+		before = a.Status
+	}
+
 	switch {
 	case issueID != nil:
 		if status != "working" {
@@ -86,16 +93,19 @@ func agentStatus(agents *repo.AgentRepo, args []string) error {
 		if err := agents.SetCurrentIssue(name, issueID); err != nil {
 			return err
 		}
+		cmdlog.Annotate("agent="+name, before, "working")
 		fmt.Printf("Agent %s → working (issue %d)\n", name, *issueID)
 	case status == "idle":
 		if err := agents.ClearCurrentIssue(name); err != nil {
 			return err
 		}
+		cmdlog.Annotate("agent="+name, before, "idle")
 		fmt.Printf("Agent %s → idle\n", name)
 	default:
 		if err := agents.UpdateStatus(name, status); err != nil {
 			return err
 		}
+		cmdlog.Annotate("agent="+name, before, status)
 		fmt.Printf("Agent %s → %s\n", name, status)
 	}
 
