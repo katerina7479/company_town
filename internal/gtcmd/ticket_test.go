@@ -386,6 +386,102 @@ func TestTicketPrioritize_prefixedID(t *testing.T) {
 	}
 }
 
+func TestTicketType_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := ticketType(issues, []string{"1", "bug"}); err != nil {
+		t.Fatalf("ticketType: %v", err)
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.IssueType != "bug" {
+		t.Errorf("expected issue_type='bug', got %q", issue.IssueType)
+	}
+}
+
+func TestTicketType_allValidTypes(t *testing.T) {
+	for _, typ := range repo.ValidTypes {
+		t.Run(typ, func(t *testing.T) {
+			issues := setupTicketTestRepo(t)
+
+			_, err := issues.Create("A task", "task", nil, nil, nil)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+
+			if err := ticketType(issues, []string{"1", typ}); err != nil {
+				t.Errorf("ticketType with %q: unexpected error: %v", typ, err)
+			}
+		})
+	}
+}
+
+func TestTicketType_invalidType(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	_, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	err = ticketType(issues, []string{"1", "feature"})
+	if err == nil {
+		t.Fatal("expected error for invalid type 'feature', got nil")
+	}
+}
+
+func TestTicketType_notFound(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketType(issues, []string{"9999", "bug"})
+	if err == nil {
+		t.Fatal("expected error for non-existent ticket, got nil")
+	}
+}
+
+func TestTicketType_missingArgs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	err := ticketType(issues, []string{})
+	if err == nil {
+		t.Fatal("expected usage error for 0 args, got nil")
+	}
+
+	err = ticketType(issues, []string{"1"})
+	if err == nil {
+		t.Fatal("expected usage error for 1 arg, got nil")
+	}
+}
+
+func TestTicketType_prefixedID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := ticketType(issues, []string{"nc-1", "refactor"}); err != nil {
+		t.Fatalf("ticketType with prefixed id: %v", err)
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.IssueType != "refactor" {
+		t.Errorf("expected issue_type='refactor', got %q", issue.IssueType)
+	}
+}
+
 func TestTicketAssign_nudgesAgentAndLeavesStatusAlone(t *testing.T) {
 	issues, agents := setupTicketTestRepos(t)
 

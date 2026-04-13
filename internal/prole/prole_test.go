@@ -230,10 +230,10 @@ func capturingLogger() (*log.Logger, *bytes.Buffer) {
 func TestPruneDeadWorktrees_skipsNonProleAgents(t *testing.T) {
 	cfg, agents, _, _ := setupPruneEnv(t)
 
-	agents.Register("conductor", "conductor", nil)
-	agents.UpdateStatus("conductor", "dead")
+	agents.Register("reviewer", "reviewer", nil)
+	agents.UpdateStatus("reviewer", "dead")
 	// Give it a fake path — should be skipped because type != "prole"
-	agents.SetWorktree("conductor", "/tmp/fake-path")
+	agents.SetWorktree("reviewer", "/tmp/fake-path")
 
 	pruned, err := PruneDeadWorktrees(cfg, agents, silentLogger())
 	if err != nil {

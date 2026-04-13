@@ -5,8 +5,7 @@ import (
 )
 
 // handleAssignments pairs unassigned selectable tickets with available prole
-// slots and calls assign.Execute on each pair. It runs on every daemon tick,
-// replacing the old conductor-nudge flows.
+// slots and calls assign.Execute on each pair. It runs on every daemon tick.
 //
 // Slot sources (in order):
 //  1. Idle proles already registered in the DB.

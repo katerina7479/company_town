@@ -43,7 +43,6 @@ func TestLoad_validConfig(t *testing.T) {
 		"agents": {
 			"mayor":     {"model": "claude-opus-4-5"},
 			"architect": {"model": "claude-opus-4-5"},
-			"conductor": {"model": "claude-sonnet-4-5"},
 			"prole":     {"model": "claude-sonnet-4-5"},
 			"artisan":   {"backend": {"model": "claude-sonnet-4-5"}}
 		}

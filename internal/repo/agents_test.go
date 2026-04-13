@@ -251,7 +251,7 @@ func TestAgentRepo_ListAll(t *testing.T) {
 	repo := setupAgentRepo(t)
 
 	repo.Register("agent1", "prole", nil)
-	repo.Register("agent2", "conductor", nil)
+	repo.Register("agent2", "reviewer", nil)
 	repo.UpdateStatus("agent2", "dead")
 
 	all, err := repo.ListAll()
@@ -269,7 +269,7 @@ func TestAgentRepo_CountByType(t *testing.T) {
 
 	repo.Register("prole1", "prole", nil)
 	repo.Register("prole2", "prole", nil)
-	repo.Register("conductor1", "conductor", nil)
+	repo.Register("reviewer1", "reviewer", nil)
 
 	// Dead agents are excluded
 	repo.Register("prole3", "prole", nil)
@@ -283,11 +283,11 @@ func TestAgentRepo_CountByType(t *testing.T) {
 		t.Errorf("expected 2 live proles, got %d", count)
 	}
 
-	conductorCount, err := repo.CountByType("conductor")
+	reviewerCount, err := repo.CountByType("reviewer")
 	if err != nil {
-		t.Fatalf("CountByType conductor: %v", err)
+		t.Fatalf("CountByType reviewer: %v", err)
 	}
-	if conductorCount != 1 {
-		t.Errorf("expected 1 conductor, got %d", conductorCount)
+	if reviewerCount != 1 {
+		t.Errorf("expected 1 reviewer, got %d", reviewerCount)
 	}
 }
