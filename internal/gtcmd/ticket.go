@@ -51,6 +51,12 @@ func Ticket(args []string) error {
 	issues := repo.NewIssueRepo(conn, events)
 	agents := repo.NewAgentRepo(conn, events)
 
+	return ticketDispatch(issues, agents, cfg, args)
+}
+
+// ticketDispatch is the inner dispatcher, separated from Ticket so tests can
+// inject repos directly without needing a running Dolt server.
+func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.Config, args []string) error {
 	switch args[0] {
 	case "create":
 		return ticketCreate(issues, cfg.TicketPrefix, args[1:])
@@ -471,7 +477,7 @@ func isValidPriority(p string) bool {
 
 func ticketPrioritize(issues *repo.IssueRepo, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: gt ticket prioritize <id> <P0|P1|P2|P3>")
+		return fmt.Errorf("usage: gt ticket priority <id> <P0|P1|P2|P3>")
 	}
 
 	id, err := parseTicketID(args[0])

@@ -688,16 +688,20 @@ func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
 // --- NC-60: gt ticket priority alias ---
 
 func TestTicketPrioritize_priorityAlias(t *testing.T) {
-	issues := setupTicketTestRepo(t)
+	// Route through ticketDispatch (the inner dispatcher) so that the
+	// `case "prioritize", "priority":` line is on the critical path.
+	// A regression that drops "priority" from the case would leave the
+	// old TestTicketPrioritize_* tests passing but break this one.
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, err := issues.Create("Some ticket", "task", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// "priority" alias must behave identically to "prioritize".
-	if err := ticketPrioritize(issues, []string{fmt.Sprintf("%d", id), "P1"}); err != nil {
-		t.Fatalf("ticketPrioritize via priority alias: %v", err)
+	if err := ticketDispatch(issues, agents, cfg, []string{"priority", fmt.Sprintf("%d", id), "P1"}); err != nil {
+		t.Fatalf("ticketDispatch priority alias: %v", err)
 	}
 
 	got, err := issues.Get(id)
