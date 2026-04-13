@@ -69,6 +69,11 @@ type Config struct {
 	RestartDeadAgents            bool          `json:"restart_dead_agents"`
 	RestartCooldownSeconds       int           `json:"restart_cooldown_seconds"`
 	Quality                      QualityConfig `json:"quality"`
+	// ConductorEnabled controls whether the daemon invokes the conductor oracle
+	// when there are more ready tickets than available proles. When false, FIFO
+	// assignment is always used. Defaults to true via DefaultConfig.
+	ConductorEnabled bool   `json:"conductor_enabled"`
+	ConductorModel   string `json:"conductor_model"`
 }
 
 // CompanyTownDir returns the .company_town directory path for a project root.
@@ -95,6 +100,10 @@ func Load(projectRoot string) (*Config, error) {
 
 	if cfg.TicketPrefix == "" {
 		return nil, fmt.Errorf("config: ticket_prefix is required")
+	}
+
+	if cfg.ConductorModel == "" {
+		cfg.ConductorModel = "claude-sonnet-4-6"
 	}
 
 	return &cfg, nil
@@ -129,6 +138,8 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		PRBackfillIntervalSeconds:    300,
 		RestartDeadAgents:            true,
 		RestartCooldownSeconds:       300,
+		ConductorEnabled:             true,
+		ConductorModel:               "claude-sonnet-4-6",
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,

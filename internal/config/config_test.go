@@ -198,6 +198,108 @@ func TestWrite_roundTrip(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_conductorDefaults(t *testing.T) {
+	cfg := DefaultConfig("/my/project", "owner/repo")
+
+	if !cfg.ConductorEnabled {
+		t.Error("ConductorEnabled should default to true")
+	}
+	if cfg.ConductorModel != "claude-sonnet-4-6" {
+		t.Errorf("ConductorModel = %q, want %q", cfg.ConductorModel, "claude-sonnet-4-6")
+	}
+}
+
+func TestLoad_conductorModelDefaultsWhenOmitted(t *testing.T) {
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Config with no conductor_* fields.
+	raw := `{"ticket_prefix": "TC", "project_root": "/tmp"}`
+	if err := os.WriteFile(filepath.Join(ctDir, ConfigFile), []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ConductorModel != "claude-sonnet-4-6" {
+		t.Errorf("ConductorModel = %q, want default %q", cfg.ConductorModel, "claude-sonnet-4-6")
+	}
+}
+
+func TestLoad_conductorEnabledFalseHonored(t *testing.T) {
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := `{"ticket_prefix": "TC", "project_root": "/tmp", "conductor_enabled": false}`
+	if err := os.WriteFile(filepath.Join(ctDir, ConfigFile), []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ConductorEnabled {
+		t.Error("ConductorEnabled should be false when explicitly set to false")
+	}
+}
+
+func TestLoad_conductorModelExplicitHonored(t *testing.T) {
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := `{"ticket_prefix": "TC", "project_root": "/tmp", "conductor_model": "claude-opus-4-6"}`
+	if err := os.WriteFile(filepath.Join(ctDir, ConfigFile), []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ConductorModel != "claude-opus-4-6" {
+		t.Errorf("ConductorModel = %q, want %q", cfg.ConductorModel, "claude-opus-4-6")
+	}
+}
+
+func TestWrite_conductorRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	original := DefaultConfig(dir, "owner/repo")
+	original.ConductorEnabled = false
+	original.ConductorModel = "claude-opus-4-6"
+
+	if err := Write(dir, original); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.ConductorEnabled {
+		t.Error("ConductorEnabled should be false after round-trip")
+	}
+	if loaded.ConductorModel != "claude-opus-4-6" {
+		t.Errorf("ConductorModel = %q, want %q", loaded.ConductorModel, "claude-opus-4-6")
+	}
+}
+
 func TestWrite_createsValidJSON(t *testing.T) {
 	dir := t.TempDir()
 	ctDir := filepath.Join(dir, DirName)
