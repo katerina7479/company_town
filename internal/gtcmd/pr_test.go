@@ -1,6 +1,10 @@
 package gtcmd
 
 import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -223,5 +227,223 @@ func TestPRUpdate_noBranch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no branch") {
 		t.Errorf("expected error to mention 'no branch', got: %v", err)
+	}
+}
+
+// captureStdout redirects os.Stdout for the duration of f() and returns what
+// was written.
+func captureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = orig })
+
+	f()
+
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+// withStubPRShow swaps ghPRShowFn for the duration of the test.
+func withStubPRShow(t *testing.T, data *prShowData, err error) {
+	t.Helper()
+	orig := ghPRShowFn
+	ghPRShowFn = func(prNum int, projectRoot string) (*prShowData, error) {
+		return data, err
+	}
+	t.Cleanup(func() { ghPRShowFn = orig })
+}
+
+func TestPRShow_happyPath(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("Add feature", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 42)
+
+	withStubPRShow(t, &prShowData{
+		Number:         42,
+		Title:          "[nc-1] Add feature",
+		State:          "OPEN",
+		HeadRefName:    "prole/tin/1",
+		Mergeable:      "MERGEABLE",
+		ReviewDecision: "APPROVED",
+		Checks: []prCheckResult{
+			{Name: "build", Status: "COMPLETED", Conclusion: "SUCCESS"},
+		},
+		Reviews: []prReviewEntry{
+			{AuthorLogin: "alice", State: "APPROVED", SubmittedAt: "2026-04-13T10:00:00Z", Body: "LGTM"},
+		},
+	}, nil)
+
+	out := captureStdout(t, func() {
+		if err := prShow(issues, testCfg(), []string{fmt.Sprintf("%d", id)}); err != nil {
+			t.Fatalf("prShow: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "nc-1") {
+		t.Errorf("expected ticket ID in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "PR #42") {
+		t.Errorf("expected PR number in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "OPEN") {
+		t.Errorf("expected PR state in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "prole/tin/1") {
+		t.Errorf("expected branch in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "build") {
+		t.Errorf("expected check name in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "alice") {
+		t.Errorf("expected reviewer login in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "LGTM") {
+		t.Errorf("expected review body in output, got:\n%s", out)
+	}
+}
+
+func TestPRShow_noPRNumber(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("Unsubmitted task", "task", nil, nil, nil)
+
+	err := prShow(issues, testCfg(), []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected error for ticket with no PR number, got nil")
+	}
+	if !strings.Contains(err.Error(), "no PR number") {
+		t.Errorf("expected 'no PR number' in error, got: %v", err)
+	}
+}
+
+func TestPRShow_ticketNotFound(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	err := prShow(issues, testCfg(), []string{"9999"})
+	if err == nil {
+		t.Fatal("expected error for non-existent ticket, got nil")
+	}
+}
+
+func TestPRShow_missingArg(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	err := prShow(issues, testCfg(), []string{})
+	if err == nil {
+		t.Fatal("expected usage error, got nil")
+	}
+}
+
+func TestPRShow_ghError(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("Some task", "task", nil, nil, nil)
+	issues.SetPR(id, 99)
+
+	withStubPRShow(t, nil, fmt.Errorf("gh: not found"))
+
+	err := prShow(issues, testCfg(), []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected error from gh, got nil")
+	}
+	if !strings.Contains(err.Error(), "fetching PR") {
+		t.Errorf("expected 'fetching PR' in error, got: %v", err)
+	}
+}
+
+func TestPRShow_emptyReviews(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("New task", "task", nil, nil, nil)
+	issues.SetPR(id, 7)
+
+	withStubPRShow(t, &prShowData{
+		Number:      7,
+		Title:       "[nc-1] New task",
+		State:       "OPEN",
+		HeadRefName: "prole/tin/1",
+		Mergeable:   "UNKNOWN",
+	}, nil)
+
+	out := captureStdout(t, func() {
+		if err := prShow(issues, testCfg(), []string{fmt.Sprintf("%d", id)}); err != nil {
+			t.Fatalf("prShow: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "Checks (0)") {
+		t.Errorf("expected 'Checks (0)' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Reviews (0)") {
+		t.Errorf("expected 'Reviews (0)' in output, got:\n%s", out)
+	}
+}
+
+func TestPRShow_limitsReviewsToFive(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("Busy PR", "task", nil, nil, nil)
+	issues.SetPR(id, 55)
+
+	reviews := make([]prReviewEntry, 8)
+	for i := range reviews {
+		reviews[i] = prReviewEntry{
+			AuthorLogin: fmt.Sprintf("user%d", i+1),
+			State:       "COMMENTED",
+			SubmittedAt: "2026-04-13T00:00:00Z",
+			Body:        fmt.Sprintf("comment %d", i+1),
+		}
+	}
+	withStubPRShow(t, &prShowData{
+		Number:      55,
+		State:       "OPEN",
+		HeadRefName: "prole/tin/1",
+		Reviews:     reviews,
+	}, nil)
+
+	out := captureStdout(t, func() {
+		if err := prShow(issues, testCfg(), []string{fmt.Sprintf("%d", id)}); err != nil {
+			t.Fatalf("prShow: %v", err)
+		}
+	})
+
+	// Should show "Reviews (8, showing last 5)".
+	if !strings.Contains(out, "showing last 5") {
+		t.Errorf("expected 'showing last 5' in output, got:\n%s", out)
+	}
+	// Last 5 reviews are user4–user8; user1–user3 should be absent.
+	if strings.Contains(out, "user1") || strings.Contains(out, "user3") {
+		t.Errorf("expected early reviews to be truncated, got:\n%s", out)
+	}
+	if !strings.Contains(out, "user8") {
+		t.Errorf("expected last reviewer in output, got:\n%s", out)
+	}
+}
+
+func TestPRShow_prefixedTicketID(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("Prefixed lookup", "task", nil, nil, nil)
+	issues.SetPR(id, 33)
+
+	withStubPRShow(t, &prShowData{Number: 33, State: "MERGED", HeadRefName: "prole/tin/1"}, nil)
+
+	out := captureStdout(t, func() {
+		if err := prShow(issues, testCfg(), []string{fmt.Sprintf("nc-%d", id)}); err != nil {
+			t.Fatalf("prShow with prefixed ID: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "PR #33") {
+		t.Errorf("expected PR #33 in output, got:\n%s", out)
 	}
 }
