@@ -1014,3 +1014,116 @@ func p1Ptr() *string {
 	p := "P1"
 	return &p
 }
+
+func TestIssueRepo_BusyAssignees_empty(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	busy, err := repo.BusyAssignees()
+	if err != nil {
+		t.Fatalf("BusyAssignees: %v", err)
+	}
+	if len(busy) != 0 {
+		t.Errorf("expected empty set, got %v", busy)
+	}
+}
+
+func TestIssueRepo_BusyAssignees_oneBusy(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("Held ticket", "task", nil, nil, nil)
+	repo.UpdateStatus(id, "open")
+	repo.Assign(id, "copper", "prole/copper/1")
+
+	busy, err := repo.BusyAssignees()
+	if err != nil {
+		t.Fatalf("BusyAssignees: %v", err)
+	}
+	if !busy["copper"] {
+		t.Errorf("expected copper in busy set, got %v", busy)
+	}
+	if len(busy) != 1 {
+		t.Errorf("expected 1 entry, got %d: %v", len(busy), busy)
+	}
+}
+
+func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// Held across several non-closed statuses.
+	for _, tc := range []struct {
+		agent  string
+		status string
+	}{
+		{"copper", "open"},
+		{"iron", "in_progress"},
+		{"tin", "in_review"},
+		{"zinc", "repairing"},
+	} {
+		id, _ := repo.Create("T", "task", nil, nil, nil)
+		repo.UpdateStatus(id, tc.status)
+		repo.Assign(id, tc.agent, "prole/"+tc.agent+"/x")
+	}
+
+	// Closed ticket — assignee should be excluded.
+	closedID, _ := repo.Create("Closed", "task", nil, nil, nil)
+	repo.Assign(closedID, "lead", "prole/lead/x")
+	repo.UpdateStatus(closedID, "closed")
+
+	busy, err := repo.BusyAssignees()
+	if err != nil {
+		t.Fatalf("BusyAssignees: %v", err)
+	}
+	for _, name := range []string{"copper", "iron", "tin", "zinc"} {
+		if !busy[name] {
+			t.Errorf("expected %s in busy set, got %v", name, busy)
+		}
+	}
+	if busy["lead"] {
+		t.Errorf("closed ticket assignee 'lead' should be excluded, got %v", busy)
+	}
+}
+
+func TestIssueRepo_BusyAssignees_excludesNullAndEmpty(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// NULL assignee — a fresh open ticket with no one assigned.
+	nullID, _ := repo.Create("Unassigned", "task", nil, nil, nil)
+	repo.UpdateStatus(nullID, "open")
+
+	// Empty-string assignee — set via raw SQL since SetAssignee passes "" through.
+	emptyID, _ := repo.Create("Empty", "task", nil, nil, nil)
+	repo.UpdateStatus(emptyID, "open")
+	if err := repo.SetAssignee(emptyID, ""); err != nil {
+		t.Fatalf("SetAssignee empty: %v", err)
+	}
+
+	busy, err := repo.BusyAssignees()
+	if err != nil {
+		t.Fatalf("BusyAssignees: %v", err)
+	}
+	if len(busy) != 0 {
+		t.Errorf("expected empty set (NULL and '' both excluded), got %v", busy)
+	}
+}
+
+func TestIssueRepo_BusyAssignees_distinctAcrossMultipleTickets(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// Same agent holding two tickets — should appear once.
+	for i := 0; i < 2; i++ {
+		id, _ := repo.Create("T", "task", nil, nil, nil)
+		repo.UpdateStatus(id, "open")
+		repo.Assign(id, "copper", "prole/copper/x")
+	}
+
+	busy, err := repo.BusyAssignees()
+	if err != nil {
+		t.Fatalf("BusyAssignees: %v", err)
+	}
+	if !busy["copper"] {
+		t.Errorf("expected copper in busy set, got %v", busy)
+	}
+	if len(busy) != 1 {
+		t.Errorf("expected 1 entry (DISTINCT), got %d: %v", len(busy), busy)
+	}
+}

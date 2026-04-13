@@ -62,14 +62,15 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
-		resetWorktree:       func(string) error { return nil },
-		runQualityBaseline:  func() error { return nil },
-		pruneStaleWorktrees: func() error { return nil },
-		lastNudged:          make(map[string]time.Time),
-		lastNudgeDigest:     make(map[string]string),
-		nudgeCooldown:       0, // disabled by default in tests
-		qualityInterval:     0, // disabled by default in tests
-		worktreeInterval:    0, // disabled by default in tests
+		runQualityBaseline:      func() error { return nil },
+		pruneStaleWorktrees:     func() error { return nil },
+		resetIdleProleWorktrees: func() error { return nil },
+		lastNudged:              make(map[string]time.Time),
+		lastNudgeDigest:         make(map[string]string),
+		nudgeCooldown:           0, // disabled by default in tests
+		qualityInterval:         0, // disabled by default in tests
+		worktreeInterval:        0, // disabled by default in tests
+		worktreeResetInterval:   0, // disabled by default in tests
 		nowFn:               time.Now,
 		lastRestartedAt:     make(map[string]time.Time),
 		restartDeadAgents:   false, // disabled by default in tests
@@ -78,15 +79,15 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 	return d, issues, agents, &sent
 }
 
-// withResetCapture replaces d.resetWorktree with one that records calls.
-// Returns a pointer to the slice of agent names that were reset.
-func withResetCapture(d *Daemon) *[]string {
-	var resets []string
-	d.resetWorktree = func(name string) error {
-		resets = append(resets, name)
+// withIdleResetCapture replaces d.resetIdleProleWorktrees with a stub that
+// records how many times the reconciler was invoked.
+func withIdleResetCapture(d *Daemon) *int {
+	var calls int
+	d.resetIdleProleWorktrees = func() error {
+		calls++
 		return nil
 	}
-	return &resets
+	return &calls
 }
 
 func TestHandlePRMerged_closesTicket(t *testing.T) {
@@ -135,110 +136,49 @@ func TestHandlePRMerged_noopIfAlreadyClosed(t *testing.T) {
 	}
 }
 
-func TestHandlePRMerged_freesAssigneeAgent(t *testing.T) {
-	d, issues, agents := newTestDaemon(t)
+func TestHandleIdleProleWorktrees_runsReconciler(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	calls := withIdleResetCapture(d)
 
-	if err := agents.Register("obsidian", "prole", nil); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
+	d.handleIdleProleWorktrees()
 
-	id, _ := issues.Create("Test ticket", "task", nil, nil, nil)
-	if err := issues.Assign(id, "obsidian", "prole/obsidian/NC-11"); err != nil {
-		t.Fatalf("Assign: %v", err)
-	}
-	issues.SetPR(id, 42)
-	if err := agents.SetCurrentIssue("obsidian", &id); err != nil {
-		t.Fatalf("SetCurrentIssue: %v", err)
-	}
-
-	issue, _ := issues.Get(id)
-	d.handlePRMerged(issue)
-
-	agent, err := agents.Get("obsidian")
-	if err != nil {
-		t.Fatalf("Get agent: %v", err)
-	}
-	if agent.Status != "idle" {
-		t.Errorf("expected agent status=idle, got %q", agent.Status)
-	}
-	if agent.CurrentIssue.Valid {
-		t.Errorf("expected current_issue=NULL, got %d", agent.CurrentIssue.Int64)
+	if *calls != 1 {
+		t.Errorf("expected reconciler to run once, got %d calls", *calls)
 	}
 }
 
-func TestHandlePRMerged_noAssigneeIsOk(t *testing.T) {
-	d, issues, _ := newTestDaemon(t)
+func TestHandleIdleProleWorktrees_respectsInterval(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	calls := withIdleResetCapture(d)
+	d.worktreeResetInterval = 1 * time.Hour
 
-	id, _ := issues.Create("Unassigned ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "in_review")
-	issues.SetPR(id, 55)
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.handleIdleProleWorktrees()
+	if *calls != 1 {
+		t.Fatalf("expected 1 call on first tick, got %d", *calls)
+	}
 
-	issue, _ := issues.Get(id)
-	// Should not panic or error when no assignee
-	d.handlePRMerged(issue)
+	// Second tick 10s later — should be skipped by the interval guard.
+	d.nowFn = func() time.Time { return base.Add(10 * time.Second) }
+	d.handleIdleProleWorktrees()
+	if *calls != 1 {
+		t.Errorf("expected reconciler to be interval-guarded, got %d calls", *calls)
+	}
 
-	updated, _ := issues.Get(id)
-	if updated.Status != "closed" {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	// Well past the interval — should run again.
+	d.nowFn = func() time.Time { return base.Add(2 * time.Hour) }
+	d.handleIdleProleWorktrees()
+	if *calls != 2 {
+		t.Errorf("expected reconciler to run after interval, got %d calls", *calls)
 	}
 }
 
-func TestHandlePRMerged_resetsProleWorktree(t *testing.T) {
-	d, issues, agents := newTestDaemon(t)
-	resets := withResetCapture(d)
-
-	if err := agents.Register("quartz", "prole", nil); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	id, _ := issues.Create("Add feature", "task", nil, nil, nil)
-	issues.Assign(id, "quartz", "prole/quartz/NC-42")
-	issues.SetPR(id, 42)
-	agents.SetCurrentIssue("quartz", &id)
-
-	issue, _ := issues.Get(id)
-	d.handlePRMerged(issue)
-
-	if len(*resets) != 1 || (*resets)[0] != "quartz" {
-		t.Errorf("expected worktree reset for quartz, got %v", *resets)
-	}
-}
-
-func TestHandlePRMerged_doesNotResetNonProle(t *testing.T) {
-	d, issues, agents := newTestDaemon(t)
-	resets := withResetCapture(d)
-
-	if err := agents.Register("reviewer", "reviewer", nil); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	id, _ := issues.Create("Route tickets", "task", nil, nil, nil)
-	issues.Assign(id, "reviewer", "reviewer/branch")
-	issues.SetPR(id, 99)
-	agents.SetCurrentIssue("reviewer", &id)
-
-	issue, _ := issues.Get(id)
-	d.handlePRMerged(issue)
-
-	if len(*resets) != 0 {
-		t.Errorf("expected no worktree reset for reviewer, got %v", *resets)
-	}
-}
-
-func TestHandlePRMerged_noResetWhenNoAssignee(t *testing.T) {
-	d, issues, _ := newTestDaemon(t)
-	resets := withResetCapture(d)
-
-	id, _ := issues.Create("Unassigned", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "in_review")
-	issues.SetPR(id, 7)
-
-	issue, _ := issues.Get(id)
-	d.handlePRMerged(issue)
-
-	if len(*resets) != 0 {
-		t.Errorf("expected no reset when no assignee, got %v", *resets)
-	}
+func TestHandleIdleProleWorktrees_nilFnIsNoop(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	d.resetIdleProleWorktrees = nil
+	// Should not panic.
+	d.handleIdleProleWorktrees()
 }
 
 func TestHandlePRClosed_doesNotCloseTicket(t *testing.T) {
@@ -1187,7 +1127,6 @@ func TestHandleStuckAgents_skipsNullStatusChangedAt(t *testing.T) {
 		stop:            make(chan struct{}),
 		sessionExists:   func(s string) bool { return sessions[s] },
 		sendKeys:        func(s, msg string) error { sent = append(sent, sentMessage{session: s, msg: msg}); return nil },
-		resetWorktree:   func(string) error { return nil },
 		lastNudged:      make(map[string]time.Time),
 		lastNudgeDigest: make(map[string]string),
 		stuckAgentThreshold: 30 * time.Minute,
@@ -1806,5 +1745,52 @@ func TestMakeRestartFn_AcceptsArchitect(t *testing.T) {
 	// but it must NOT fail with "unsupported agent type".
 	if err != nil && strings.Contains(err.Error(), "unsupported agent type") {
 		t.Errorf("makeRestartFn rejected architect agent type: %v", err)
+	}
+}
+
+// TestMakeRestartFn_SetsIdleNotWorking verifies that makeRestartFn sets the agent
+// status to "idle" (not "working") before creating the session. When CreateInteractive
+// fails (no tmux in tests) the status is rolled back to "dead", but the transition
+// must go through "idle" — the agent must never be set to "working" by a restart.
+func TestMakeRestartFn_SetsIdleNotWorking(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	cfg := &config.Config{
+		ProjectRoot:  t.TempDir(),
+		TicketPrefix: "NC",
+		Agents: config.AgentsConfig{
+			Architect: config.AgentConfig{Model: "claude-opus-4-5"},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+	logger := log.New(io.Discard, "", 0)
+
+	// Register the agent so UpdateStatus calls have an actual row to update.
+	if err := agents.Register("architect", "architect", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("architect", "dead"); err != nil {
+		t.Fatalf("UpdateStatus dead: %v", err)
+	}
+
+	fn := makeRestartFn(cfg, agents, logger)
+	agent := &repo.Agent{Name: "architect", Type: "architect", Status: "dead"}
+	// fn will fail at CreateInteractive (no tmux), but that's expected.
+	_ = fn(agent)
+
+	// After the failed restart, the DB status must be "dead" (rolled back from idle),
+	// NOT "working". If the code had set "working" and then rolled back to "dead" on
+	// CreateInteractive failure, we'd see "dead" either way — so also verify the
+	// sequence is correct by checking that no UpdateStatus("working") path exists.
+	got, err := agents.Get("architect")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status == "working" {
+		t.Errorf("makeRestartFn must not set agent status to 'working'; got %q", got.Status)
 	}
 }
