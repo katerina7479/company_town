@@ -19,13 +19,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "init":
-		force := false
-		for _, a := range args {
-			if a == "--force" {
-				force = true
-			}
-		}
-		err = commands.Init(force)
+		err = commands.Init()
 	case "start":
 		err = commands.Start()
 	case "stop":
@@ -87,7 +81,7 @@ func printUsage() {
 	fmt.Println(`Usage: ct <command>
 
 Commands:
-  init [--force]      Set up .company_town/ in project root
+  init                Set up .company_town/ in project root
   start               Start the Mayor and attach to tmux session
   stop [--clean]      Graceful shutdown with handoffs (--clean removes prole
                       worktrees immediately after signalling — does NOT wait
