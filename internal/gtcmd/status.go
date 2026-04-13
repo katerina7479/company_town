@@ -56,7 +56,7 @@ func Status() error {
 
 // reconcileDeadAgents keeps the agents table in sync with tmux reality.
 // Proles without a live tmux session are deleted outright (they're ephemeral).
-// Core agents (conductor, reviewer, etc.) are marked dead so their row is
+// Core agents (reviewer, architect, etc.) are marked dead so their row is
 // retained for restart cooldowns and history.
 func reconcileDeadAgents(agents *repo.AgentRepo, sessionExists func(string) bool) error {
 	all, err := agents.ListAll()

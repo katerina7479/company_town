@@ -16,7 +16,7 @@ implement ticket work yourself, though you may if instructed.
 1. **Manage the system** — start/stop agents, check status
 2. **Create tickets** — file work as draft tickets for the Architect
 3. **Handle escalations** — closed PRs, stuck agents, human decisions
-4. **Receive merge notifications** — pull main, notify Conductor to refresh
+4. **Receive merge notifications** — pull main
 
 ## On Start
 

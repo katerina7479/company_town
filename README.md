@@ -2,7 +2,7 @@
 
 A local, self-hosted multi-agent development system. One instance per project, one Dolt database per project. Company Town manages a small team of AI agents with defined roles, a ticket lifecycle, git worktrees per worker, and a Dolt database for state. All runtime state lives under `.company_town/` in your project — nothing leaves the machine except the PRs your agents file on GitHub.
 
-You talk to the **Mayor** in a tmux pane. The Mayor and its daemon run the rest: the **Architect** specs tickets, the **Conductor** assigns them, **Proles** implement them in isolated worktrees, and the **Reviewer** AI-reviews PRs before a human merges.
+You talk to the **Mayor** in a tmux pane. The Mayor and its daemon run the rest: the **Architect** specs tickets, the **daemon** assigns them directly, **Proles** implement them in isolated worktrees, and the **Reviewer** AI-reviews PRs before a human merges.
 
 ## Requirements
 
@@ -51,7 +51,7 @@ Neither command drops the database. Re-running `ct start` picks up where you lef
 |---|---|---|---|
 | **Mayor** | opus | long-lived | Human interface. Starts/stops other agents, handles escalations, receives merge notifications. |
 | **Architect** | opus | long-lived | Picks up `draft` tickets, investigates the codebase, writes specs under `.company_town/ticket_specs/`, moves tickets to `open`. |
-| **Conductor** | sonnet | long-lived | Watches `open` + `repairing` tickets and assigns them to proles. (Being replaced by a deterministic daemon selector — see `ticket_specs/NC-26.md`.) |
+| **Daemon** | — | background | Watches `open` + `repairing` tickets and assigns them to proles. Runs automatically with `ct start`. |
 | **Reviewer** | sonnet | long-lived | AI-reviews PRs when tickets hit `in_review`, posts GitHub review, moves ticket to `pr_open` or `repairing`. |
 | **Proles** | sonnet | ephemeral | Implementation workers. One ticket at a time, one git worktree each. Named after metals (`copper`, `iron`, `tin`…). |
 | **Artisans** | opus | long-lived | Long-running specialists (`backend`, `frontend`, `qa`). Pick up work their specialty matches. |
@@ -72,7 +72,7 @@ draft ─► open ─► in_progress ─► in_review ─► under_review ─►
 | Status | Owner | Meaning |
 |---|---|---|
 | `draft` | Architect | Created but not specced. |
-| `open` | Conductor / daemon | Specced, unblocked, ready for a prole. |
+| `open` | Daemon | Specced, unblocked, ready for a prole. |
 | `in_progress` | Prole | Prole is implementing. Branch exists. |
 | `in_review` | Reviewer | PR filed, waiting for the Reviewer agent to pick it up. |
 | `under_review` | Reviewer | Actively being reviewed. |
@@ -98,7 +98,7 @@ This is deterministic — no LLM is involved in the pick.
 
 A background goroutine inside `ct start` that polls every 30 seconds (configurable via `polling_interval_seconds`). Each tick it:
 
-- Restarts dead architect/conductor/reviewer sessions when they have work to do
+- Restarts dead architect/reviewer sessions when they have work to do
 - Nudges architect about `draft` tickets
 - Assigns idle proles to the top selectable tickets
 - Detects PR merges → closes tickets
@@ -187,7 +187,7 @@ Agents use this directly. Users generally don't, but it's fine for debugging and
 │   │   │   └── memory/
 │   │   │       ├── handoff.md
 │   │   │       └── lessons_learned.md
-│   │   └── ... (conductor, reviewer, artisan/<specialty>)
+│   │   └── ... (reviewer, artisan/<specialty>)
 │   └── proles/                 # per-prole git worktrees
 │       ├── copper/
 │       └── iron/
@@ -268,5 +268,5 @@ gt check run
 ## Further reading
 
 - `CLAUDE.md` — build/test instructions for anyone (human or AI) hacking on Company Town itself.
-- `.company_town/ticket_specs/` — living design documents for in-progress work. `NC-26.md` is the current conductor-replacement design.
+- `.company_town/ticket_specs/` — living design documents for in-progress work.
 - Agent templates at `internal/commands/templates/*-CLAUDE.md` — the exact instructions each agent role receives on spawn. These are the source of truth for agent behavior.
