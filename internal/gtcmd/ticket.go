@@ -37,7 +37,7 @@ func parseTicketID(s string) (int, error) {
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|status|type|close|delete|depend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|status|type|priority|close|delete|depend> ...")
 		os.Exit(1)
 	}
 
@@ -74,7 +74,7 @@ func Ticket(args []string) error {
 		return ticketDepend(issues, cfg.TicketPrefix, args[1:])
 	case "describe":
 		return ticketDescribe(issues, args[1:])
-	case "prioritize":
+	case "prioritize", "priority":
 		return ticketPrioritize(issues, args[1:])
 	case "type":
 		return ticketType(issues, args[1:])

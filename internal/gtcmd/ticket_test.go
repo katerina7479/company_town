@@ -684,3 +684,28 @@ func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
 		t.Errorf("expected ticket status unchanged ('draft'), got %q", issue.Status)
 	}
 }
+
+// --- NC-60: gt ticket priority alias ---
+
+func TestTicketPrioritize_priorityAlias(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("Some ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// "priority" alias must behave identically to "prioritize".
+	if err := ticketPrioritize(issues, []string{fmt.Sprintf("%d", id), "P1"}); err != nil {
+		t.Fatalf("ticketPrioritize via priority alias: %v", err)
+	}
+
+	got, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.Priority.Valid || got.Priority.String != "P1" {
+		t.Errorf("expected priority=P1, got %v", got.Priority)
+	}
+}
+
