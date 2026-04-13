@@ -20,6 +20,9 @@ func (d *Daemon) handleAssignments() {
 		d.logger.Printf("error listing selectable tickets: %v", err)
 		return
 	}
+	if d.obs != nil {
+		d.obs.assignCandidates = len(candidates)
+	}
 	if len(candidates) == 0 {
 		return
 	}
@@ -69,6 +72,9 @@ func (d *Daemon) handleAssignments() {
 		}
 	}
 
+	if d.obs != nil {
+		d.obs.assignSlots = len(slots)
+	}
 	if len(slots) == 0 {
 		return
 	}
@@ -78,6 +84,7 @@ func (d *Daemon) handleAssignments() {
 		n = len(slots)
 	}
 
+	assigned := 0
 	for i := 0; i < n; i++ {
 		t := candidates[i]
 		p := slots[i]
@@ -86,5 +93,9 @@ func (d *Daemon) handleAssignments() {
 			continue
 		}
 		d.logger.Printf("assigned ticket %d to %s", t.ID, p)
+		assigned++
+	}
+	if d.obs != nil {
+		d.obs.assignPaired = assigned
 	}
 }

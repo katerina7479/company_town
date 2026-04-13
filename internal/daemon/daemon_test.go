@@ -66,7 +66,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			return nil
 		},
 		runQualityBaseline:      func() error { return nil },
-		pruneStaleWorktrees:     func() error { return nil },
+		pruneStaleWorktrees:     func() (int, error) { return 0, nil },
 		resetIdleProleWorktrees: func() error { return nil },
 		lastNudged:              make(map[string]time.Time),
 		lastNudgeDigest:         make(map[string]string),
@@ -575,6 +575,61 @@ func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
 	}
 }
 
+// --- Tick summary tests ---
+
+func TestPoll_LogsTickSummary(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	// Capture logger output into a buffer.
+	var buf strings.Builder
+	d.logger = log.New(&buf, "", 0)
+
+	// Seed one open ticket so the assign= candidate count is non-zero.
+	id, err := issues.Create("work item", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	d.poll()
+
+	output := buf.String()
+
+	// There must be exactly one tick: summary line per poll.
+	var tickLine string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if strings.HasPrefix(line, "tick: ") {
+			if tickLine != "" {
+				t.Errorf("multiple tick: lines found; want exactly one:\n%s", output)
+			}
+			tickLine = line
+		}
+	}
+	if tickLine == "" {
+		t.Fatalf("no tick: summary line found in output:\n%s", output)
+	}
+
+	// All nine key=value tokens must be present in the fixed field order.
+	requiredTokens := []string{"dead=", "worktrees=", "prBackfill=", "drafts=", "assign=", "inReview=", "prEvents=", "epics=", "quality="}
+	for _, tok := range requiredTokens {
+		if !strings.Contains(tickLine, tok) {
+			t.Errorf("tick line missing %s token: %s", tok, tickLine)
+		}
+	}
+
+	// assign= must be "1/0/0": 1 candidate (the open ticket), 0 slots (no proles registered), 0 paired.
+	if !strings.Contains(tickLine, "assign=1/0/0") {
+		t.Errorf("expected assign=1/0/0 (1 candidate, 0 slots), got: %s", tickLine)
+	}
+
+	// quality=skip: qualityInterval=0 (disabled) sets qualitySkip=true.
+	if !strings.Contains(tickLine, "quality=skip") {
+		t.Errorf("expected quality=skip (interval=0 → disabled), got: %s", tickLine)
+	}
+}
+
 func TestHandleDeadSessions_deletesDeadStatusProleEvenWithLiveSession(t *testing.T) {
 	// A prole already marked dead in the DB should be cleaned up even if its
 	// tmux session is still technically alive — and the zombie session must be killed.
@@ -936,9 +991,9 @@ func TestHandleStaleWorktrees_callsPruneFunction(t *testing.T) {
 	d, _, _ := newTestDaemon(t)
 
 	var calls int
-	d.pruneStaleWorktrees = func() error {
+	d.pruneStaleWorktrees = func() (int, error) {
 		calls++
-		return nil
+		return 0, nil
 	}
 
 	d.handleStaleWorktrees()
@@ -951,8 +1006,8 @@ func TestHandleStaleWorktrees_callsPruneFunction(t *testing.T) {
 func TestHandleStaleWorktrees_logsErrorWithoutPanicking(t *testing.T) {
 	d, _, _ := newTestDaemon(t)
 
-	d.pruneStaleWorktrees = func() error {
-		return fmt.Errorf("git worktree remove failed")
+	d.pruneStaleWorktrees = func() (int, error) {
+		return 0, fmt.Errorf("git worktree remove failed")
 	}
 
 	// Should not panic
@@ -963,9 +1018,9 @@ func TestHandleStaleWorktrees_calledEachPollCycle(t *testing.T) {
 	d, _, _ := newTestDaemon(t)
 
 	var calls int
-	d.pruneStaleWorktrees = func() error {
+	d.pruneStaleWorktrees = func() (int, error) {
 		calls++
-		return nil
+		return 0, nil
 	}
 
 	d.poll()
@@ -1250,9 +1305,9 @@ func TestHandleStaleWorktrees_respectsInterval(t *testing.T) {
 	d.worktreeInterval = 5 * time.Minute
 
 	var calls int
-	d.pruneStaleWorktrees = func() error {
+	d.pruneStaleWorktrees = func() (int, error) {
 		calls++
-		return nil
+		return 0, nil
 	}
 
 	// First call: interval not elapsed — should run (zero time → always run first time)
