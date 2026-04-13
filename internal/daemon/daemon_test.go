@@ -574,6 +574,22 @@ func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
 	}
 }
 
+func TestHandleDeadSessions_deletesDeadStatusProleEvenWithLiveSession(t *testing.T) {
+	// A prole already marked dead in the DB should be cleaned up even if its
+	// tmux session is still technically alive.
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-dead-prole"})
+
+	agents.Register("dead-prole", "prole", nil)
+	agents.SetTmuxSession("dead-prole", "ct-dead-prole")
+	agents.UpdateStatus("dead-prole", "dead")
+
+	d.handleDeadSessions()
+
+	if _, err := agents.Get("dead-prole"); err == nil {
+		t.Errorf("expected dead-status prole to be deleted, still present")
+	}
+}
+
 // --- Cooldown tests ---
 
 // withCooldown returns a copy of d with the given cooldown duration and a fixed now function.

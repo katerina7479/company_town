@@ -569,7 +569,10 @@ func (d *Daemon) handleDeadSessions() {
 	}
 
 	for _, agent := range agents {
-		if agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String) {
+		sessionAlive := agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String)
+		// Skip agents with a live session unless they are already marked dead.
+		// A dead-status prole with a live session still needs to be cleaned up.
+		if sessionAlive && agent.Status != "dead" {
 			continue
 		}
 		if agent.Type == "prole" {
