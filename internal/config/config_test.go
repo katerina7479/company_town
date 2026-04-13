@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -104,6 +105,79 @@ func TestLoad_invalidJSON(t *testing.T) {
 	_, err := Load(dir)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+// writeConfig is a test helper that writes a minimal valid config JSON with
+// the given agents block substituted in.
+func writeConfig(t *testing.T, agentsJSON string) string {
+	t.Helper()
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"version":"1.0.0","ticket_prefix":"nc","project_root":"/tmp","github_repo":"x/y","dolt":{"host":"127.0.0.1","port":3307,"database":"ct"},"agents":` + agentsJSON + `}`
+	if err := os.WriteFile(filepath.Join(ctDir, ConfigFile), []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestConfigLoad_workflowAbsent(t *testing.T) {
+	dir := writeConfig(t, `{"reviewer":{"model":"sonnet"},"prole":{"model":"sonnet"}}`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Agents.Reviewer.Workflow != nil {
+		t.Errorf("expected Reviewer.Workflow=nil, got %+v", cfg.Agents.Reviewer.Workflow)
+	}
+}
+
+func TestConfigLoad_workflowValid(t *testing.T) {
+	dir := writeConfig(t, `{"reviewer":{"model":"sonnet","workflow":{"accept":{"ticket_transition":{"from":"in_review","to":"under_review"}}}},"prole":{"model":"sonnet"}}`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tt := cfg.Agents.Reviewer.Workflow.Accept.TicketTransition
+	if tt == nil || tt.From != "in_review" || tt.To != "under_review" {
+		t.Errorf("unexpected transition: %+v", tt)
+	}
+}
+
+func TestConfigLoad_workflowEmptyFrom(t *testing.T) {
+	dir := writeConfig(t, `{"reviewer":{"model":"sonnet","workflow":{"accept":{"ticket_transition":{"from":"","to":"under_review"}}}},"prole":{"model":"sonnet"}}`)
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected validation error for empty from, got nil")
+	}
+	if !strings.Contains(err.Error(), "from and to must be non-empty and different") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestConfigLoad_workflowSameFromTo(t *testing.T) {
+	dir := writeConfig(t, `{"reviewer":{"model":"sonnet","workflow":{"accept":{"ticket_transition":{"from":"in_review","to":"in_review"}}}},"prole":{"model":"sonnet"}}`)
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected validation error for same from/to, got nil")
+	}
+	if !strings.Contains(err.Error(), "from and to must be non-empty and different") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestDefaultConfig_reviewerAcceptWorkflow(t *testing.T) {
+	cfg := DefaultConfig("/tmp", "x/y")
+	wf := cfg.Agents.Reviewer.Workflow
+	if wf == nil || wf.Accept == nil || wf.Accept.TicketTransition == nil {
+		t.Fatal("expected reviewer accept workflow, got nil")
+	}
+	tt := wf.Accept.TicketTransition
+	if tt.From != "in_review" || tt.To != "under_review" {
+		t.Errorf("expected in_review→under_review, got %s→%s", tt.From, tt.To)
 	}
 }
 
