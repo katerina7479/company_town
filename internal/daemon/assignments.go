@@ -25,6 +25,12 @@ func (d *Daemon) handleAssignments() {
 		return
 	}
 
+	busy, err := d.issues.BusyAssignees()
+	if err != nil {
+		d.logger.Printf("error listing busy assignees: %v", err)
+		return
+	}
+
 	idleAgents, err := d.agents.FindIdle(nil)
 	if err != nil {
 		d.logger.Printf("error listing idle agents: %v", err)
@@ -32,9 +38,13 @@ func (d *Daemon) handleAssignments() {
 	}
 	var slots []string
 	for _, a := range idleAgents {
-		if a.Type == "prole" {
-			slots = append(slots, a.Name)
+		if a.Type != "prole" {
+			continue
 		}
+		if busy[a.Name] {
+			continue
+		}
+		slots = append(slots, a.Name)
 	}
 
 	existing, err := d.agents.CountByType("prole")
@@ -52,6 +62,9 @@ func (d *Daemon) handleAssignments() {
 			}
 			if name == "" {
 				break // all metal names taken
+			}
+			if busy[name] {
+				continue
 			}
 			slots = append(slots, name)
 		}

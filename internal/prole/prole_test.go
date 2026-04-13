@@ -25,6 +25,39 @@ func setupAgentRepo(t *testing.T) *repo.AgentRepo {
 	return repo.NewAgentRepo(conn, nil)
 }
 
+func TestIdleProlesNeedingReset_selection(t *testing.T) {
+	mk := func(name, agentType, status string, worktree string, currentIssue *int64) *repo.Agent {
+		a := &repo.Agent{Name: name, Type: agentType, Status: status}
+		if worktree != "" {
+			a.WorktreePath.Valid = true
+			a.WorktreePath.String = worktree
+		}
+		if currentIssue != nil {
+			a.CurrentIssue.Valid = true
+			a.CurrentIssue.Int64 = *currentIssue
+		}
+		return a
+	}
+
+	issueID := int64(42)
+	all := []*repo.Agent{
+		mk("idle-prole", "prole", "idle", "/wt/idle-prole", nil),
+		mk("working-prole", "prole", "working", "/wt/working-prole", &issueID),
+		mk("dead-prole", "prole", "dead", "/wt/dead-prole", nil),
+		mk("idle-prole-with-issue", "prole", "idle", "/wt/iwi", &issueID),
+		mk("idle-prole-no-worktree", "prole", "idle", "", nil),
+		mk("idle-reviewer", "reviewer", "idle", "/wt/reviewer", nil),
+	}
+
+	got := idleProlesNeedingReset(all)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 selected prole, got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "idle-prole" {
+		t.Errorf("expected idle-prole selected, got %q", got[0].Name)
+	}
+}
+
 func TestCreate_MaxProlesEnforced(t *testing.T) {
 	agents := setupAgentRepo(t)
 
