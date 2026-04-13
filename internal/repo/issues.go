@@ -460,6 +460,30 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 	return issues, rows.Err()
 }
 
+// ActiveAssignees returns the set of agent names that currently hold at least
+// one non-closed ticket. The daemon uses this to determine which proles are
+// already busy before building the assignment slot list.
+func (r *IssueRepo) ActiveAssignees() (map[string]struct{}, error) {
+	rows, err := r.db.Query(
+		`SELECT DISTINCT assignee FROM issues
+		 WHERE assignee IS NOT NULL AND assignee != '' AND status != 'closed'`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying active assignees: %w", err)
+	}
+	defer rows.Close()
+
+	busy := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scanning assignee: %w", err)
+		}
+		busy[name] = struct{}{}
+	}
+	return busy, rows.Err()
+}
+
 // ListEpicsWithAllChildrenClosed returns epics that are not closed but have at
 // least one child and all children are closed.
 func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {

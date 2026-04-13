@@ -25,6 +25,15 @@ func (d *Daemon) handleAssignments() {
 		return
 	}
 
+	// Query the tickets table for agents that already hold an active ticket.
+	// This is the authoritative "busy" signal — proles own their own status and
+	// may still appear idle in the agents table even after being assigned work.
+	busyAgents, err := d.issues.ActiveAssignees()
+	if err != nil {
+		d.logger.Printf("error listing active assignees: %v", err)
+		return
+	}
+
 	idleAgents, err := d.agents.FindIdle(nil)
 	if err != nil {
 		d.logger.Printf("error listing idle agents: %v", err)
@@ -33,7 +42,9 @@ func (d *Daemon) handleAssignments() {
 	var slots []string
 	for _, a := range idleAgents {
 		if a.Type == "prole" {
-			slots = append(slots, a.Name)
+			if _, busy := busyAgents[a.Name]; !busy {
+				slots = append(slots, a.Name)
+			}
 		}
 	}
 
@@ -53,7 +64,12 @@ func (d *Daemon) handleAssignments() {
 			if name == "" {
 				break // all metal names taken
 			}
-			slots = append(slots, name)
+			// Skip names that are already busy (assigned via a ticket but not
+			// yet registered in the agents table — shouldn't happen in practice,
+			// but guard defensively).
+			if _, busy := busyAgents[name]; !busy {
+				slots = append(slots, name)
+			}
 		}
 	}
 

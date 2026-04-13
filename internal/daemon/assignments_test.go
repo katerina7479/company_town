@@ -189,6 +189,46 @@ func TestHandleAssignments_repairingTicketsAssignedFirst(t *testing.T) {
 	}
 }
 
+// TestHandleAssignments_busyProleSkipped verifies that a prole that already
+// holds an active ticket is not given a second one on the next tick, even when
+// it still reports as idle in the agents table (the known race condition).
+func TestHandleAssignments_busyProleSkipped(t *testing.T) {
+	d, issues, agents := newAssignmentDaemon(t)
+	d.cfg.MaxProles = 1 // only one slot — copper
+
+	id1 := mustOpen(t, issues, "Feature A")
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// First tick: copper gets ticket id1.
+	d.handleAssignments()
+
+	issue1, err := issues.Get(id1)
+	if err != nil {
+		t.Fatalf("Get id1: %v", err)
+	}
+	if !issue1.Assignee.Valid || issue1.Assignee.String != "copper" {
+		t.Fatalf("expected id1 assigned to copper, got %v", issue1.Assignee)
+	}
+
+	// Copper is still idle in the agents table (prole hasn't picked up yet).
+	// A second ticket appears.
+	id2 := mustOpen(t, issues, "Feature B")
+
+	// Second tick: copper must NOT receive id2.
+	d.handleAssignments()
+
+	issue2, err := issues.Get(id2)
+	if err != nil {
+		t.Fatalf("Get id2: %v", err)
+	}
+	if issue2.Assignee.Valid && issue2.Assignee.String != "" {
+		t.Errorf("expected id2 unassigned (copper is busy), got assignee=%q", issue2.Assignee.String)
+	}
+}
+
 func TestHandleAssignments_assignExecuteErrorContinues(t *testing.T) {
 	d, issues, agents := newAssignmentDaemon(t)
 	d.cfg.MaxProles = 2
