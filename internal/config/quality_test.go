@@ -12,10 +12,27 @@ func TestDefaultConfig_quality(t *testing.T) {
 		t.Error("expected Quality.Enabled=true by default")
 	}
 	if cfg.Quality.Checks == nil {
-		t.Error("expected Quality.Checks to be non-nil (empty slice) by default")
+		t.Error("expected Quality.Checks to be non-nil by default")
 	}
-	if len(cfg.Quality.Checks) != 0 {
-		t.Errorf("expected 0 default checks, got %d", len(cfg.Quality.Checks))
+	// DefaultConfig seeds go_test_coverage so new ct init runs are coverage-aware.
+	if len(cfg.Quality.Checks) != 1 {
+		t.Errorf("expected 1 default check, got %d", len(cfg.Quality.Checks))
+	}
+	cov := cfg.Quality.Checks[0]
+	if cov.Name != "go_test_coverage" {
+		t.Errorf("expected name=go_test_coverage, got %q", cov.Name)
+	}
+	if cov.Type != "metric" {
+		t.Errorf("expected type=metric, got %q", cov.Type)
+	}
+	if cov.Threshold != 70.0 {
+		t.Errorf("expected threshold=70, got %v", cov.Threshold)
+	}
+	if cov.WarnThreshold != 60.0 {
+		t.Errorf("expected warn_threshold=60, got %v", cov.WarnThreshold)
+	}
+	if !cov.Enabled {
+		t.Error("expected go_test_coverage enabled=true")
 	}
 }
 
