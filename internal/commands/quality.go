@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"database/sql"
 	"fmt"
 	"math"
 	"strings"
@@ -17,28 +18,31 @@ import (
 const (
 	qualityRefreshInterval = 30 * time.Second
 	sparklineHistory       = 10
+	detailSparklineHistory = 30
 	sparklineChars         = "▁▂▃▄▅▆▇█"
 )
 
 // quality-specific lipgloss styles
 var (
-	qPassStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)  // green
-	qWarnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)  // yellow
-	qFailStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)  // bright red
-	qErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))             // gray
-	qDimStyle   = lipgloss.NewStyle().Faint(true)
-	qBoldStyle  = lipgloss.NewStyle().Bold(true)
+	qPassStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true) // green
+	qWarnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true) // yellow
+	qFailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true) // bright red
+	qErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))            // gray
+	qDimStyle    = lipgloss.NewStyle().Faint(true)
 	qHeaderStyle = lipgloss.NewStyle().Bold(true).Underline(true)
 	qPanelStyle  = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("6")).
 			Padding(0, 1)
+	qUpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
+	qDownStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")) // red
+	qFlatStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // gray
 )
 
 // qualityRow holds the config + latest result + trend history for one check.
 type qualityRow struct {
 	cfg     config.QualityCheckConfig
-	latest  *repo.QualityMetric   // nil if no results yet
+	latest  *repo.QualityMetric
 	history []*repo.QualityMetric // newest-first, up to sparklineHistory
 }
 
@@ -47,11 +51,16 @@ type qualityDataMsg struct {
 	err  error
 }
 
+type qualityDetailMsg struct {
+	history []*repo.QualityMetric
+	err     error
+}
+
 type qualityTickMsg struct{}
 
 // qualityModel is the bubbletea model for ct quality.
 type qualityModel struct {
-	conn    interface{ Close() error }
+	conn    *sql.DB
 	metrics *repo.QualityMetricRepo
 	cfg     *config.Config
 
@@ -61,6 +70,10 @@ type qualityModel struct {
 	height      int
 	lastRefresh time.Time
 	err         error
+
+	// detail mode
+	detailMode    bool
+	detailHistory []*repo.QualityMetric
 }
 
 func newQualityModel() (*qualityModel, error) {
@@ -91,13 +104,12 @@ func (m qualityModel) fetch() tea.Msg {
 		return qualityDataMsg{err: err}
 	}
 
-	// Index latest results by check name.
 	latestByName := make(map[string]*repo.QualityMetric, len(latest))
 	for _, r := range latest {
 		latestByName[r.CheckName] = r
 	}
 
-	// Collect all check names: config checks first, then any DB-only names.
+	// Config checks first, then any DB-only names.
 	seen := make(map[string]bool)
 	var checks []config.QualityCheckConfig
 	for _, c := range m.cfg.Quality.Checks {
@@ -106,9 +118,7 @@ func (m qualityModel) fetch() tea.Msg {
 	}
 	for _, r := range latest {
 		if !seen[r.CheckName] {
-			checks = append(checks, config.QualityCheckConfig{
-				Name: r.CheckName,
-			})
+			checks = append(checks, config.QualityCheckConfig{Name: r.CheckName})
 			seen[r.CheckName] = true
 		}
 	}
@@ -122,8 +132,16 @@ func (m qualityModel) fetch() tea.Msg {
 			history: hist,
 		})
 	}
-
 	return qualityDataMsg{rows: rows}
+}
+
+func (m qualityModel) fetchDetail() tea.Msg {
+	if m.cursor >= len(m.rows) {
+		return qualityDetailMsg{}
+	}
+	name := m.rows[m.cursor].cfg.Name
+	hist, err := m.metrics.ListByCheck(name, detailSparklineHistory)
+	return qualityDetailMsg{history: hist, err: err}
 }
 
 func (m qualityModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -146,7 +164,21 @@ func (m qualityModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case qualityDetailMsg:
+		if msg.err == nil {
+			m.detailHistory = msg.history
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		if m.detailMode {
+			switch msg.String() {
+			case "esc", "q", "ctrl+c":
+				m.detailMode = false
+				m.detailHistory = nil
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -160,6 +192,12 @@ func (m qualityModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++
 			}
+		case "enter":
+			if len(m.rows) > 0 {
+				m.detailMode = true
+				m.detailHistory = nil
+				return m, m.fetchDetail
+			}
 		}
 	}
 	return m, nil
@@ -169,25 +207,32 @@ func (m qualityModel) View() string {
 	if m.width == 0 {
 		return "Loading…"
 	}
+	if m.detailMode && len(m.rows) > 0 {
+		return m.viewDetail()
+	}
+	return m.viewList()
+}
 
-	innerWidth := m.width - 4 // account for border + padding
+// ── list view ────────────────────────────────────────────────────────────────
 
+func (m qualityModel) viewList() string {
 	var sb strings.Builder
 
-	// Header row
-	sb.WriteString(qHeaderStyle.Render(
-		fmt.Sprintf("%-28s %-8s %-10s %-12s %-12s %s",
-			"CHECK", "STATUS", "VALUE", "THRESHOLD", "WARN", "TREND"),
-	))
+	header := fmt.Sprintf("%-28s  %-6s  %-12s  %-10s  %-10s  %-3s  %s",
+		"CHECK", "STATUS", "VALUE", "TARGET", "WARN", "DIR", "TREND",
+	)
+	sb.WriteString(qHeaderStyle.Render(header))
 	sb.WriteString("\n")
-	sb.WriteString(strings.Repeat("─", min(innerWidth, 90)))
+	sb.WriteString(qDimStyle.Render(strings.Repeat("─", min(m.width-6, 100))))
 	sb.WriteString("\n")
 
 	if m.err != nil {
 		sb.WriteString(qErrorStyle.Render(fmt.Sprintf("error: %v", m.err)))
 		sb.WriteString("\n")
 	} else if len(m.rows) == 0 {
-		sb.WriteString(qDimStyle.Render("No quality checks configured or recorded yet."))
+		sb.WriteString(qDimStyle.Render(
+			"No quality metrics recorded yet — run `gt check run` or wait for the next daemon baseline cycle.",
+		))
 		sb.WriteString("\n")
 	} else {
 		for i, row := range m.rows {
@@ -200,7 +245,6 @@ func (m qualityModel) View() string {
 		}
 	}
 
-	// Footer
 	sb.WriteString("\n")
 	var refreshStr string
 	if m.lastRefresh.IsZero() {
@@ -209,51 +253,122 @@ func (m qualityModel) View() string {
 		refreshStr = m.lastRefresh.Format("15:04:05")
 	}
 	footer := qDimStyle.Render(
-		fmt.Sprintf("Last refresh: %s  [r] refresh  [↑↓/jk] navigate  [q] quit", refreshStr),
+		fmt.Sprintf("Last refresh: %s  [r] refresh  [↑↓/jk] navigate  [enter] detail  [q] quit", refreshStr),
 	)
-
-	content := sb.String()
-	panelContent := qPanelStyle.Width(m.width - 2).Render(content + footer)
-	return panelContent
+	return qPanelStyle.Width(m.width - 2).Render(sb.String() + footer)
 }
+
+// ── detail view ───────────────────────────────────────────────────────────────
+
+func (m qualityModel) viewDetail() string {
+	row := m.rows[m.cursor]
+	var sb strings.Builder
+
+	sb.WriteString(qHeaderStyle.Render(row.cfg.Name))
+	sb.WriteString("\n\n")
+
+	if row.latest != nil {
+		if row.latest.Value.Valid {
+			sb.WriteString(fmt.Sprintf("  Current:  %s\n", formatMetricValue(row.latest.Value.Float64)))
+		}
+		sb.WriteString(fmt.Sprintf("  Status:   %s\n", colorQualityStatus(row.latest.Status)))
+		sb.WriteString(fmt.Sprintf("  Recorded: %s\n", row.latest.RunAt.Format("2006-01-02 15:04:05")))
+	} else {
+		sb.WriteString(qDimStyle.Render("  No data recorded yet."))
+		sb.WriteString("\n")
+	}
+
+	if row.cfg.Type == "metric" {
+		sb.WriteString("\n")
+		if row.cfg.Threshold > 0 {
+			sb.WriteString(fmt.Sprintf("  Target:   %s\n", formatMetricValue(row.cfg.Threshold)))
+		}
+		if row.cfg.WarnThreshold > 0 {
+			sb.WriteString(fmt.Sprintf("  Warn:     %s\n", formatMetricValue(row.cfg.WarnThreshold)))
+		}
+	}
+
+	hist := m.detailHistory
+	if hist == nil {
+		hist = row.history
+	}
+	if len(hist) > 0 {
+		sb.WriteString("\n")
+		reversed := reverseHistory(hist)
+		var spark string
+		if row.cfg.Type == "metric" {
+			spark = metricSparkline(reversed)
+		} else {
+			spark = passfailSparkline(reversed)
+		}
+		sb.WriteString(fmt.Sprintf("  Trend (%d pts): %s\n", len(hist), spark))
+		sb.WriteString("\n")
+		sb.WriteString(qHeaderStyle.Render("  Recent values:"))
+		sb.WriteString("\n")
+		limit := 10
+		if len(hist) < limit {
+			limit = len(hist)
+		}
+		for _, r := range hist[:limit] {
+			valStr := "—"
+			if r.Value.Valid {
+				valStr = formatMetricValue(r.Value.Float64)
+			}
+			sb.WriteString(fmt.Sprintf("    %s  %-10s  %s\n",
+				r.RunAt.Format("2006-01-02 15:04"),
+				valStr,
+				colorQualityStatus(r.Status),
+			))
+		}
+	}
+
+	sb.WriteString("\n")
+	footer := qDimStyle.Render("[esc] back")
+	return qPanelStyle.Width(m.width - 2).Render(sb.String() + footer)
+}
+
+// ── rendering helpers ─────────────────────────────────────────────────────────
 
 func renderQualityRow(row qualityRow) string {
 	name := row.cfg.Name
-	if len(name) > 27 {
-		name = name[:24] + "..."
+	if len([]rune(name)) > 27 {
+		name = string([]rune(name)[:24]) + "..."
 	}
 
-	// Status + value
-	statusStr := qDimStyle.Render("no data")
+	// Status: pad to fixed visible width so columns align despite ANSI codes.
+	statusRendered := qDimStyle.Render("—     ")
+	if row.latest != nil {
+		statusRendered = padVisible(colorQualityStatus(row.latest.Status), 6)
+	}
+
 	valueStr := qDimStyle.Render("—")
 	if row.latest != nil {
-		statusStr = colorQualityStatus(row.latest.Status)
 		if row.latest.Value.Valid {
-			valueStr = fmt.Sprintf("%.1f%%", row.latest.Value.Float64)
+			valueStr = formatMetricValue(row.latest.Value.Float64)
 		} else {
 			valueStr = row.latest.Status
 		}
 	}
 
-	// Threshold / warn threshold
 	threshStr := "—"
 	warnStr := "—"
 	if row.cfg.Type == "metric" {
 		if row.cfg.Threshold > 0 {
-			threshStr = fmt.Sprintf("%.1f%%", row.cfg.Threshold)
+			threshStr = formatMetricValue(row.cfg.Threshold)
 		}
 		if row.cfg.WarnThreshold > 0 {
-			warnStr = fmt.Sprintf("%.1f%%", row.cfg.WarnThreshold)
+			warnStr = formatMetricValue(row.cfg.WarnThreshold)
 		}
 	}
 
-	// Sparkline
+	arrow := trendArrow(row.history)
 	spark := sparkline(row)
 
-	return fmt.Sprintf("%-28s %-18s %-10s %-12s %-12s %s",
-		name, statusStr, valueStr, threshStr, warnStr, spark)
+	return fmt.Sprintf("%-28s  %s  %-12s  %-10s  %-10s  %-3s  %s",
+		name, statusRendered, valueStr, threshStr, warnStr, arrow, spark)
 }
 
+// colorQualityStatus returns a color-coded status label.
 func colorQualityStatus(status string) string {
 	switch status {
 	case "pass":
@@ -263,33 +378,101 @@ func colorQualityStatus(status string) string {
 	case "fail":
 		return qFailStyle.Render("FAIL")
 	default:
-		return qErrorStyle.Render("ERR ")
+		return qErrorStyle.Render("ERR")
 	}
 }
 
-// sparkline builds a small trend bar from the history (newest-right).
-// For metric checks: bars show relative value height.
-// For pass/fail checks: ▲ pass, ~ warn, ▼ fail, ? error.
+// formatMetricValue formats a float for display: whole numbers as integers with
+// comma separators; fractional values as one-decimal floats. No unit suffix —
+// the check name provides context (avoiding "12,847%" or "9.0%" for count metrics).
+func formatMetricValue(v float64) string {
+	if v == math.Trunc(v) && math.Abs(v) < 1e15 {
+		return commaSeparated(int64(v))
+	}
+	return fmt.Sprintf("%.1f", v)
+}
+
+// commaSeparated formats an integer with comma thousands separators.
+func commaSeparated(n int64) string {
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	s := fmt.Sprintf("%d", n)
+	var result []byte
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	if neg {
+		return "-" + string(result)
+	}
+	return string(result)
+}
+
+// padVisible pads s to a fixed visible width, ignoring ANSI escape codes.
+func padVisible(s string, width int) string {
+	visible := lipgloss.Width(s)
+	if visible >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-visible)
+}
+
+// trendArrow returns a colored ↑/↓/→ comparing the latest vs oldest value in
+// newest-first history. Assumes higher-is-better (no direction field in config).
+func trendArrow(hist []*repo.QualityMetric) string {
+	var vals []float64
+	for _, r := range hist {
+		if r.Value.Valid {
+			vals = append(vals, r.Value.Float64)
+		}
+	}
+	if len(vals) < 2 {
+		return qFlatStyle.Render("→")
+	}
+	cur := vals[0]
+	old := vals[len(vals)-1]
+	if old == 0 {
+		return qFlatStyle.Render("→")
+	}
+	delta := (cur - old) / math.Abs(old)
+	const threshold = 0.05
+	switch {
+	case delta > threshold:
+		return qUpStyle.Render("↑")
+	case delta < -threshold:
+		return qDownStyle.Render("↓")
+	default:
+		return qFlatStyle.Render("→")
+	}
+}
+
+// sparkline dispatches to metric or pass/fail sparkline.
 func sparkline(row qualityRow) string {
-	hist := row.history
-	if len(hist) == 0 {
+	if len(row.history) == 0 {
 		return qDimStyle.Render("—")
 	}
-
-	// Reverse so oldest is first (left-to-right = time progression).
-	reversed := make([]*repo.QualityMetric, len(hist))
-	for i, r := range hist {
-		reversed[len(hist)-1-i] = r
-	}
-
+	reversed := reverseHistory(row.history)
 	if row.cfg.Type == "metric" {
 		return metricSparkline(reversed)
 	}
 	return passfailSparkline(reversed)
 }
 
+// reverseHistory reverses a newest-first slice to oldest-first for left-to-right display.
+func reverseHistory(hist []*repo.QualityMetric) []*repo.QualityMetric {
+	reversed := make([]*repo.QualityMetric, len(hist))
+	for i, r := range hist {
+		reversed[len(hist)-1-i] = r
+	}
+	return reversed
+}
+
+// metricSparkline renders a bar-chart sparkline for metric checks (oldest-first input).
 func metricSparkline(hist []*repo.QualityMetric) string {
-	// Find min/max of values for normalization.
 	minVal, maxVal := math.MaxFloat64, -math.MaxFloat64
 	for _, r := range hist {
 		if r.Value.Valid {
@@ -315,7 +498,10 @@ func metricSparkline(hist []*repo.QualityMetric) string {
 			idx = len(chars) - 1
 		} else {
 			ratio := (v - minVal) / (maxVal - minVal)
-			idx = int(ratio * float64(len(chars)-1))
+			idx = int(math.Round(ratio * float64(len(chars)-1)))
+			if idx < 0 {
+				idx = 0
+			}
 			if idx >= len(chars) {
 				idx = len(chars) - 1
 			}
@@ -325,6 +511,7 @@ func metricSparkline(hist []*repo.QualityMetric) string {
 	return sb.String()
 }
 
+// passfailSparkline renders a symbol sparkline for pass/fail checks (oldest-first input).
 func passfailSparkline(hist []*repo.QualityMetric) string {
 	var sb strings.Builder
 	for _, r := range hist {
@@ -340,13 +527,6 @@ func passfailSparkline(hist []*repo.QualityMetric) string {
 		}
 	}
 	return sb.String()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // Quality runs the ct quality TUI dashboard.
