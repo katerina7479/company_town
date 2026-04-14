@@ -89,7 +89,7 @@ func Init() error {
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
-		fmt.Println("  created: config.json (edit github_repo and ticket_prefix)")
+		fmt.Println("  created: config.json (set github_repo and change ticket_prefix from \"tk\" to your project prefix)")
 	} else {
 		fmt.Println("  exists:  config.json")
 	}
