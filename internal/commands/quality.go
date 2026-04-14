@@ -283,10 +283,10 @@ func (m qualityModel) viewDetail() string {
 	if row.cfg.Type == "metric" {
 		sb.WriteString("\n")
 		if row.cfg.Threshold > 0 {
-			sb.WriteString(fmt.Sprintf("  Target:   %s\n", formatMetricValue(row.cfg.Threshold)))
+			fmt.Fprintf(&sb, "  Target:   %s\n", formatMetricValue(row.cfg.Threshold))
 		}
 		if row.cfg.WarnThreshold > 0 {
-			sb.WriteString(fmt.Sprintf("  Warn:     %s\n", formatMetricValue(row.cfg.WarnThreshold)))
+			fmt.Fprintf(&sb, "  Warn:     %s\n", formatMetricValue(row.cfg.WarnThreshold))
 		}
 	}
 
@@ -306,7 +306,7 @@ func (m qualityModel) viewDetail() string {
 		} else {
 			spark = passfailSparkline(reversed)
 		}
-		sb.WriteString(fmt.Sprintf("  Trend (%d pts): %s\n", len(hist), spark))
+		fmt.Fprintf(&sb, "  Trend (%d pts): %s\n", len(hist), spark)
 		sb.WriteString("\n")
 		sb.WriteString(qHeaderStyle.Render("  Recent values:"))
 		sb.WriteString("\n")
@@ -319,11 +319,11 @@ func (m qualityModel) viewDetail() string {
 			if r.Value.Valid {
 				valStr = formatMetricValue(r.Value.Float64)
 			}
-			sb.WriteString(fmt.Sprintf("    %s  %-10s  %s\n",
+			fmt.Fprintf(&sb, "    %s  %-10s  %s\n",
 				r.RunAt.Format("2006-01-02 15:04"),
 				valStr,
 				colorQualityStatus(r.Status),
-			))
+			)
 		}
 	}
 
