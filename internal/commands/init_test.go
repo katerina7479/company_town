@@ -134,6 +134,57 @@ func TestEnsureRootGitignore_noTrailingNewlineInExisting(t *testing.T) {
 	}
 }
 
+func TestEnsureRootGitignore_bareNameIsEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	// ".company_town" (no trailing slash) is equivalent — must not duplicate.
+	existing := "node_modules/\n.company_town\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(before) != string(after) {
+		t.Errorf("file was modified but .company_town (no slash) should be treated as equivalent:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+func TestEnsureRootGitignore_rootAnchoredIsEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	// "/.company_town/" (root-anchored) is equivalent — must not duplicate.
+	existing := "node_modules/\n/.company_town/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(before) != string(after) {
+		t.Errorf("file was modified but /.company_town/ should be treated as equivalent:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+func TestEnsureRootGitignore_inlineCommentIsEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	// ".company_town/  # local runtime state" must be treated as already present.
+	existing := ".company_town/  # local runtime state\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(before) != string(after) {
+		t.Errorf("file was modified but entry with inline comment should be equivalent:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
 func TestLoadTemplateAllAgentTypes(t *testing.T) {
 	types := []string{"mayor", "architect", "reviewer", "artisan",
 		"artisan-frontend", "artisan-backend", "artisan-qa_coder"}

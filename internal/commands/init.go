@@ -144,6 +144,26 @@ func Init() error {
 	return nil
 }
 
+// matchesCompanyTownEntry reports whether a .gitignore line already excludes
+// .company_town/ in any of the four equivalent forms:
+//
+//	.company_town/       (canonical)
+//	.company_town        (no trailing slash)
+//	/.company_town/      (root-anchored)
+//	/.company_town       (root-anchored, no trailing slash)
+//
+// Inline comments (# …) and surrounding whitespace are stripped before
+// comparison, so ".company_town/  # local runtime state" also matches.
+func matchesCompanyTownEntry(line string) bool {
+	if idx := strings.Index(line, "#"); idx >= 0 {
+		line = line[:idx]
+	}
+	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "/")
+	line = strings.TrimSuffix(line, "/")
+	return line == ".company_town"
+}
+
 // ensureRootGitignore adds a .company_town/ exclusion to the project root's
 // .gitignore. If the file does not exist it is created. If the entry is already
 // present the file is left unchanged.
@@ -156,9 +176,9 @@ func ensureRootGitignore(projectRoot string) error {
 		return fmt.Errorf("reading root .gitignore: %w", err)
 	}
 
-	// Check each line for an exact match so we don't add a duplicate.
+	// Check each line; recognise all equivalent forms so we don't duplicate.
 	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == entry {
+		if matchesCompanyTownEntry(line) {
 			fmt.Println("  exists:  .gitignore (.company_town/ already excluded)")
 			return nil
 		}
