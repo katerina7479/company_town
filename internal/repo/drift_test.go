@@ -96,7 +96,7 @@ func TestCheckDrift_pointingAtOtherAgentsTicket(t *testing.T) {
 
 	id, _ := issues.Create("test", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "in_progress")
-	issues.SetAssignee(id, "tin") // assigned to tin
+	issues.SetAssignee(id, "tin")         // assigned to tin
 	agents.SetCurrentIssue("copper", &id) // copper's current_issue points at it
 
 	entries, err := repo.CheckDrift(agents, issues, "nc")

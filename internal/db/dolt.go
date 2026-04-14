@@ -61,7 +61,7 @@ func StartServer(doltDir, ctDir string, cfg *config.DoltConfig) error {
 
 	if !isPortAvailable(cfg.Host, cfg.Port) {
 		return fmt.Errorf("dolt port %d is already in use — either stop the process using that port "+
-		"or edit .company_town/config.json dolt.port to a free port", cfg.Port)
+			"or edit .company_town/config.json dolt.port to a free port", cfg.Port)
 	}
 
 	logFile, err := os.OpenFile(filepath.Join(ctDir, "logs", "dolt-server.log"),
