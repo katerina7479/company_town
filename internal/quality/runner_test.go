@@ -51,6 +51,18 @@ func metricCheckWithWarn(name, command string, threshold, warnThreshold float64)
 	}
 }
 
+func metricCheckWithDirection(name, command string, threshold, warnThreshold float64, direction string) config.QualityCheckConfig {
+	return config.QualityCheckConfig{
+		Name:          name,
+		Command:       command,
+		Type:          string(CheckTypeMetric),
+		Threshold:     threshold,
+		WarnThreshold: warnThreshold,
+		Direction:     direction,
+		Enabled:       true,
+	}
+}
+
 // --- pass_fail tests ---
 
 func TestRunner_PassFail_pass(t *testing.T) {
@@ -266,5 +278,43 @@ func TestRunner_ResultsHaveRunAt(t *testing.T) {
 
 	if baseline.Results[0].RunAt.IsZero() {
 		t.Error("expected non-zero RunAt on result")
+	}
+}
+
+// --- direction="lower" tests ---
+
+func TestRunner_Metric_LowerDirection_Pass(t *testing.T) {
+	// val=3 <= threshold=5 → pass
+	r := newTestRunner("echo 3.0")
+	baseline := r.Run([]config.QualityCheckConfig{
+		metricCheckWithDirection("todo_count", "cmd", 5.0, 10.0, "lower"),
+	})
+	res := baseline.Results[0]
+	if res.Status != StatusPass {
+		t.Errorf("expected StatusPass for 3.0 <= 5.0 (lower), got %q", res.Status)
+	}
+}
+
+func TestRunner_Metric_LowerDirection_Warn(t *testing.T) {
+	// val=7 > threshold=5 but <= warnThreshold=10 → warn
+	r := newTestRunner("echo 7.0")
+	baseline := r.Run([]config.QualityCheckConfig{
+		metricCheckWithDirection("todo_count", "cmd", 5.0, 10.0, "lower"),
+	})
+	res := baseline.Results[0]
+	if res.Status != StatusWarn {
+		t.Errorf("expected StatusWarn for 7.0 in (5.0, 10.0] (lower), got %q", res.Status)
+	}
+}
+
+func TestRunner_Metric_LowerDirection_Fail(t *testing.T) {
+	// val=15 > warnThreshold=10 → fail
+	r := newTestRunner("echo 15.0")
+	baseline := r.Run([]config.QualityCheckConfig{
+		metricCheckWithDirection("todo_count", "cmd", 5.0, 10.0, "lower"),
+	})
+	res := baseline.Results[0]
+	if res.Status != StatusFail {
+		t.Errorf("expected StatusFail for 15.0 > 10.0 (lower), got %q", res.Status)
 	}
 }

@@ -14,25 +14,86 @@ func TestDefaultConfig_quality(t *testing.T) {
 	if cfg.Quality.Checks == nil {
 		t.Error("expected Quality.Checks to be non-nil by default")
 	}
-	// DefaultConfig seeds go_test_coverage so new ct init runs are coverage-aware.
-	if len(cfg.Quality.Checks) != 1 {
-		t.Errorf("expected 1 default check, got %d", len(cfg.Quality.Checks))
+	// DefaultConfig seeds go_test_coverage + 6 numeric metric checks = 7 total.
+	if len(cfg.Quality.Checks) != 7 {
+		t.Errorf("expected 7 default checks, got %d", len(cfg.Quality.Checks))
 	}
-	cov := cfg.Quality.Checks[0]
-	if cov.Name != "go_test_coverage" {
-		t.Errorf("expected name=go_test_coverage, got %q", cov.Name)
+
+	// Verify go_test_coverage thresholds bracket today's ~53% reality.
+	var cov *QualityCheckConfig
+	for i := range cfg.Quality.Checks {
+		if cfg.Quality.Checks[i].Name == "go_test_coverage" {
+			cov = &cfg.Quality.Checks[i]
+			break
+		}
+	}
+	if cov == nil {
+		t.Fatal("go_test_coverage check not found")
 	}
 	if cov.Type != "metric" {
 		t.Errorf("expected type=metric, got %q", cov.Type)
 	}
-	if cov.Threshold != 70.0 {
-		t.Errorf("expected threshold=70, got %v", cov.Threshold)
+	if cov.Threshold != 60.0 {
+		t.Errorf("expected threshold=60.0, got %v", cov.Threshold)
 	}
-	if cov.WarnThreshold != 60.0 {
-		t.Errorf("expected warn_threshold=60, got %v", cov.WarnThreshold)
+	if cov.WarnThreshold != 50.0 {
+		t.Errorf("expected warn_threshold=50.0, got %v", cov.WarnThreshold)
 	}
 	if !cov.Enabled {
 		t.Error("expected go_test_coverage enabled=true")
+	}
+}
+
+func TestDefaultConfig_quality_newChecks(t *testing.T) {
+	cfg := DefaultConfig("/tmp/test", "owner/repo")
+
+	names := make(map[string]bool, len(cfg.Quality.Checks))
+	for _, c := range cfg.Quality.Checks {
+		names[c.Name] = true
+	}
+	for _, want := range []string{
+		"go_test_coverage",
+		"lint_warning_count",
+		"loc_total",
+		"todo_count",
+		"test_count",
+		"dependency_count",
+		"open_ticket_count",
+	} {
+		if !names[want] {
+			t.Errorf("expected check %q in DefaultConfig quality checks", want)
+		}
+	}
+}
+
+func TestDefaultConfig_quality_lowerDirectionChecks(t *testing.T) {
+	cfg := DefaultConfig("/tmp/test", "owner/repo")
+
+	lowerExpected := map[string]bool{
+		"lint_warning_count": true,
+		"todo_count":         true,
+		"dependency_count":   true,
+		"open_ticket_count":  true,
+	}
+	for _, c := range cfg.Quality.Checks {
+		if lowerExpected[c.Name] && c.Direction != "lower" {
+			t.Errorf("check %q: expected direction=lower, got %q", c.Name, c.Direction)
+		}
+		if !lowerExpected[c.Name] && c.Direction == "lower" {
+			t.Errorf("check %q: unexpected direction=lower", c.Name)
+		}
+	}
+}
+
+func TestDefaultConfig_quality_allMetric(t *testing.T) {
+	cfg := DefaultConfig("/tmp/test", "owner/repo")
+	for _, c := range cfg.Quality.Checks {
+		if c.Type != "metric" {
+			t.Errorf("check %q: expected type=metric, got %q", c.Name, c.Type)
+		}
+		if !c.Enabled {
+			t.Errorf("check %q: expected enabled=true", c.Name)
+		}
 	}
 }
 
@@ -94,7 +155,7 @@ func TestQualityCheckConfig_disabledCheck(t *testing.T) {
 	}
 	data, _ := json.Marshal(check)
 	var got QualityCheckConfig
-	json.Unmarshal(data, &got)
+	json.Unmarshal(data, &got) //nolint:errcheck // test-only round-trip
 	if got.Enabled {
 		t.Error("expected Enabled=false after round-trip")
 	}
@@ -109,7 +170,7 @@ func TestQualityCheckConfig_zeroThreshold(t *testing.T) {
 		Enabled: true,
 	}
 	if check.Threshold != 0 {
-		t.Errorf("expected zero threshold, got %f", check.Threshold)
+		t.Errorf("expected zero Threshold, got %f", check.Threshold)
 	}
 }
 
@@ -149,8 +210,45 @@ func TestQualityCheckConfig_warnThreshold_zeroDefault(t *testing.T) {
 	}
 	data, _ := json.Marshal(check)
 	var got QualityCheckConfig
-	json.Unmarshal(data, &got)
+	json.Unmarshal(data, &got) //nolint:errcheck // test-only round-trip
 	if got.WarnThreshold != 0 {
 		t.Errorf("expected zero WarnThreshold, got %f", got.WarnThreshold)
+	}
+}
+
+func TestQualityCheckConfig_direction_roundTrip(t *testing.T) {
+	check := QualityCheckConfig{
+		Name:          "todo_count",
+		Command:       "grep -rE 'TODO' --include='*.go' . | wc -l",
+		Type:          "metric",
+		Threshold:     0,
+		WarnThreshold: 5,
+		Direction:     "lower",
+		Enabled:       true,
+	}
+	data, err := json.Marshal(check)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got QualityCheckConfig
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.Direction != "lower" {
+		t.Errorf("expected Direction=lower after round-trip, got %q", got.Direction)
+	}
+}
+
+func TestQualityCheckConfig_direction_defaultEmpty(t *testing.T) {
+	// Direction is empty string by default (interpreted as "higher" by runner).
+	check := QualityCheckConfig{
+		Name:      "coverage",
+		Command:   "cover.sh",
+		Type:      "metric",
+		Threshold: 80.0,
+		Enabled:   true,
+	}
+	if check.Direction != "" {
+		t.Errorf("expected empty Direction by default, got %q", check.Direction)
 	}
 }
