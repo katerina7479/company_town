@@ -2653,11 +2653,12 @@ func TestRunCmd_noStderrOnFailure(t *testing.T) {
 
 // --- ci_running state machine tests (nc-130) ---
 
-// newPRStateFn returns a getPRStateFn stub that always returns the given values.
-// Convenience for tests that don't care about merge state or CI checks.
-func newPRStateFn(state, mergeable, checks string, failing []string) func(int) (string, string, string, []string, bool, error) {
+// newPRStateFn returns a getPRStateFn stub that reports an OPEN PR with the
+// given mergeable/checks/failing values. Convenience for ci_running tests that
+// don't exercise the merged or closed code paths.
+func newPRStateFn(mergeable, checks string, failing []string) func(int) (string, string, string, []string, bool, error) {
 	return func(_ int) (string, string, string, []string, bool, error) {
-		return state, mergeable, checks, failing, false, nil
+		return "OPEN", mergeable, checks, failing, false, nil
 	}
 }
 
@@ -2669,7 +2670,7 @@ func TestHandleCIRunning_passingMovesToInReview(t *testing.T) {
 	issues.SetPR(id, 42)
 	issues.Assign(id, "tin", "prole/tin/nc-42")
 
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "passing", nil)
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "passing", nil)
 	d.handlePREvents()
 
 	updated, _ := issues.Get(id)
@@ -2691,7 +2692,7 @@ func TestHandleCIRunning_failingMovesToRepairingAndNudgesProle(t *testing.T) {
 	issues.SetPR(id, 42)
 	issues.Assign(id, "tin", "prole/tin/nc-42")
 
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"test", "lint"})
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test", "lint"})
 	d.handlePREvents()
 
 	updated, _ := issues.Get(id)
@@ -2717,7 +2718,7 @@ func TestHandleCIRunning_pendingIsNoop(t *testing.T) {
 	issues.SetPR(id, 43)
 	issues.Assign(id, "tin", "prole/tin/nc-43")
 
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "pending", nil)
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "pending", nil)
 	d.handlePREvents()
 
 	updated, _ := issues.Get(id)
@@ -2737,7 +2738,7 @@ func TestHandleCIRunning_conflictingMovesToMergeConflict(t *testing.T) {
 	issues.UpdateStatus(id, "ci_running")
 	issues.SetPR(id, 44)
 
-	d.getPRStateFn = newPRStateFn("OPEN", "CONFLICTING", "passing", nil)
+	d.getPRStateFn = newPRStateFn("CONFLICTING", "passing", nil)
 	d.handlePREvents()
 
 	updated, _ := issues.Get(id)
@@ -2760,7 +2761,7 @@ func TestHandleCIRunning_noNudgeWhenProleSessionAbsent(t *testing.T) {
 	issues.SetPR(id, 50)
 	issues.Assign(id, "tin", "prole/tin/nc-50")
 
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"test"})
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
 	d.handlePREvents()
 
 	// Ticket should still be moved to repairing even without an active session.
@@ -2782,7 +2783,7 @@ func TestHandleCIRunning_noNudgeWhenNoAssignee(t *testing.T) {
 	issues.SetPR(id, 51)
 	// no Assign call — ticket has no assignee
 
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"test"})
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
 	d.handlePREvents()
 
 	updated, _ := issues.Get(id)
@@ -2804,7 +2805,7 @@ func TestHandleCIRunning_noSpam(t *testing.T) {
 	issues.SetPR(id, 55)
 	issues.Assign(id, "tin", "prole/tin/nc-55")
 
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"test"})
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
 
 	// First call — moves ticket to repairing and nudges.
 	d.handlePREvents()
@@ -2832,13 +2833,13 @@ func TestHandleCIRunning_nudgesAgainAfterCooldownWithDifferentFailure(t *testing
 	issues.Assign(id, "tin", "prole/tin/nc-80")
 
 	// First call — test fails; nudged.
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"test"})
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
 	d.handlePREvents()
 	firstCount := len(*sent)
 
 	// Simulate prole pushed a partial fix; ticket back to ci_running, different check fails.
 	issues.UpdateStatus(id, "ci_running")
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"security"})
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"security"})
 
 	// Advance clock past the cooldown — different digest + expired cooldown → nudge fires.
 	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
@@ -3041,7 +3042,7 @@ func TestHandleOpenPR_inReview_noCIReclassification(t *testing.T) {
 
 	// CI is failing — if the daemon incorrectly re-checked CI for in_review
 	// tickets, it would move the ticket to repairing.
-	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"lint"})
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"lint"})
 
 	d.handlePREvents()
 
