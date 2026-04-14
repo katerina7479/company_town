@@ -1,3 +1,19 @@
+// Package prole manages prole agent lifecycle: creating git worktrees, launching
+// tmux sessions, resetting idle worktrees, and pruning dead ones.
+//
+// Directory layout under .company_town/:
+//
+//	.company_town/
+//	├── config.json       — project config
+//	├── db/               — Dolt database directory (MUST NOT be touched by worktree ops)
+//	├── repo.git/         — bare clone used as the shared git object store
+//	└── proles/
+//	    ├── iron/         — worktree for prole "iron"  (only safe worktree target)
+//	    ├── copper/       — worktree for prole "copper"
+//	    └── ...
+//
+// All git worktree add/remove/reset operations must target a path under
+// .company_town/proles/ and must never touch db/ or repo.git/.
 package prole
 
 import (
@@ -26,6 +42,54 @@ func ProlesDir(cfg *config.Config) string {
 // WorktreePath returns the worktree path for a named prole.
 func WorktreePath(cfg *config.Config, name string) string {
 	return filepath.Join(ProlesDir(cfg), name)
+}
+
+// doltDir returns the path to the Dolt database directory.
+func doltDir(cfg *config.Config) string {
+	return filepath.Join(config.CompanyTownDir(cfg.ProjectRoot), "db")
+}
+
+// isSafeWorktreePath returns true when path is a valid target for git worktree
+// operations: it must be non-empty, sit under ProlesDir, and must not coincide
+// with the bare repo or the Dolt database directory.
+//
+// This prevents a corrupted or malicious WorktreePath DB value from causing
+// git worktree remove --force or git clean to operate on critical directories.
+func isSafeWorktreePath(cfg *config.Config, path string) bool {
+	if path == "" {
+		return false
+	}
+
+	// Resolve to absolute, clean paths so symlinks and ".." can't escape the check.
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	prolesDir, err := filepath.Abs(ProlesDir(cfg))
+	if err != nil {
+		return false
+	}
+	bareRepo, err := filepath.Abs(BareRepoPath(cfg))
+	if err != nil {
+		return false
+	}
+	dolt, err := filepath.Abs(doltDir(cfg))
+	if err != nil {
+		return false
+	}
+
+	// Must be strictly under the proles directory (not equal to it).
+	rel, err := filepath.Rel(prolesDir, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+
+	// Extra belt-and-suspenders: explicitly reject the bare repo and Dolt dir.
+	if absPath == bareRepo || absPath == dolt {
+		return false
+	}
+
+	return true
 }
 
 // EnsureBareRepo creates the bare clone if it doesn't exist, or fetches if it does.
@@ -300,6 +364,10 @@ func ResetIdleWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.
 
 	for _, a := range idleProlesNeedingReset(all) {
 		wtPath := a.WorktreePath.String
+		if !isSafeWorktreePath(cfg, wtPath) {
+			logger.Printf("warning: skipping idle prole %s — worktree path %q is not under proles dir", a.Name, wtPath)
+			continue
+		}
 		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 			continue
 		}
@@ -445,6 +513,10 @@ func PruneDeadWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.
 			continue
 		}
 		wtPath := a.WorktreePath.String
+		if !isSafeWorktreePath(cfg, wtPath) {
+			logger.Printf("warning: skipping prole %s — worktree path %q is not under proles dir", a.Name, wtPath)
+			continue
+		}
 		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 			continue // already removed from disk
 		}
