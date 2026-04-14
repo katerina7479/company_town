@@ -50,7 +50,7 @@ func (r *Runner) runCheck(cfg config.QualityCheckConfig) Result {
 	result.Output = string(out)
 
 	if cfg.Type == string(CheckTypeMetric) {
-		return r.evalMetric(result, cfg.Threshold, cfg.WarnThreshold, out, err)
+		return r.evalMetric(result, cfg.Target, cfg.WarnTarget, out, err)
 	}
 	return r.evalPassFail(result, err)
 }

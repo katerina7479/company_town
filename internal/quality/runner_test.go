@@ -30,24 +30,24 @@ func passFail(name, command string, enabled bool) config.QualityCheckConfig {
 	}
 }
 
-func metricCheck(name, command string, threshold float64) config.QualityCheckConfig {
+func metricCheck(name, command string, target float64) config.QualityCheckConfig {
 	return config.QualityCheckConfig{
-		Name:      name,
-		Command:   command,
-		Type:      string(CheckTypeMetric),
-		Threshold: threshold,
-		Enabled:   true,
+		Name:    name,
+		Command: command,
+		Type:    string(CheckTypeMetric),
+		Target:  target,
+		Enabled: true,
 	}
 }
 
-func metricCheckWithWarn(name, command string, threshold, warnThreshold float64) config.QualityCheckConfig {
+func metricCheckWithWarn(name, command string, target, warnTarget float64) config.QualityCheckConfig {
 	return config.QualityCheckConfig{
-		Name:          name,
-		Command:       command,
-		Type:          string(CheckTypeMetric),
-		Threshold:     threshold,
-		WarnThreshold: warnThreshold,
-		Enabled:       true,
+		Name:       name,
+		Command:    command,
+		Type:       string(CheckTypeMetric),
+		Target:     target,
+		WarnTarget: warnTarget,
+		Enabled:    true,
 	}
 }
 

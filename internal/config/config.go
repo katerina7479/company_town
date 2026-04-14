@@ -60,12 +60,12 @@ type DoltConfig struct {
 
 // QualityCheckConfig defines a single quality gate command and how to evaluate it.
 type QualityCheckConfig struct {
-	Name          string  `json:"name"`
-	Command       string  `json:"command"`
-	Type          string  `json:"type"`           // "pass_fail" or "metric"
-	Threshold     float64 `json:"threshold"`      // minimum passing value for "metric" checks
-	WarnThreshold float64 `json:"warn_threshold"` // warn when value >= WarnThreshold but < Threshold; ignored when zero
-	Enabled       bool    `json:"enabled"`
+	Name       string  `json:"name"`
+	Command    string  `json:"command"`
+	Type       string  `json:"type"`        // "pass_fail" or "metric"
+	Target     float64 `json:"target"`      // aspirational target value for "metric" checks; pass when value >= Target
+	WarnTarget float64 `json:"warn_target"` // warn when value >= WarnTarget but < Target; ignored when zero
+	Enabled    bool    `json:"enabled"`
 }
 
 // QualityConfig holds all project-level quality check settings.
@@ -264,12 +264,48 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 			BaselineIntervalSeconds: 3600,
 			Checks: []QualityCheckConfig{
 				{
-					Name:          "go_test_coverage",
-					Command:       "go test ./... -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
-					Type:          "metric",
-					Threshold:     70.0,
-					WarnThreshold: 60.0,
-					Enabled:       true,
+					Name:    "go_build",
+					Command: "go build ./...",
+					Type:    "pass_fail",
+					Enabled: true,
+				},
+				{
+					Name:    "go_vet",
+					Command: "go vet ./...",
+					Type:    "pass_fail",
+					Enabled: true,
+				},
+				{
+					Name:    "go_lint",
+					Command: "golangci-lint run ./...",
+					Type:    "pass_fail",
+					Enabled: true,
+				},
+				{
+					Name:    "go_test",
+					Command: "go test ./...",
+					Type:    "pass_fail",
+					Enabled: true,
+				},
+				{
+					Name:    "go_test_race",
+					Command: "go test -race -short ./...",
+					Type:    "pass_fail",
+					Enabled: true,
+				},
+				{
+					Name:    "go_mod_verify",
+					Command: "go mod verify",
+					Type:    "pass_fail",
+					Enabled: true,
+				},
+				{
+					Name:       "go_test_coverage",
+					Command:    "go test ./... -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
+					Type:       "metric",
+					Target:     80.0,
+					WarnTarget: 70.0,
+					Enabled:    true,
 				},
 			},
 		},
