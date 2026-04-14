@@ -15,6 +15,8 @@ builds:
     main: ./cmd/ct
     ldflags:
       - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
     goos:
       - darwin
       - linux
@@ -31,6 +33,8 @@ builds:
     main: ./cmd/gt
     ldflags:
       - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
     goos:
       - darwin
       - linux
@@ -44,11 +48,11 @@ builds:
 archives:
   - id: default
     # Each archive gets both binaries so a single download is self-contained.
-    builds:
+    ids:
       - ct
       - gt
     name_template: "company_town_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats: [tar.gz]
     files:
       - README.md
 
