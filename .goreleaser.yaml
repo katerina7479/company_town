@@ -1,0 +1,77 @@
+# .goreleaser.yaml
+# Source: cmd/ct/main.go and cmd/gt/main.go
+# Run: goreleaser release --clean   (requires GITHUB_TOKEN)
+# Docs: https://goreleaser.com
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ct
+    binary: ct
+    main: ./cmd/ct
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # Linux arm64 needs CGO disabled to cross-compile cleanly.
+    ignore:
+      - goos: linux
+        goarch: arm64
+
+  - id: gt
+    binary: gt
+    main: ./cmd/gt
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: linux
+        goarch: arm64
+
+archives:
+  - id: default
+    # Each archive gets both binaries so a single download is self-contained.
+    ids:
+      - ct
+      - gt
+    name_template: "company_town_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: katerina7479
+    name: company_town
+  draft: false
+  prerelease: auto   # tags like v0.1.0-rc.1 become pre-releases automatically
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
