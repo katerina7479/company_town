@@ -1872,7 +1872,7 @@ func TestMakeRestartFn_AcceptsArchitect(t *testing.T) {
 		ProjectRoot:  t.TempDir(),
 		TicketPrefix: "NC",
 		Agents: config.AgentsConfig{
-			Architect: config.AgentConfig{Model: "claude-opus-4-5"},
+			Architect: config.AgentConfig{Model: "claude-opus-4-6"},
 		},
 	}
 	agents := repo.NewAgentRepo(conn, nil)
@@ -1904,7 +1904,7 @@ func TestMakeRestartFn_SetsIdleNotWorking(t *testing.T) {
 		ProjectRoot:  t.TempDir(),
 		TicketPrefix: "NC",
 		Agents: config.AgentsConfig{
-			Architect: config.AgentConfig{Model: "claude-opus-4-5"},
+			Architect: config.AgentConfig{Model: "claude-opus-4-6"},
 		},
 	}
 	agents := repo.NewAgentRepo(conn, nil)

@@ -42,10 +42,10 @@ func TestLoad_validConfig(t *testing.T) {
 		"nudge_cooldown_seconds": 120,
 		"context_handoff_threshold": 0.75,
 		"agents": {
-			"mayor":     {"model": "claude-opus-4-5"},
-			"architect": {"model": "claude-opus-4-5"},
-			"prole":     {"model": "claude-sonnet-4-5"},
-			"artisan":   {"backend": {"model": "claude-sonnet-4-5"}}
+			"mayor":     {"model": "claude-opus-4-6"},
+			"architect": {"model": "claude-opus-4-6"},
+			"prole":     {"model": "claude-sonnet-4-6"},
+			"artisan":   {"backend": {"model": "claude-sonnet-4-6"}}
 		}
 	}`
 	if err := os.WriteFile(filepath.Join(ctDir, ConfigFile), []byte(raw), 0644); err != nil {
@@ -75,12 +75,12 @@ func TestLoad_validConfig(t *testing.T) {
 	if cfg.ContextHandoffThreshold != 0.75 {
 		t.Errorf("ContextHandoffThreshold = %v, want 0.75", cfg.ContextHandoffThreshold)
 	}
-	if cfg.Agents.Mayor.Model != "claude-opus-4-5" {
-		t.Errorf("Agents.Mayor.Model = %q, want %q", cfg.Agents.Mayor.Model, "claude-opus-4-5")
+	if cfg.Agents.Mayor.Model != "claude-opus-4-6" {
+		t.Errorf("Agents.Mayor.Model = %q, want %q", cfg.Agents.Mayor.Model, "claude-opus-4-6")
 	}
-	if cfg.Agents.Artisan["backend"].Model != "claude-sonnet-4-5" {
+	if cfg.Agents.Artisan["backend"].Model != "claude-sonnet-4-6" {
 		t.Errorf("Agents.Artisan[backend].Model = %q, want %q",
-			cfg.Agents.Artisan["backend"].Model, "claude-sonnet-4-5")
+			cfg.Agents.Artisan["backend"].Model, "claude-sonnet-4-6")
 	}
 }
 
