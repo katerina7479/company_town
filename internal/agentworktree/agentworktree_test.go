@@ -146,7 +146,7 @@ func TestEnsure_CopiesPreCommitHook(t *testing.T) {
 
 	// Place a scripts/pre-commit file in the project root.
 	scriptsDir := filepath.Join(cfg.ProjectRoot, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+	if err := os.MkdirAll(scriptsDir, 0750); err != nil {
 		t.Fatalf("creating scripts dir: %v", err)
 	}
 	hookSrc := filepath.Join(scriptsDir, "pre-commit")

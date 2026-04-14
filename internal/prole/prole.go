@@ -134,7 +134,9 @@ func InstallPreCommitHook(projectRoot, wtPath string) {
 	}
 
 	hookDst := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookDst, data, 0750); err != nil {
+	// gosec G703: hookDst is derived from git rev-parse --git-dir run in a
+	// worktree we created; not user-controlled input.
+	if err := os.WriteFile(hookDst, data, 0750); err != nil { //nolint:gosec
 		fmt.Fprintf(os.Stderr, "warning: could not install pre-commit hook at %s: %v\n", hookDst, err)
 	}
 }

@@ -28,7 +28,7 @@ func TestFindProjectRoot_fromAgentWorktreeLayout(t *testing.T) {
 	ctDir := filepath.Join(root, ".company_town")
 	worktreeDir := filepath.Join(ctDir, "agents", "architect", "worktree")
 
-	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+	if err := os.MkdirAll(worktreeDir, 0750); err != nil {
 		t.Fatalf("creating worktree dir: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestFindProjectRoot_fromAgentWorktreeLayout(t *testing.T) {
 func TestFindProjectRoot_fromProjectRoot(t *testing.T) {
 	root := t.TempDir()
 	ctDir := filepath.Join(root, ".company_town")
-	if err := os.MkdirAll(ctDir, 0755); err != nil {
+	if err := os.MkdirAll(ctDir, 0750); err != nil {
 		t.Fatalf("creating .company_town: %v", err)
 	}
 
