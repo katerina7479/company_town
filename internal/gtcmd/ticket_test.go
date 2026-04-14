@@ -308,9 +308,40 @@ func TestTicketPrioritize_invalidPriority(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	err = ticketPrioritize(issues, []string{"1", "P5"})
+	err = ticketPrioritize(issues, []string{"1", "P6"})
 	if err == nil {
-		t.Fatal("expected error for invalid priority 'P5', got nil")
+		t.Fatal("expected error for invalid priority 'P6', got nil")
+	}
+}
+
+func TestTicketPrioritize_p4p5Valid(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	for _, p := range []string{"P4", "P5"} {
+		if err := ticketPrioritize(issues, []string{fmt.Sprintf("%d", id), p}); err != nil {
+			t.Errorf("ticketPrioritize with %s: unexpected error: %v", p, err)
+		}
+	}
+}
+
+func TestTicketCreate_defaultPriorityP3(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketCreate(issues, "nc", []string{"A task"}); err != nil {
+		t.Fatalf("ticketCreate: %v", err)
+	}
+
+	got, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.Priority.Valid || got.Priority.String != "P3" {
+		t.Errorf("expected default priority P3, got %v", got.Priority)
 	}
 }
 

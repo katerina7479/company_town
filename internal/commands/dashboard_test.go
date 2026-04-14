@@ -1476,6 +1476,52 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 	}
 }
 
+// --- priorityCell tests ---
+
+func TestPriorityCell_nullIsSpaces(t *testing.T) {
+	got := priorityCell(sql.NullString{})
+	if got != "     " {
+		t.Errorf("expected 5 spaces for NULL priority, got %q", got)
+	}
+	if len(got) != 5 {
+		t.Errorf("expected len 5, got %d", len(got))
+	}
+}
+
+func TestPriorityCell_width5(t *testing.T) {
+	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
+		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		// In test mode lipgloss renders plain text (no TTY), so len == visible width.
+		if len(cell) != 5 {
+			t.Errorf("priorityCell(%q): expected len 5, got %d (%q)", p, len(cell), cell)
+		}
+	}
+}
+
+func TestPriorityCell_containsLabel(t *testing.T) {
+	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
+		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		want := fmt.Sprintf("[%s]", p)
+		if !strings.Contains(cell, want) {
+			t.Errorf("priorityCell(%q): expected cell to contain %q, got %q", p, want, cell)
+		}
+	}
+}
+
+func TestPriorityCell_p3NotStyled(t *testing.T) {
+	// P3 is the neutral default tier — it must NOT be in priorityStyles.
+	// Without a style entry it renders via the fallthrough fmt.Sprintf branch,
+	// which produces no ANSI escape sequences (the load-bearing assertion for
+	// the symmetric-around-neutral design).
+	if _, ok := priorityStyles["P3"]; ok {
+		t.Error("P3 must not be in priorityStyles — it should render with default terminal foreground")
+	}
+	cell := priorityCell(sql.NullString{String: "P3", Valid: true})
+	if strings.Contains(cell, "\x1b[") || strings.Contains(cell, "[") {
+		t.Errorf("P3 cell must have no ANSI escape codes, got %q", cell)
+	}
+}
+
 // --- NC-90: assignee column in collapsed row ---
 
 func TestRenderIssueRow_assigneeShownWhenSet(t *testing.T) {

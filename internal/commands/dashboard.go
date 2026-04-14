@@ -53,10 +53,12 @@ var (
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 
 	priorityStyles = map[string]lipgloss.Style{
-		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true),  // bright red bold
-		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),           // orange
-		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),             // yellow
-		"P3": lipgloss.NewStyle().Foreground(lipgloss.Color("242")),           // medium gray
+		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true), // bright red bold
+		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),          // orange
+		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),            // yellow
+		// P3 intentionally absent: default foreground conveys "average/normal"
+		"P4": lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray (below average)
+		"P5": lipgloss.NewStyle().Foreground(lipgloss.Color("238")), // dark gray (trivial/archive)
 	}
 
 	typeStyles = map[string]lipgloss.Style{
