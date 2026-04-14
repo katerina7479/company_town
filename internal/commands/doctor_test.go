@@ -8,18 +8,6 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 )
 
-func makeCmd(responses map[string]string, errs map[string]error) func(string, ...string) (string, error) {
-	return func(name string, args ...string) (string, error) {
-		key := name
-		if len(args) > 0 {
-			key = name + " " + args[0]
-		}
-		out := responses[key]
-		err := errs[key]
-		return out, err
-	}
-}
-
 // --- parseVersion ---
 
 func TestParseVersion(t *testing.T) {

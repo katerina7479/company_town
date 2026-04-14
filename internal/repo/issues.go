@@ -134,7 +134,7 @@ func (r *IssueRepo) List(status string) ([]*Issue, error) {
 func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	var oldStatus string
 	if r.events != nil {
-		r.db.QueryRow(`SELECT status FROM issues WHERE id = ?`, id).Scan(&oldStatus)
+		r.db.QueryRow(`SELECT status FROM issues WHERE id = ?`, id).Scan(&oldStatus) //nolint:errcheck // event pre-read; scan failure is non-fatal
 	}
 
 	var closedAt interface{}
@@ -184,7 +184,7 @@ func (r *IssueRepo) Assign(id int, assignee, branch string) error {
 // Delete removes an issue by ID.
 func (r *IssueRepo) Delete(id int) error {
 	// Remove dependencies first
-	r.db.Exec(`DELETE FROM issue_dependencies WHERE issue_id = ? OR depends_on_id = ?`, id, id)
+	r.db.Exec(`DELETE FROM issue_dependencies WHERE issue_id = ? OR depends_on_id = ?`, id, id) //nolint:errcheck // best-effort cascade delete before main delete
 
 	result, err := r.db.Exec(`DELETE FROM issues WHERE id = ?`, id)
 	if err != nil {
@@ -521,6 +521,7 @@ func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error)
 		args[i] = s
 	}
 
+	//nolint:gosec // G202: placeholders are parameterized ?s generated from len(statuses), not user input
 	query := `SELECT id, issue_type, status, title, description, specialty, branch,
 	                 pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
 	          FROM issues

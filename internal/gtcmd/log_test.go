@@ -152,7 +152,7 @@ func TestLogTail_returnsLastN(t *testing.T) {
 	var entries []cmdlog.Entry
 	for i := 0; i < 10; i++ {
 		entries = append(entries, makeEntry("tin", "gt",
-			[]string{"ticket", "show", string(rune('0'+i))},
+			[]string{"ticket", "show", string(rune('0' + i))},
 			nil, base.Add(time.Duration(i)*time.Minute)))
 	}
 	path := writeTestLog(t, entries)

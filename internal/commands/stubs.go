@@ -87,7 +87,9 @@ func Start() error {
 		}
 	} else {
 		fmt.Println("Daemon already running.")
-		agents.UpdateStatus("daemon", "working")
+		if err := agents.UpdateStatus("daemon", "working"); err != nil {
+			return fmt.Errorf("updating daemon status: %w", err)
+		}
 	}
 	if err := agents.SetTmuxSession("daemon", daemonSession); err != nil {
 		return fmt.Errorf("recording daemon tmux session: %w", err)
@@ -245,7 +247,7 @@ func ArtisanStop(specialty string) error {
 		return fmt.Errorf("writing handoff signal: %w", err)
 	}
 
-	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.")
+	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
 
 	fmt.Printf("Handoff signal sent. artisan-%s will exit after writing handoff.md.\n", specialty)
 	return nil
@@ -273,7 +275,7 @@ func ArchitectStop() error {
 		return fmt.Errorf("writing handoff signal: %w", err)
 	}
 
-	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.")
+	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
 
 	fmt.Println("Handoff signal sent. Architect will exit after writing handoff.md.")
 	return nil
@@ -333,23 +335,23 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 			} else {
 				fmt.Printf("  stopped: %s\n", s)
 				if updateStatus != nil {
-					updateStatus("daemon", "dead")
+					updateStatus("daemon", "dead") //nolint:errcheck // best-effort status update during shutdown
 				}
 			}
 			continue
 		case agentName == "architect":
 			signalPath := filepath.Join(ctDir, "agents", "architect", "memory", "handoff_requested")
-			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
-			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.")
+			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                //nolint:errcheck // best-effort signal file write
+			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.") //nolint:errcheck // fire-and-forget shutdown signal
 		case agentName == "mayor":
-			sendKeysFn(s, "System is shutting down. Save any state and exit cleanly.")
+			sendKeysFn(s, "System is shutting down. Save any state and exit cleanly.") //nolint:errcheck // fire-and-forget shutdown signal
 		case strings.HasPrefix(agentName, "artisan-"):
 			specialty := strings.TrimPrefix(agentName, "artisan-")
 			signalPath := filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
-			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
-			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.")
+			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                //nolint:errcheck // best-effort signal file write
+			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.") //nolint:errcheck // fire-and-forget shutdown signal
 		default:
-			sendKeysFn(s, "System is shutting down. Commit and push any work, then exit.")
+			sendKeysFn(s, "System is shutting down. Commit and push any work, then exit.") //nolint:errcheck // fire-and-forget shutdown signal
 			if clean && strings.HasPrefix(agentName, "prole-") {
 				proleName := strings.TrimPrefix(agentName, "prole-")
 				worktreeDir := filepath.Join(ctDir, "proles", proleName)
@@ -364,7 +366,7 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 
 		fmt.Printf("  signaled: %s\n", s)
 		if updateStatus != nil {
-			updateStatus(agentName, "idle")
+			updateStatus(agentName, "idle") //nolint:errcheck // best-effort status update during shutdown
 		}
 	}
 
@@ -445,7 +447,7 @@ func nukeCore(sessions []string, ctDir string, killFn func(string) error, update
 		}
 
 		if updateStatus != nil {
-			updateStatus(agentName, "dead")
+			updateStatus(agentName, "dead") //nolint:errcheck // best-effort status update during shutdown
 		}
 	}
 
