@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/katerina7479/company_town/internal/config"
 )
 
 func TestPickFreePort_returnsFreeStart(t *testing.T) {
@@ -231,6 +234,34 @@ func TestEnsureRootGitignore_inlineCommentIsEquivalent(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if string(before) != string(after) {
 		t.Errorf("file was modified but entry with inline comment should be equivalent:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+func TestDefaultConfigGithubRepoPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, config.DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatalf("creating ct dir: %v", err)
+	}
+
+	cfg := config.DefaultConfig(dir, "owner/repo")
+	if err := config.Write(dir, cfg); err != nil {
+		t.Fatalf("config.Write: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(ctDir, config.ConfigFile))
+	if err != nil {
+		t.Fatalf("reading config.json: %v", err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshaling config.json: %v", err)
+	}
+
+	got, _ := raw["github_repo"].(string)
+	if got != "owner/repo" {
+		t.Errorf("github_repo = %q, want %q", got, "owner/repo")
 	}
 }
 
