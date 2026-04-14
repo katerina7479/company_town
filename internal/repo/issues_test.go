@@ -1201,10 +1201,12 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 	}
 
 	// Handoff statuses — prole handed off to reviewer, slot is free.
+	// ci_running is included: prole filed the PR and is idle waiting for CI.
 	for _, tc := range []struct {
 		agent  string
 		status string
 	}{
+		{"ruby", "ci_running"},
 		{"tin", "in_review"},
 		{"lead", "under_review"},
 		{"brass", "pr_open"},
@@ -1232,7 +1234,7 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 		}
 	}
 	// Handoff and closed statuses must NOT be in the busy set.
-	for _, name := range []string{"tin", "lead", "brass", "gold", "silver"} {
+	for _, name := range []string{"ruby", "tin", "lead", "brass", "gold", "silver"} {
 		if busy[name] {
 			t.Errorf("expected %s (handoff/closed status) NOT in busy set, got %v", name, busy)
 		}
@@ -1242,11 +1244,14 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 func TestIssueRepo_BusyAssignees_handoffStatusesExcluded(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	// All four handoff statuses should free the prole slot.
+	// All handoff statuses should free the prole slot.
+	// ci_running: prole filed the PR and is idle; daemon will reassign via
+	// repairing if CI fails, or promote to in_review when it passes.
 	for _, tc := range []struct {
 		agent  string
 		status string
 	}{
+		{"ruby", "ci_running"},
 		{"tin", "in_review"},
 		{"lead", "under_review"},
 		{"brass", "pr_open"},
@@ -1407,6 +1412,40 @@ func TestValidStatuses_includesMergeConflict(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected ValidStatuses to contain %q; got %v", "merge_conflict", ValidStatuses)
+	}
+}
+
+func TestValidStatuses_includesCIRunning(t *testing.T) {
+	found := false
+	for _, s := range ValidStatuses {
+		if s == "ci_running" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected ValidStatuses to contain %q; got %v", "ci_running", ValidStatuses)
+	}
+}
+
+func TestUpdateStatus_acceptsCIRunning(t *testing.T) {
+	repo := setupTestRepo(t)
+	id, err := repo.Create("test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := repo.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("UpdateStatus in_progress: %v", err)
+	}
+	if err := repo.UpdateStatus(id, "ci_running"); err != nil {
+		t.Fatalf("UpdateStatus ci_running: %v", err)
+	}
+	issue, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Status != "ci_running" {
+		t.Errorf("expected status=ci_running, got %q", issue.Status)
 	}
 }
 

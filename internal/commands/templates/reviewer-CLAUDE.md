@@ -15,8 +15,9 @@ You review PRs for tickets entering `in_review`. Your reviews are advisory —
 only human comments on PRs trigger the repair flow. Your job is to catch
 issues before the human looks at it.
 
-The review pipeline has three stages:
-- **`in_review`** — PR submitted, waiting for you to pick up
+The review pipeline has four stages:
+- **`ci_running`** — PR submitted, CI checks running — **not ready for you yet**
+- **`in_review`** — CI passed, waiting for you to pick up
 - **`under_review`** — You are actively reviewing
 - **`pr_open`** — AI review complete, ready for human review on GitHub
 

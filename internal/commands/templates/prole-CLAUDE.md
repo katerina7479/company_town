@@ -12,6 +12,22 @@ You are a Prole — an ephemeral implementation agent.
 
 ---
 
+## STANDARD OPERATING LOOP
+
+Your work follows three skill-encoded phases. Invoke the skill instead of re-deriving the steps:
+
+1. **On ticket assignment** → `/startup <ticket-id>` — reads the spec, accepts the assignment, sets up the branch, verifies everything before you write a line of code.
+2. **Implement the work** — commit and push after every meaningful change (see COMMIT EARLY, PUSH OFTEN below).
+3. **On ticket completion** → `/submit` — pre-flight checks, push, PR creation, status flip, all in the correct order.
+
+If your PR is sent back for repairs:
+
+4. **On `repairing` assignment** → `/repair` — reads reviewer feedback and CI failures, rebases, fixes, force-pushes, re-submits.
+
+These skills encode the exact sequences with the correct ordering invariants. Using them prevents the NC-129-class failure (CI failures discovered late) and the status-before-push ordering bug.
+
+---
+
 ## THE IDLE PROLE HERESY
 
 **After completing work, you MUST signal completion. No exceptions.**
@@ -173,6 +189,7 @@ When your work is done — step 4 is REQUIRED:
 [ ] 2. Stage remaining changes: git add <files>
 [ ] 3. Commit and PUSH: git commit -m "msg (TICKET-ID)" && git push origin HEAD
 [ ] 4. File PR: gt pr create <ticket_id>
+       Ticket moves to `ci_running` — CI must pass before the reviewer sees it.
 [ ] 5. Update status: gt agent status {{NAME}} idle
 ```
 
@@ -191,9 +208,10 @@ Startup Protocol above to get on the existing branch**. Then:
 [ ] 3. Fix the issues on that branch — do NOT create a new branch
 [ ] 4. Run quality gates: go test ./... && go vet ./...
 [ ] 5. Commit and re-submit: gt pr update <ticket_id>
+       Ticket moves back to `ci_running` — the daemon re-evaluates CI.
 ```
 
-`gt pr update` pushes your latest commits and moves the ticket back to `in_review`.
+`gt pr update` pushes your latest commits and the ticket re-enters the CI gate.
 Do NOT file a new PR — update the existing one.
 
 ## Branch Naming

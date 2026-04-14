@@ -349,20 +349,14 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 		}
 	}
 
-	// Move ticket to in_review and clear the assignee. Clearing lets the
-	// daemon's orphan-reconcile recover the ticket if the prole dies while
-	// under review, and keeps the dashboard from showing the ticket as owned
-	// by an idle/deleted prole. Supersedes the nc-41 "preserve assignee
-	// through review" policy — attribution is sacrificed for orphan recovery.
-	// See NC-50.
-	if err := issues.UpdateStatus(id, "in_review"); err != nil {
+	// Move ticket to ci_running. The prole stays assigned — if CI fails they
+	// are still responsible for fixing it. The daemon promotes to in_review
+	// (and clears the assignee) once all checks pass.
+	if err := issues.UpdateStatus(id, "ci_running"); err != nil {
 		return fmt.Errorf("updating ticket status: %w", err)
 	}
-	if err := issues.ClearAssignee(id); err != nil {
-		return fmt.Errorf("clearing ticket assignee: %w", err)
-	}
 
-	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
+	fmt.Printf("Ticket %s-%d → ci_running\n", cfg.TicketPrefix, id)
 	return nil
 }
 
@@ -477,18 +471,13 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 		return fmt.Errorf("pushing branch: %w", err)
 	}
 
-	// Move ticket back to in_review
-	if err := issues.UpdateStatus(id, "in_review"); err != nil {
+	// Move ticket back to ci_running. The prole stays assigned; the daemon
+	// will promote to in_review once CI passes or route back to repairing if
+	// CI fails again.
+	if err := issues.UpdateStatus(id, "ci_running"); err != nil {
 		return fmt.Errorf("updating ticket status: %w", err)
 	}
 
-	// Clear assignee so the daemon's orphan-reconcile loop can recover the
-	// ticket if the prole dies while under review. Mirror of prCreate — see
-	// NC-50. Supersedes the nc-41 "preserve assignee through review" policy.
-	if err := issues.ClearAssignee(id); err != nil {
-		return fmt.Errorf("clearing ticket assignee: %w", err)
-	}
-
-	fmt.Printf("Ticket %s-%d → in_review\n", cfg.TicketPrefix, id)
+	fmt.Printf("Ticket %s-%d → ci_running\n", cfg.TicketPrefix, id)
 	return nil
 }
