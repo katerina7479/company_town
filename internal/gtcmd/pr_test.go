@@ -20,8 +20,17 @@ func setupPRTestRepo(t *testing.T) *repo.IssueRepo {
 	return repo.NewIssueRepo(conn, nil)
 }
 
+func setupAgentTestRepo(t *testing.T) (*repo.AgentRepo, func()) {
+	t.Helper()
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("creating test db: %v", err)
+	}
+	return repo.NewAgentRepo(conn, nil), func() { conn.Close() }
+}
+
 func testCfg() *config.Config {
-	return &config.Config{TicketPrefix: "nc"}
+	return &config.Config{TicketPrefix: "nc", ProjectRoot: "/project"}
 }
 
 // stubPRShowFns replaces the three gh injection points for the duration of the test.
@@ -114,7 +123,7 @@ func TestParseTicketID(t *testing.T) {
 
 func TestPRUpdate_missingArgs(t *testing.T) {
 	issues := setupPRTestRepo(t)
-	err := prUpdate(issues, testCfg(), []string{})
+	err := prUpdate(issues, testCfg(), "/tmp", []string{})
 	if err == nil {
 		t.Fatal("expected usage error for 0 args, got nil")
 	}
@@ -122,7 +131,7 @@ func TestPRUpdate_missingArgs(t *testing.T) {
 
 func TestPRUpdate_notFound(t *testing.T) {
 	issues := setupPRTestRepo(t)
-	err := prUpdate(issues, testCfg(), []string{"9999"})
+	err := prUpdate(issues, testCfg(), "/tmp", []string{"9999"})
 	if err == nil {
 		t.Fatal("expected error for non-existent ticket, got nil")
 	}
@@ -134,7 +143,7 @@ func TestPRUpdate_wrongStatus(t *testing.T) {
 	_, _ = issues.Create("A task", "task", nil, nil, nil)
 	issues.UpdateStatus(1, "in_review")
 
-	err := prUpdate(issues, testCfg(), []string{"1"})
+	err := prUpdate(issues, testCfg(), "/tmp", []string{"1"})
 	if err == nil {
 		t.Fatal("expected error when ticket is not in repairing status, got nil")
 	}
@@ -149,7 +158,7 @@ func TestPRUpdate_wrongStatus_open(t *testing.T) {
 	_, _ = issues.Create("A task", "task", nil, nil, nil)
 	issues.UpdateStatus(1, "open")
 
-	err := prUpdate(issues, testCfg(), []string{"1"})
+	err := prUpdate(issues, testCfg(), "/tmp", []string{"1"})
 	if err == nil {
 		t.Fatal("expected error for ticket in open status, got nil")
 	}
@@ -177,13 +186,13 @@ func TestPRCreate_ClearsAssignee(t *testing.T) {
 		gitPushFn = origPush
 		ghPRCreateFn = origGH
 	})
-	gitCommitCountFn = func() (int, error) { return 1, nil }
-	gitPushFn = func(args ...string) error { return nil }
+	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
+	gitPushFn = func(_ string, args ...string) error { return nil }
 	ghPRCreateFn = func(title, body string) (string, error) {
 		return "https://github.com/x/y/pull/42", nil
 	}
 
-	if err := prCreate(issues, testCfg(), []string{"1"}); err != nil {
+	if err := prCreate(issues, testCfg(), "/tmp", []string{"1"}); err != nil {
 		t.Fatalf("prCreate: %v", err)
 	}
 
@@ -215,9 +224,9 @@ func TestPRUpdate_ClearsAssignee(t *testing.T) {
 
 	origPush := gitPushFn
 	t.Cleanup(func() { gitPushFn = origPush })
-	gitPushFn = func(args ...string) error { return nil }
+	gitPushFn = func(_ string, args ...string) error { return nil }
 
-	if err := prUpdate(issues, testCfg(), []string{"1"}); err != nil {
+	if err := prUpdate(issues, testCfg(), "/tmp", []string{"1"}); err != nil {
 		t.Fatalf("prUpdate: %v", err)
 	}
 
@@ -239,7 +248,7 @@ func TestPRUpdate_noBranch(t *testing.T) {
 	_, _ = issues.Create("A task", "task", nil, nil, nil)
 	issues.UpdateStatus(1, "repairing")
 
-	err := prUpdate(issues, testCfg(), []string{"1"})
+	err := prUpdate(issues, testCfg(), "/tmp", []string{"1"})
 	if err == nil {
 		t.Fatal("expected error for repairing ticket with no branch, got nil")
 	}
@@ -403,14 +412,14 @@ func TestPRCreate_ErrorsOnEmptyBranch(t *testing.T) {
 
 	origCount := gitCommitCountFn
 	t.Cleanup(func() { gitCommitCountFn = origCount })
-	gitCommitCountFn = func() (int, error) { return 0, nil }
+	gitCommitCountFn = func(_ string) (int, error) { return 0, nil }
 
 	pushCalled := false
 	origPush := gitPushFn
 	t.Cleanup(func() { gitPushFn = origPush })
-	gitPushFn = func(args ...string) error { pushCalled = true; return nil }
+	gitPushFn = func(_ string, args ...string) error { pushCalled = true; return nil }
 
-	err = prCreate(issues, testCfg(), []string{"1"})
+	err = prCreate(issues, testCfg(), "/tmp", []string{"1"})
 	if err == nil {
 		t.Fatal("expected error for empty branch, got nil")
 	}
@@ -447,14 +456,14 @@ func TestPRCreate_PushProceedsWhenCommitsExist(t *testing.T) {
 		gitPushFn = origPush
 		ghPRCreateFn = origGH
 	})
-	gitCommitCountFn = func() (int, error) { return 3, nil }
+	gitCommitCountFn = func(_ string) (int, error) { return 3, nil }
 	pushCalled := false
-	gitPushFn = func(args ...string) error { pushCalled = true; return nil }
+	gitPushFn = func(_ string, args ...string) error { pushCalled = true; return nil }
 	ghPRCreateFn = func(title, body string) (string, error) {
 		return "https://github.com/x/y/pull/99", nil
 	}
 
-	if err := prCreate(issues, testCfg(), []string{"1"}); err != nil {
+	if err := prCreate(issues, testCfg(), "/tmp", []string{"1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !pushCalled {
@@ -465,3 +474,117 @@ func TestPRCreate_PushProceedsWhenCommitsExist(t *testing.T) {
 		t.Errorf("expected status=in_review, got %q", got.Status)
 	}
 }
+
+// --- resolveGitWorkDir tests ---
+
+func TestResolveGitWorkDir_NoAgentName_UsesProjectRoot(t *testing.T) {
+	agents, cleanup := setupAgentTestRepo(t)
+	defer cleanup()
+
+	t.Setenv("CT_AGENT_NAME", "")
+
+	cfg := &config.Config{ProjectRoot: "/main/checkout"}
+	got := resolveGitWorkDir(cfg, agents)
+	if got != "/main/checkout" {
+		t.Errorf("expected project root %q, got %q", "/main/checkout", got)
+	}
+}
+
+func TestResolveGitWorkDir_ProleWithWorktree_UsesWorktree(t *testing.T) {
+	agents, cleanup := setupAgentTestRepo(t)
+	defer cleanup()
+
+	t.Setenv("CT_AGENT_NAME", "tin")
+	if err := agents.Register("tin", "prole", nil); err != nil {
+		t.Fatalf("registering agent: %v", err)
+	}
+	if err := agents.SetWorktree("tin", "/project/.company_town/proles/tin"); err != nil {
+		t.Fatalf("setting worktree: %v", err)
+	}
+
+	cfg := &config.Config{ProjectRoot: "/project"}
+	got := resolveGitWorkDir(cfg, agents)
+	if got != "/project/.company_town/proles/tin" {
+		t.Errorf("expected worktree path, got %q", got)
+	}
+}
+
+func TestResolveGitWorkDir_UnknownAgent_FallsBackToProjectRoot(t *testing.T) {
+	agents, cleanup := setupAgentTestRepo(t)
+	defer cleanup()
+
+	t.Setenv("CT_AGENT_NAME", "ghost")
+
+	cfg := &config.Config{ProjectRoot: "/project"}
+	got := resolveGitWorkDir(cfg, agents)
+	if got != "/project" {
+		t.Errorf("expected project root fallback, got %q", got)
+	}
+}
+
+func TestResolveGitWorkDir_ProleNoWorktreePath_FallsBackToProjectRoot(t *testing.T) {
+	agents, cleanup := setupAgentTestRepo(t)
+	defer cleanup()
+
+	t.Setenv("CT_AGENT_NAME", "copper")
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("registering agent: %v", err)
+	}
+	// worktree path deliberately not set
+
+	cfg := &config.Config{ProjectRoot: "/project"}
+	got := resolveGitWorkDir(cfg, agents)
+	if got != "/project" {
+		t.Errorf("expected project root fallback when no worktree path set, got %q", got)
+	}
+}
+
+// gitPushFn and gitCommitCountFn must receive the workDir from resolveGitWorkDir.
+func TestPRCreate_WorkDirPassedToGitFns(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, err := issues.Create("task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.Assign(id, "tin", "prole/tin/1"); err != nil {
+		t.Fatalf("assigning: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+
+	const wantDir = "/proles/tin/worktree"
+
+	origCount := gitCommitCountFn
+	origPush := gitPushFn
+	origGH := ghPRCreateFn
+	t.Cleanup(func() {
+		gitCommitCountFn = origCount
+		gitPushFn = origPush
+		ghPRCreateFn = origGH
+	})
+
+	var gotCountDir, gotPushDir string
+	gitCommitCountFn = func(workDir string) (int, error) {
+		gotCountDir = workDir
+		return 1, nil
+	}
+	gitPushFn = func(workDir string, args ...string) error {
+		gotPushDir = workDir
+		return nil
+	}
+	ghPRCreateFn = func(title, body string) (string, error) {
+		return "https://github.com/x/y/pull/7", nil
+	}
+
+	if err := prCreate(issues, testCfg(), wantDir, []string{"1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotCountDir != wantDir {
+		t.Errorf("gitCommitCountFn received workDir=%q, want %q", gotCountDir, wantDir)
+	}
+	if gotPushDir != wantDir {
+		t.Errorf("gitPushFn received workDir=%q, want %q", gotPushDir, wantDir)
+	}
+}
+

@@ -114,13 +114,17 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		pushCmd.Dir = wtPath
 		pushCmd.Run() //nolint:errcheck // best-effort push remote setup
 	} else {
-		// Worktree exists — pull latest from main
-		pullCmd := exec.Command("git", "pull", "origin", "main", "--ff-only")
-		pullCmd.Dir = wtPath
-		pullCmd.Stdout = os.Stdout
-		pullCmd.Stderr = os.Stderr
-		if err := pullCmd.Run(); err != nil {
-			return fmt.Errorf("updating worktree from main: %w", err)
+		// Worktree exists — the prole may already be on a feature branch, so
+		// we must not switch or pull in the worktree. Just refresh the bare
+		// repo's remote tracking refs so future git operations see the latest
+		// origin state.
+		fetchCmd := exec.Command("git", "fetch", "origin")
+		fetchCmd.Dir = BareRepoPath(cfg)
+		fetchCmd.Stdout = os.Stdout
+		fetchCmd.Stderr = os.Stderr
+		if err := fetchCmd.Run(); err != nil {
+			// Non-fatal: the prole can still work without fresh remote refs.
+			fmt.Fprintf(os.Stderr, "warning: could not fetch origin for prole %s bare repo: %v\n", name, err)
 		}
 	}
 

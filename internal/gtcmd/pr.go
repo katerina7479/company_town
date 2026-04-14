@@ -28,17 +28,39 @@ func PR(args []string) error {
 	defer conn.Close()
 
 	issues := repo.NewIssueRepo(conn, nil)
+	agents := repo.NewAgentRepo(conn, nil)
+
+	workDir := resolveGitWorkDir(cfg, agents)
 
 	switch args[0] {
 	case "create":
-		return prCreate(issues, cfg, args[1:])
+		return prCreate(issues, cfg, workDir, args[1:])
 	case "update":
-		return prUpdate(issues, cfg, args[1:])
+		return prUpdate(issues, cfg, workDir, args[1:])
 	case "show":
 		return prShow(issues, cfg, args[1:])
 	default:
 		return fmt.Errorf("unknown pr command: %s", args[0])
 	}
+}
+
+// resolveGitWorkDir returns the directory where git operations should run.
+// For prole agents (identified by CT_AGENT_NAME env var with a registered
+// worktree), this is the prole's own worktree so git commands never touch
+// the shared main checkout. For other agents it falls back to cfg.ProjectRoot.
+func resolveGitWorkDir(cfg *config.Config, agents *repo.AgentRepo) string {
+	name := os.Getenv("CT_AGENT_NAME")
+	if name == "" {
+		return cfg.ProjectRoot
+	}
+	agent, err := agents.Get(name)
+	if err != nil {
+		return cfg.ProjectRoot
+	}
+	if agent.WorktreePath.Valid && agent.WorktreePath.String != "" {
+		return agent.WorktreePath.String
+	}
+	return cfg.ProjectRoot
 }
 
 // formatPRTitle returns the canonical PR title: [PREFIX-ID] Title.
@@ -49,8 +71,12 @@ func formatPRTitle(prefix string, id int, title string) string {
 // Injection points for tests. Production code uses the real git/gh binaries;
 // tests replace these with stubs to avoid network/IO.
 var (
-	gitPushFn = func(args ...string) error {
+	// gitPushFn pushes the current branch. workDir must be the prole's worktree
+	// (or project root for non-prole agents) so the command runs in the right
+	// git checkout rather than relying on process CWD.
+	gitPushFn = func(workDir string, args ...string) error {
 		cmd := exec.Command("git", append([]string{"push"}, args...)...)
+		cmd.Dir = workDir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -59,11 +85,14 @@ var (
 	// gitCommitCountFn counts commits on HEAD not reachable from origin/main.
 	// Falls back to counting all HEAD commits if origin/main is unavailable,
 	// and returns 0 if even that fails (unborn branch).
-	gitCommitCountFn = func() (int, error) {
+	// workDir must be the prole's worktree (or project root for non-prole agents).
+	gitCommitCountFn = func(workDir string) (int, error) {
 		cmd := exec.Command("git", "rev-list", "--count", "origin/main..HEAD")
+		cmd.Dir = workDir
 		out, err := cmd.Output()
 		if err != nil {
 			cmd2 := exec.Command("git", "rev-list", "--count", "HEAD")
+			cmd2.Dir = workDir
 			out, err = cmd2.Output()
 			if err != nil {
 				return 0, nil
@@ -257,7 +286,7 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	return data, nil
 }
 
-func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
+func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt pr create <ticket_id>")
 	}
@@ -277,7 +306,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	// Verify the branch has commits before attempting a push.
-	commitCount, err := gitCommitCountFn()
+	commitCount, err := gitCommitCountFn(workDir)
 	if err != nil {
 		return fmt.Errorf("counting commits on branch: %w", err)
 	}
@@ -287,7 +316,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	// Push the branch
-	if err := gitPushFn("-u", "origin", "HEAD"); err != nil {
+	if err := gitPushFn(workDir, "-u", "origin", "HEAD"); err != nil {
 		return fmt.Errorf("pushing branch: %w", err)
 	}
 
@@ -420,7 +449,7 @@ func prShow(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	return nil
 }
 
-func prUpdate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
+func prUpdate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt pr update <ticket_id>")
 	}
@@ -444,7 +473,7 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 	}
 
 	// Push latest changes
-	if err := gitPushFn("origin", "HEAD"); err != nil {
+	if err := gitPushFn(workDir, "origin", "HEAD"); err != nil {
 		return fmt.Errorf("pushing branch: %w", err)
 	}
 
