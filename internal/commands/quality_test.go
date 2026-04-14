@@ -55,7 +55,7 @@ func TestMetricSparkline_allEqual(t *testing.T) {
 	out := metricSparkline(hist)
 	chars := []rune(sparklineChars)
 	expected := string(chars[len(chars)-1])
-	for _, r := range []rune(out) {
+	for _, r := range out {
 		if string(r) != expected {
 			t.Errorf("all-equal: expected all chars to be %q, got %q in %q", expected, string(r), out)
 		}

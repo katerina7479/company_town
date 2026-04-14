@@ -1,3 +1,4 @@
+// Package commands implements the ct command handlers.
 package commands
 
 import (
@@ -226,15 +227,16 @@ func (m qualityModel) viewList() string {
 	sb.WriteString(qDimStyle.Render(strings.Repeat("─", min(m.width-6, 100))))
 	sb.WriteString("\n")
 
-	if m.err != nil {
+	switch {
+	case m.err != nil:
 		sb.WriteString(qErrorStyle.Render(fmt.Sprintf("error: %v", m.err)))
 		sb.WriteString("\n")
-	} else if len(m.rows) == 0 {
+	case len(m.rows) == 0:
 		sb.WriteString(qDimStyle.Render(
 			"No quality metrics recorded yet — run `gt check run` or wait for the next daemon baseline cycle.",
 		))
 		sb.WriteString("\n")
-	} else {
+	default:
 		for i, row := range m.rows {
 			line := renderQualityRow(row)
 			if i == m.cursor {
@@ -269,10 +271,10 @@ func (m qualityModel) viewDetail() string {
 
 	if row.latest != nil {
 		if row.latest.Value.Valid {
-			sb.WriteString(fmt.Sprintf("  Current:  %s\n", formatMetricValue(row.latest.Value.Float64)))
+			fmt.Fprintf(&sb, "  Current:  %s\n", formatMetricValue(row.latest.Value.Float64))
 		}
-		sb.WriteString(fmt.Sprintf("  Status:   %s\n", colorQualityStatus(row.latest.Status)))
-		sb.WriteString(fmt.Sprintf("  Recorded: %s\n", row.latest.RunAt.Format("2006-01-02 15:04:05")))
+		fmt.Fprintf(&sb, "  Status:   %s\n", colorQualityStatus(row.latest.Status))
+		fmt.Fprintf(&sb, "  Recorded: %s\n", row.latest.RunAt.Format("2006-01-02 15:04:05"))
 	} else {
 		sb.WriteString(qDimStyle.Render("  No data recorded yet."))
 		sb.WriteString("\n")
@@ -403,11 +405,11 @@ func commaSeparated(n int64) string {
 	}
 	s := fmt.Sprintf("%d", n)
 	var result []byte
-	for i, c := range s {
+	for i := 0; i < len(s); i++ {
 		if i > 0 && (len(s)-i)%3 == 0 {
 			result = append(result, ',')
 		}
-		result = append(result, byte(c))
+		result = append(result, s[i])
 	}
 	if neg {
 		return "-" + string(result)
@@ -549,7 +551,7 @@ func Quality() error {
 	if err != nil {
 		return err
 	}
-	defer m.conn.Close()
+	defer m.conn.Close() //nolint:errcheck // sql.DB.Close is best-effort; error non-actionable at defer time
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err = p.Run()
