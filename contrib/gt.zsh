@@ -26,22 +26,26 @@ _gt() {
         'prole:Manage proles'
         'agent:Manage agents'
         'pr:File PRs'
+        'create:Create and launch an agent (nc-96: reviewer|prole|artisan)'
         'start:Start an agent'
         'stop:Stop an agent (graceful)'
         'status:Print system status'
         'check:Run and view quality checks'
         'migrate:Apply pending database migrations'
+        'log:Read the command audit log (nc-82: tail|show)'
       )
       _describe 'gt commands' cmds
       ;;
 
     args)
       case $line[1] in
-        ticket) _gt_ticket ;;
-        prole)  _gt_prole  ;;
-        agent)  _gt_agent  ;;
-        pr)     _gt_pr     ;;
-        check)  _gt_check  ;;
+        ticket) _gt_ticket  ;;
+        prole)  _gt_prole   ;;
+        agent)  _gt_agent   ;;
+        pr)     _gt_pr      ;;
+        check)  _gt_check   ;;
+        create) _gt_create  ;;
+        log)    _gt_log     ;;
       esac
       ;;
   esac
@@ -221,6 +225,54 @@ _gt_check() {
         'history:Show check history'
       )
       _describe 'gt check subcommands' subcmds
+      ;;
+  esac
+}
+
+_gt_create() {
+  local context state state_descr line
+  typeset -A opt_args
+
+  _arguments -C \
+    '1:noun:->nouns' \
+    '*::args:->args'
+
+  case $state in
+    nouns)
+      # Source: cmd/gt/main.go + internal/gtcmd/create.go (nc-96)
+      # Currently only 'reviewer' is implemented; extend as nc-96 lands more nouns.
+      local nouns=(
+        'reviewer:Create and launch a Reviewer agent'
+      )
+      _describe 'gt create nouns' nouns
+      ;;
+
+    args)
+      case $line[1] in
+        reviewer)
+          _message 'reviewer name'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_gt_log() {
+  local context state state_descr line
+  typeset -A opt_args
+
+  _arguments -C \
+    '1:subcommand:->subcmds' \
+    '*::args:->args'
+
+  case $state in
+    subcmds)
+      # Source: internal/gtcmd/log.go (nc-82)
+      local subcmds=(
+        'tail:Stream recent command log entries'
+        'show:Show command log entries'
+      )
+      _describe 'gt log subcommands' subcmds
       ;;
   esac
 }
