@@ -58,6 +58,52 @@ func TestStart_SpawnsAgentIdle(t *testing.T) {
 	}
 }
 
+// TestStart_SetsAgentNameEnvVar verifies that CT_AGENT_NAME is set in the
+// session environment so cmdlog.Actor() reports the agent name, not the OS user.
+func TestStart_SetsAgentNameEnvVar(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot:  tmpDir,
+		TicketPrefix: "test",
+		Agents: config.AgentsConfig{
+			Architect: config.AgentConfig{Model: "claude-test"},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+
+	var capturedEnvVars map[string]string
+	oldCreate := createInteractiveFn
+	defer func() { createInteractiveFn = oldCreate }()
+	createInteractiveFn = func(c session.AgentSessionConfig) error {
+		capturedEnvVars = c.EnvVars
+		return nil
+	}
+
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	tmuxExistsFn = func(_ string) bool { return false }
+
+	oldEnsure := ensureAgentWorktreeFn
+	defer func() { ensureAgentWorktreeFn = oldEnsure }()
+	ensureAgentWorktreeFn = func(_ *config.Config, agentDir string) (string, error) {
+		return agentDir + "/worktree", nil
+	}
+
+	if err := startAgentWithDeps(cfg, agents, "architect"); err != nil {
+		t.Fatalf("startAgentWithDeps: %v", err)
+	}
+
+	if capturedEnvVars["CT_AGENT_NAME"] != "architect" {
+		t.Errorf("CT_AGENT_NAME = %q, want %q", capturedEnvVars["CT_AGENT_NAME"], "architect")
+	}
+}
+
 // TestStart_WorkDirIsWorktree verifies that the session is created with the
 // worktree path as WorkDir, not cfg.ProjectRoot.
 func TestStart_WorkDirIsWorktree(t *testing.T) {
