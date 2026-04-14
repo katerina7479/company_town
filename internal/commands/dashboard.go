@@ -380,13 +380,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				agent := m.data.agents[m.agentCursor]
 				sname := session.SessionName(agent.Name)
 				if session.Exists(sname) {
-					c := exec.Command("tmux", "attach-session", "-t", sname)
-					return m, tea.ExecProcess(c, func(err error) tea.Msg {
-						if err != nil {
-							return actionResultMsg{err: fmt.Errorf("attach %s: %w", agent.Name, err)}
+					if err := session.SpawnAttach(sname); err != nil {
+						// SpawnAttach returns ErrUnknownTerminal when $TERM_PROGRAM
+						// is unrecognized. Fall back to in-place attach so the CEO
+						// is never left without a way to reach the session.
+						if err == session.ErrUnknownTerminal {
+							fmt.Fprintf(os.Stderr, "spawn-attach: unrecognized $TERM_PROGRAM; attaching in place\n")
 						}
-						return actionResultMsg{text: "Detached from " + agent.Name}
-					})
+						c := exec.Command("tmux", "attach-session", "-t", sname)
+						return m, tea.ExecProcess(c, func(err error) tea.Msg {
+							if err != nil {
+								return actionResultMsg{err: fmt.Errorf("attach %s: %w", agent.Name, err)}
+							}
+							return actionResultMsg{text: "Detached from " + agent.Name}
+						})
+					}
+					m.statusMsg = "Attached to " + agent.Name + " in new window"
+					return m, nil
 				}
 				m.statusMsg = "No active session for " + agent.Name
 			}
