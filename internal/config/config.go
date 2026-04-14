@@ -60,12 +60,13 @@ type DoltConfig struct {
 
 // QualityCheckConfig defines a single quality gate command and how to evaluate it.
 type QualityCheckConfig struct {
-	Name       string  `json:"name"`
-	Command    string  `json:"command"`
-	Type       string  `json:"type"`        // "pass_fail" or "metric"
-	Target     float64 `json:"target"`      // aspirational target value for "metric" checks; pass when value >= Target
-	WarnTarget float64 `json:"warn_target"` // warn when value >= WarnTarget but < Target; ignored when zero
-	Enabled    bool    `json:"enabled"`
+	Name          string  `json:"name"`
+	Command       string  `json:"command"`
+	Type          string  `json:"type"`           // "pass_fail" or "metric"
+	Threshold     float64 `json:"threshold"`      // target value for "metric" checks; pass when value >= Threshold (or <= for Direction="lower")
+	WarnThreshold float64 `json:"warn_threshold"` // warn band edge; ignored when zero
+	Direction     string  `json:"direction"`      // "higher" (default) or "lower" — which direction means better
+	Enabled       bool    `json:"enabled"`
 }
 
 // QualityConfig holds all project-level quality check settings.
@@ -264,48 +265,69 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 			BaselineIntervalSeconds: 3600,
 			Checks: []QualityCheckConfig{
 				{
-					Name:    "go_build",
-					Command: "go build ./...",
-					Type:    "pass_fail",
-					Enabled: true,
+					Name:          "go_test_coverage",
+					Command:       "go test ./... -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
+					Type:          "metric",
+					Threshold:     60.0,
+					WarnThreshold: 50.0,
+					Enabled:       true,
 				},
 				{
-					Name:    "go_vet",
-					Command: "go vet ./...",
-					Type:    "pass_fail",
-					Enabled: true,
+					// lower is better — target 0 lint warnings; warn up to 10
+					Name:          "lint_warning_count",
+					Command:       "golangci-lint run --no-color ./... 2>&1 | grep -cE '\\.go:[0-9]+:[0-9]+:'; true",
+					Type:          "metric",
+					Threshold:     0,
+					WarnThreshold: 10,
+					Direction:     "lower",
+					Enabled:       true,
 				},
 				{
-					Name:    "go_lint",
-					Command: "golangci-lint run ./...",
-					Type:    "pass_fail",
-					Enabled: true,
+					// higher is better — track total non-test Go LOC over time
+					Name:      "loc_total",
+					Command:   "git ls-files '*.go' | grep -v '_test\\.go' | tr '\\n' '\\0' | xargs -0 wc -l 2>/dev/null | awk 'END{print $1+0}'",
+					Type:      "metric",
+					Threshold: 1000,
+					Enabled:   true,
 				},
 				{
-					Name:    "go_test",
-					Command: "go test ./...",
-					Type:    "pass_fail",
-					Enabled: true,
+					// lower is better — target 0 TODOs/FIXMEs/XXXs; warn up to 5
+					Name:          "todo_count",
+					Command:       "grep -rE 'TODO|FIXME|XXX' --include='*.go' . 2>/dev/null | wc -l",
+					Type:          "metric",
+					Threshold:     0,
+					WarnThreshold: 5,
+					Direction:     "lower",
+					Enabled:       true,
 				},
 				{
-					Name:    "go_test_race",
-					Command: "go test -race -short ./...",
-					Type:    "pass_fail",
-					Enabled: true,
+					// higher is better — track test function count; warn below 20
+					Name:          "test_count",
+					Command:       "grep -r '^func Test' --include='*.go' . 2>/dev/null | wc -l",
+					Type:          "metric",
+					Threshold:     50,
+					WarnThreshold: 20,
+					Enabled:       true,
 				},
 				{
-					Name:    "go_mod_verify",
-					Command: "go mod verify",
-					Type:    "pass_fail",
-					Enabled: true,
+					// lower is better — track third-party module count; warn above 75
+					Name:          "dependency_count",
+					Command:       "go list -m all 2>/dev/null | tail -n +2 | wc -l",
+					Type:          "metric",
+					Threshold:     50,
+					WarnThreshold: 75,
+					Direction:     "lower",
+					Enabled:       true,
 				},
 				{
-					Name:       "go_test_coverage",
-					Command:    "go test ./... -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
-					Type:       "metric",
-					Target:     80.0,
-					WarnTarget: 70.0,
-					Enabled:    true,
+					// lower is better — count non-closed, non-cancelled tickets; warn above 20
+					Name:          "open_ticket_count",
+					Command:       "gt ticket list 2>/dev/null | grep -cE '\\[(open|draft|in_progress|in_review|under_review|repairing|pr_open|reviewed|merge_conflict)\\]'; true",
+					Type:          "metric",
+					Threshold:     10,
+					WarnThreshold: 20,
+					Direction:     "lower",
+					Enabled:       true,
 				},
 			},
 		},

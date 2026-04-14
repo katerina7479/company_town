@@ -50,7 +50,7 @@ func (r *Runner) runCheck(cfg config.QualityCheckConfig) Result {
 	result.Output = string(out)
 
 	if cfg.Type == string(CheckTypeMetric) {
-		return r.evalMetric(result, cfg.Target, cfg.WarnTarget, out, err)
+		return r.evalMetric(result, cfg.Threshold, cfg.WarnThreshold, cfg.Direction, out, err)
 	}
 	return r.evalPassFail(result, err)
 }
@@ -69,7 +69,7 @@ func (r *Runner) evalPassFail(result Result, err error) Result {
 	return result
 }
 
-func (r *Runner) evalMetric(result Result, threshold, warnThreshold float64, out []byte, err error) Result {
+func (r *Runner) evalMetric(result Result, threshold, warnThreshold float64, direction string, out []byte, err error) Result {
 	if err != nil {
 		result.Status = StatusError
 		result.Err = fmt.Sprintf("could not run check: %v", err)
@@ -85,13 +85,26 @@ func (r *Runner) evalMetric(result Result, threshold, warnThreshold float64, out
 	}
 
 	result.Value = &val
-	switch {
-	case val >= threshold:
-		result.Status = StatusPass
-	case warnThreshold > 0 && val >= warnThreshold:
-		result.Status = StatusWarn
-	default:
-		result.Status = StatusFail
+	if direction == "lower" {
+		// Lower values are better: pass when val <= threshold.
+		switch {
+		case val <= threshold:
+			result.Status = StatusPass
+		case warnThreshold > 0 && val <= warnThreshold:
+			result.Status = StatusWarn
+		default:
+			result.Status = StatusFail
+		}
+	} else {
+		// Default (higher is better): pass when val >= threshold.
+		switch {
+		case val >= threshold:
+			result.Status = StatusPass
+		case warnThreshold > 0 && val >= warnThreshold:
+			result.Status = StatusWarn
+		default:
+			result.Status = StatusFail
+		}
 	}
 	return result
 }

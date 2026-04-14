@@ -36,6 +36,26 @@ Migrations embedded in `internal/db/migrations/`.
 golangci-lint run ./...
 ```
 
+## Quality Targets
+
+Quality checks run automatically via the daemon and can be triggered manually with `gt check run`. The `threshold` and `warn_threshold` fields in `config.json` are **targets**, not hard CI gates — they define the range where the project is healthy.
+
+For `Direction: "lower"` checks (fewer = better): `threshold` is the ideal upper bound (pass), `warn_threshold` is the acceptable upper bound (warn). Exceeding `warn_threshold` is a fail.
+
+Default targets for this project:
+
+| Check | Target (pass) | Warn | Direction | Notes |
+|-------|--------------|------|-----------|-------|
+| `go_test_coverage` | ≥ 60 % | ≥ 50 % | higher | Brackets today's ~53% reality |
+| `lint_warning_count` | ≤ 0 | ≤ 10 | lower | Baseline established via nc-122 |
+| `loc_total` | ≥ 1 000 | — | higher | Informational trend metric |
+| `todo_count` | ≤ 0 | ≤ 5 | lower | TODOs/FIXMEs/XXXs in Go files |
+| `test_count` | ≥ 50 | ≥ 20 | higher | Total `func Test*` functions |
+| `dependency_count` | ≤ 50 | ≤ 75 | lower | Third-party modules |
+| `open_ticket_count` | ≤ 10 | ≤ 20 | lower | Non-closed, non-cancelled tickets |
+
+Adjust thresholds in `.company_town/config.json` as the project grows; commit the change so history reflects deliberate target shifts, not drift.
+
 ## Rules
 
 - Never push to main — feature branches + PRs
