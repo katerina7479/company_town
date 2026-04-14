@@ -77,6 +77,7 @@ var (
 		"draft":          lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
 		"open":           lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
 		"in_progress":    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
+		"ci_running":     lipgloss.NewStyle().Foreground(lipgloss.Color("12")),  // bright blue — CI gating
 		"in_review":      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
 		"under_review":   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
 		"pr_open":        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green

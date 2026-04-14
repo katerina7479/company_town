@@ -32,6 +32,7 @@ var ValidPriorities = []string{"P0", "P1", "P2", "P3", "P4", "P5"}
 // Valid issue statuses.
 var ValidStatuses = []string{
 	"draft", "open", "in_progress",
+	"ci_running",
 	"in_review", "under_review", "pr_open",
 	"reviewed", "repairing", "on_hold", "merge_conflict", "closed",
 }

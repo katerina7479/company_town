@@ -173,6 +173,7 @@ When your work is done — step 4 is REQUIRED:
 [ ] 2. Stage remaining changes: git add <files>
 [ ] 3. Commit and PUSH: git commit -m "msg (TICKET-ID)" && git push origin HEAD
 [ ] 4. File PR: gt pr create <ticket_id>
+       Ticket moves to `ci_running` — CI must pass before the reviewer sees it.
 [ ] 5. Update status: gt agent status {{NAME}} idle
 ```
 
@@ -191,9 +192,10 @@ Startup Protocol above to get on the existing branch**. Then:
 [ ] 3. Fix the issues on that branch — do NOT create a new branch
 [ ] 4. Run quality gates: go test ./... && go vet ./...
 [ ] 5. Commit and re-submit: gt pr update <ticket_id>
+       Ticket moves back to `ci_running` — the daemon re-evaluates CI.
 ```
 
-`gt pr update` pushes your latest commits and moves the ticket back to `in_review`.
+`gt pr update` pushes your latest commits and the ticket re-enters the CI gate.
 Do NOT file a new PR — update the existing one.
 
 ## Branch Naming

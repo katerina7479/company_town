@@ -1410,6 +1410,40 @@ func TestValidStatuses_includesMergeConflict(t *testing.T) {
 	}
 }
 
+func TestValidStatuses_includesCIRunning(t *testing.T) {
+	found := false
+	for _, s := range ValidStatuses {
+		if s == "ci_running" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected ValidStatuses to contain %q; got %v", "ci_running", ValidStatuses)
+	}
+}
+
+func TestUpdateStatus_acceptsCIRunning(t *testing.T) {
+	repo := setupTestRepo(t)
+	id, err := repo.Create("test ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := repo.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("UpdateStatus in_progress: %v", err)
+	}
+	if err := repo.UpdateStatus(id, "ci_running"); err != nil {
+		t.Fatalf("UpdateStatus ci_running: %v", err)
+	}
+	issue, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Status != "ci_running" {
+		t.Errorf("expected status=ci_running, got %q", issue.Status)
+	}
+}
+
 func TestUpdateStatus_acceptsMergeConflict(t *testing.T) {
 	repo := setupTestRepo(t)
 	id, err := repo.Create("test ticket", "task", nil, nil, nil)

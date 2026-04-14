@@ -41,7 +41,8 @@ type tickObservations struct {
 	prEventsClosed           int  // PRs closed without merge
 	prEventsConflict         int  // pr_open PRs moved to merge_conflict
 	prEventsConflictResolved int  // merge_conflict PRs moved back to pr_open
-	prEventsCIFailed         int  // pr_open PRs with failing CI checks moved to repairing
+	prEventsCIPass           int  // ci_running PRs promoted to in_review (all checks green)
+	prEventsCIFail           int  // ci_running PRs moved to repairing (CI failure)
 	epics                    int  // completable epics found
 	qualitySkip              bool // quality baseline was interval-guarded
 }
@@ -97,11 +98,10 @@ type Daemon struct {
 	// Review comment fetching (injectable for tests)
 	getReviewCommentsFn func(prNum int) ([]prComment, error)
 
-	// PR state fetching (injectable for tests)
-	getPRStateFn func(prNum int) (state, mergeable string, merged bool, err error)
-
-	// PR CI check fetching (injectable for tests)
-	getPRCIChecksFn func(prNum int) (failed bool, failedNames []string, err error)
+	// PR state fetching (injectable for tests).
+	// Returns: state (OPEN/MERGED/CLOSED), mergeable (MERGEABLE/CONFLICTING/UNKNOWN),
+	// checks (passing/failing/pending), failing check names, whether PR is merged.
+	getPRStateFn func(prNum int) (state, mergeable, checks string, failing []string, merged bool, err error)
 
 	// tickFile is the path to the file where the last poll timestamp is written.
 	// Empty string disables the write (e.g., in tests).
@@ -386,7 +386,6 @@ func (d *Daemon) poll() {
 	d.handleIdleAssignedProles()
 	d.handleInReviewTickets()
 	d.handlePREvents()
-	d.handlePRCIChecks()
 	d.handleEpicAutoClose()
 	d.handleQualityBaseline()
 
@@ -428,7 +427,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //
 // Format:
 //
-//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N/N/N/N epics=N quality=skip|ran
+//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N/N/N/N/N epics=N quality=skip|ran
 //
 // Fields:
 //
@@ -438,7 +437,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //	drafts       — draft tickets found this tick
 //	assign       — selectable tickets / available slots / actually assigned
 //	inReview     — in_review tickets with a PR number
-//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved / ci-failed
+//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved / ci-pass / ci-fail
 //	epics        — completable epics found
 //	quality      — "ran" when baseline executed, "skip" when interval-guarded
 func logTickSummary(logger *log.Logger, obs tickObservations) {
@@ -450,7 +449,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 	if obs.qualitySkip {
 		quality = "skip"
 	}
-	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d/%d/%d/%d epics=%d quality=%s",
+	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d/%d/%d/%d/%d epics=%d quality=%s",
 		obs.dead,
 		worktrees,
 		obs.prBackfillFound, obs.prBackfillDone,
@@ -458,7 +457,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 		obs.assignCandidates, obs.assignSlots, obs.assignPaired,
 		obs.inReview,
 		obs.prEventsTotal, obs.prEventsMerged, obs.prEventsRepairing, obs.prEventsClosed,
-		obs.prEventsConflict, obs.prEventsConflictResolved, obs.prEventsCIFailed,
+		obs.prEventsConflict, obs.prEventsConflictResolved, obs.prEventsCIPass, obs.prEventsCIFail,
 		obs.epics,
 		quality,
 	)
@@ -1068,7 +1067,7 @@ func (d *Daemon) handlePREvents() {
 		}
 
 		prNum := int(issue.PRNumber.Int64)
-		state, mergeable, merged, err := d.getPRState(prNum)
+		state, mergeable, checks, failing, merged, err := d.getPRState(prNum)
 		if err != nil {
 			d.logger.Printf("error checking PR #%d: %v", prNum, err)
 			continue
@@ -1080,26 +1079,100 @@ func (d *Daemon) handlePREvents() {
 		case state == "CLOSED":
 			d.handlePRClosed(issue)
 		case state == "OPEN":
-			d.handleOpenPR(issue, prNum, mergeable)
+			d.handleOpenPR(issue, prNum, mergeable, checks, failing)
 		}
 	}
 }
 
-// handleOpenPR dispatches OPEN PR events based on mergeability and current ticket status.
-// UNKNOWN is a no-op: GitHub returns this transiently while re-computing mergeability
-// (e.g. for ~5s after a push). Neither transition fires — we check for human comments
-// but do not change ticket status, so a merge_conflict ticket never flips back to pr_open
-// until GitHub explicitly confirms MERGEABLE.
-// under_review is also a no-op for conflict detection: the reviewer still owns the ticket
-// in that state, so the daemon must not grab it even if the branch is dirty.
-func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable string) {
+// handleOpenPR dispatches OPEN PR events based on mergeability, CI check status,
+// and current ticket status.
+//
+// Precedence: merge conflicts are detected first (a conflicting branch cannot
+// merge regardless of CI). CI state is evaluated next for ci_running tickets.
+// Human-comment detection runs last for pr_open tickets only.
+//
+// UNKNOWN mergeability is a no-op: GitHub returns this transiently (~5s after a
+// push) while re-computing mergeability. We check for human comments but do not
+// change ticket status, so a merge_conflict ticket never flips back until GitHub
+// explicitly confirms MERGEABLE.
+//
+// under_review is a no-op for conflict detection: the reviewer owns the ticket
+// in that state and the daemon must not grab it even if the branch is dirty.
+func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable, checks string, failing []string) {
 	switch {
-	case mergeable == "CONFLICTING" && issue.Status == "pr_open":
+	case mergeable == "CONFLICTING" && (issue.Status == "pr_open" || issue.Status == "ci_running"):
 		d.handlePRConflict(issue, prNum)
 	case mergeable == "MERGEABLE" && issue.Status == "merge_conflict":
 		d.handlePRConflictResolved(issue, prNum)
+	case issue.Status == "ci_running" && checks == "failing":
+		d.handleCIFailure(issue, prNum, failing)
+	case issue.Status == "ci_running" && checks == "passing":
+		d.handleCIPass(issue, prNum)
+	// ci_running + pending: no-op, wait for checks to complete.
 	default:
 		d.checkForHumanComments(issue, prNum)
+	}
+}
+
+// handleCIPass promotes a ci_running ticket to in_review once all CI checks pass.
+// It clears the assignee so the reviewer can pick it up and the orphan-reconcile
+// loop can recover the ticket if needed.
+func (d *Daemon) handleCIPass(issue *repo.Issue, prNum int) {
+	d.logger.Printf("CI passed on PR #%d for ticket %s-%d — promoting to in_review",
+		prNum, d.cfg.TicketPrefix, issue.ID)
+
+	if err := d.issues.UpdateStatus(issue.ID, "in_review"); err != nil {
+		d.logger.Printf("error moving ticket %d to in_review: %v", issue.ID, err)
+		return
+	}
+	if err := d.issues.ClearAssignee(issue.ID); err != nil {
+		d.logger.Printf("error clearing assignee on ticket %d: %v", issue.ID, err)
+	}
+	if d.obs != nil {
+		d.obs.prEventsCIPass++
+	}
+}
+
+// handleCIFailure moves a ci_running ticket to repairing and nudges the assigned
+// prole with the names of the failing checks.
+func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []string) {
+	d.logger.Printf("CI failure on PR #%d for ticket %s-%d — moving to repairing",
+		prNum, d.cfg.TicketPrefix, issue.ID)
+
+	if err := d.issues.UpdateStatus(issue.ID, "repairing"); err != nil {
+		d.logger.Printf("error moving ticket %d to repairing: %v", issue.ID, err)
+		return
+	}
+	if d.obs != nil {
+		d.obs.prEventsCIFail++
+	}
+
+	if !issue.Assignee.Valid || issue.Assignee.String == "" {
+		return
+	}
+
+	nudgeKey := fmt.Sprintf("ci_failed:%d", issue.ID)
+	digest := fmt.Sprintf("%s-%d:ci:%s", d.cfg.TicketPrefix, issue.ID, strings.Join(failedNames, ","))
+	if !d.digestChanged(nudgeKey, digest) || !d.shouldNudge(nudgeKey) {
+		return
+	}
+
+	proleSession := session.SessionName(issue.Assignee.String)
+	if !d.sessionExists(proleSession) {
+		return
+	}
+
+	msg := fmt.Sprintf("CI FAILURE: PR #%d for ticket %s-%d (%s) has failing checks: %s. "+
+		"Please fix the failures and push a corrected branch.",
+		prNum, d.cfg.TicketPrefix, issue.ID, issue.Title, strings.Join(failedNames, ", "))
+
+	if err := d.sendKeys(proleSession, msg); err != nil {
+		d.logger.Printf("error nudging prole %s about CI failure on ticket %d: %v",
+			issue.Assignee.String, issue.ID, err)
+	} else {
+		d.logger.Printf("nudged prole %s: CI failure on ticket %s-%d",
+			issue.Assignee.String, d.cfg.TicketPrefix, issue.ID)
+		d.recordNudge(nudgeKey, digest)
 	}
 }
 
@@ -1249,27 +1322,66 @@ type prComment struct {
 	Body   string
 }
 
-func (d *Daemon) getPRState(prNum int) (state, mergeable string, merged bool, err error) {
+func (d *Daemon) getPRState(prNum int) (state, mergeable, checks string, failing []string, merged bool, err error) {
 	if d.getPRStateFn != nil {
 		return d.getPRStateFn(prNum)
 	}
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt,mergeable")
+	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt,mergeable,statusCheckRollup")
 	cmd.Dir = d.cfg.ProjectRoot
-	out, err := runCmd(cmd)
-	if err != nil {
-		return "", "", false, fmt.Errorf("gh pr view: %w", err)
+	out, execErr := runCmd(cmd)
+	if execErr != nil {
+		return "", "", "", nil, false, fmt.Errorf("gh pr view: %w", execErr)
 	}
 
 	var result struct {
-		State     string  `json:"state"`
-		MergedAt  *string `json:"mergedAt"`
-		Mergeable string  `json:"mergeable"`
+		State             string  `json:"state"`
+		MergedAt          *string `json:"mergedAt"`
+		Mergeable         string  `json:"mergeable"`
+		StatusCheckRollup []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"statusCheckRollup"`
 	}
 	if err := json.Unmarshal(out, &result); err != nil {
-		return "", "", false, fmt.Errorf("parsing PR state: %w", err)
+		return "", "", "", nil, false, fmt.Errorf("parsing PR state: %w", err)
 	}
 
-	return result.State, result.Mergeable, result.MergedAt != nil, nil
+	checksStatus, failingNames := classifyChecks(result.StatusCheckRollup)
+	return result.State, result.Mergeable, checksStatus, failingNames, result.MergedAt != nil, nil
+}
+
+// classifyChecks returns a check summary ("passing", "failing", or "pending")
+// and the names of any failing checks. Failing takes precedence over pending;
+// no checks is treated as passing (CI not configured).
+//
+// Failing conclusions: FAILURE, TIMED_OUT, STARTUP_FAILURE, ACTION_REQUIRED.
+// Pending statuses: IN_PROGRESS, QUEUED, WAITING.
+// Passing conclusions: SUCCESS, NEUTRAL, SKIPPED.
+func classifyChecks(checks []struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}) (status string, failing []string) {
+	hasPending := false
+	for _, c := range checks {
+		switch c.Status {
+		case "IN_PROGRESS", "QUEUED", "WAITING":
+			hasPending = true
+		case "COMPLETED":
+			switch c.Conclusion {
+			case "FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
+				failing = append(failing, c.Name)
+			}
+		}
+	}
+	if len(failing) > 0 {
+		return "failing", failing
+	}
+	if hasPending {
+		return "pending", nil
+	}
+	return "passing", nil
 }
 
 func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
@@ -1312,110 +1424,4 @@ func parseReviewLine(line []byte) (prComment, bool) {
 		IsBot:  review.AuthorType == "Bot",
 		Body:   review.Body,
 	}, true
-}
-
-// getPRCIChecks returns whether a PR has any completed failing CI checks, and their names.
-// Failing conclusions are FAILURE, TIMED_OUT, STARTUP_FAILURE, and ACTION_REQUIRED.
-// Checks still in progress (status != COMPLETED) are ignored.
-func (d *Daemon) getPRCIChecks(prNum int) (bool, []string, error) {
-	if d.getPRCIChecksFn != nil {
-		return d.getPRCIChecksFn(prNum)
-	}
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "statusCheckRollup")
-	cmd.Dir = d.cfg.ProjectRoot
-	out, err := runCmd(cmd)
-	if err != nil {
-		return false, nil, fmt.Errorf("gh pr view: %w", err)
-	}
-
-	var result struct {
-		StatusCheckRollup []struct {
-			Name       string `json:"name"`
-			Status     string `json:"status"`
-			Conclusion string `json:"conclusion"`
-		} `json:"statusCheckRollup"`
-	}
-	if err := json.Unmarshal(out, &result); err != nil {
-		return false, nil, fmt.Errorf("parsing PR checks: %w", err)
-	}
-
-	var failedNames []string
-	for _, check := range result.StatusCheckRollup {
-		if check.Status != "COMPLETED" {
-			continue
-		}
-		switch check.Conclusion {
-		case "FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
-			failedNames = append(failedNames, check.Name)
-		}
-	}
-	return len(failedNames) > 0, failedNames, nil
-}
-
-// handlePRCIChecks detects pr_open tickets whose CI checks are failing,
-// moves them to repairing, and nudges the assigned prole.
-func (d *Daemon) handlePRCIChecks() {
-	prOpenTickets, err := d.issues.List("pr_open")
-	if err != nil {
-		d.logger.Printf("error listing pr_open tickets for CI check: %v", err)
-		return
-	}
-
-	for _, issue := range prOpenTickets {
-		if !issue.PRNumber.Valid {
-			continue
-		}
-		prNum := int(issue.PRNumber.Int64)
-
-		failed, failedNames, err := d.getPRCIChecks(prNum)
-		if err != nil {
-			d.logger.Printf("error checking CI for PR #%d (ticket %s-%d): %v",
-				prNum, d.cfg.TicketPrefix, issue.ID, err)
-			continue
-		}
-		if !failed {
-			continue
-		}
-
-		d.logger.Printf("CI failure on PR #%d for ticket %s-%d — moving to repairing",
-			prNum, d.cfg.TicketPrefix, issue.ID)
-
-		if err := d.issues.UpdateStatus(issue.ID, "repairing"); err != nil {
-			d.logger.Printf("error moving ticket %d to repairing: %v", issue.ID, err)
-			continue
-		}
-
-		if d.obs != nil {
-			d.obs.prEventsCIFailed++
-		}
-
-		// Nudge the assigned prole if they have an active session.
-		if !issue.Assignee.Valid || issue.Assignee.String == "" {
-			continue
-		}
-
-		nudgeKey := fmt.Sprintf("ci_failed:%d", issue.ID)
-		digest := fmt.Sprintf("%s-%d:ci:%s", d.cfg.TicketPrefix, issue.ID, strings.Join(failedNames, ","))
-		if !d.digestChanged(nudgeKey, digest) || !d.shouldNudge(nudgeKey) {
-			continue
-		}
-
-		proleSession := session.SessionName(issue.Assignee.String)
-		if !d.sessionExists(proleSession) {
-			continue
-		}
-
-		msg := fmt.Sprintf("CI FAILURE: PR #%d for ticket %s-%d (%s) has failing checks: %s. "+
-			"Please fix the failures and push a corrected branch.",
-			prNum, d.cfg.TicketPrefix, issue.ID, issue.Title, strings.Join(failedNames, ", "))
-
-		if err := d.sendKeys(proleSession, msg); err != nil {
-			d.logger.Printf("error nudging prole %s about CI failure on ticket %d: %v",
-				issue.Assignee.String, issue.ID, err)
-		} else {
-			d.logger.Printf("nudged prole %s: CI failure on ticket %s-%d",
-				issue.Assignee.String, d.cfg.TicketPrefix, issue.ID)
-			d.recordNudge(nudgeKey, digest)
-		}
-	}
 }

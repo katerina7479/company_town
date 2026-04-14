@@ -322,7 +322,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 				{
 					// lower is better — count non-closed, non-cancelled tickets; warn above 20
 					Name:          "open_ticket_count",
-					Command:       "gt ticket list 2>/dev/null | grep -cE '\\[(open|draft|in_progress|in_review|under_review|repairing|pr_open|reviewed|merge_conflict)\\]'; true",
+					Command:       "gt ticket list 2>/dev/null | grep -cE '\\[(open|draft|in_progress|ci_running|in_review|under_review|repairing|pr_open|reviewed|merge_conflict)\\]'; true",
 					Type:          "metric",
 					Threshold:     10,
 					WarnThreshold: 20,
