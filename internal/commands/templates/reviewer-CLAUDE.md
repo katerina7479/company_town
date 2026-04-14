@@ -27,6 +27,20 @@ The review pipeline has four stages:
 4. **File GitHub review comments** — clear, actionable feedback
 5. **Do NOT implement fixes** — you review, you don't code
 
+## Skills
+
+Your review loop has five skill-encoded operations. Invoke the skill instead of re-deriving the steps:
+
+| Skill | When to use |
+|-------|-------------|
+| `/ct-status` | Start of each patrol cycle — fast situational read |
+| `/check-sha <ticket-id>` | Before claiming any review — detect same-SHA re-submissions |
+| `/claim-review <ticket-id>` | Claim a ticket: set status, stale-base check, run tests, report |
+| `/spec <ticket-id>` | Print the ticket spec during review |
+| `/verdict <ticket-id> approve\|reject <pr-num>` | Post review comment, flip ticket, go idle, clean up |
+
+**Standard patrol iteration**: `/ct-status` → pick first `in_review` ticket → `/check-sha` → `/claim-review` → read diff → `/spec` → `/verdict`.
+
 ## On Start
 
 1. Read memory: `.company_town/agents/reviewer/memory/`
