@@ -2,10 +2,12 @@ package commands
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,10 +54,12 @@ var (
 	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
 
 	priorityStyles = map[string]lipgloss.Style{
-		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true),  // bright red bold
-		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),           // orange
-		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),             // yellow
-		"P3": lipgloss.NewStyle().Foreground(lipgloss.Color("242")),           // medium gray
+		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true), // bright red bold
+		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),          // orange
+		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),            // yellow
+		// P3 intentionally absent: default foreground conveys "average/normal"
+		"P4": lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray (below average)
+		"P5": lipgloss.NewStyle().Foreground(lipgloss.Color("238")), // dark gray (trivial/archive)
 	}
 
 	typeStyles = map[string]lipgloss.Style{
@@ -70,13 +74,13 @@ var (
 		"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")),  // yellow
 		"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // red
 		// Ticket statuses
-		"draft":        lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
-		"open":         lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
-		"in_progress":  lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
-		"in_review":    lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
-		"under_review": lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
-		"pr_open":      lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
-		"reviewed":     lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
+		"draft":          lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
+		"open":           lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
+		"in_progress":    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
+		"in_review":      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
+		"under_review":   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
+		"pr_open":        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
+		"reviewed":       lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
 		"repairing":      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
 		"on_hold":        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
 		"merge_conflict": lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution
@@ -168,6 +172,13 @@ type actionResultMsg struct {
 	err  error
 }
 
+// spawnAttachResultMsg carries the outcome of a SpawnAttach attempt.
+type spawnAttachResultMsg struct {
+	agentName   string
+	sessionName string
+	err         error
+}
+
 // flatNode is an issue node with its render depth, used for cursor navigation.
 type flatNode struct {
 	node  *repo.IssueNode
@@ -184,6 +195,7 @@ type dashboardModel struct {
 	sessionExists func(name string) bool
 	sendKeys      func(name, msg string) error
 	restartAgent  func(name, agentType string) error
+	openPRFn      func(prNumber int) error
 	sleepFn       func(time.Duration)
 
 	data dashboardData
@@ -233,6 +245,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		sessionExists:   session.Exists,
 		sendKeys:        session.SendKeys,
 		restartAgent:    defaultRestartAgent,
+		openPRFn:        defaultOpenPR,
 		sleepFn:         time.Sleep,
 		expanded:        make(map[int]bool),
 		ticketPrefix:    cfg.TicketPrefix,
@@ -380,23 +393,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				agent := m.data.agents[m.agentCursor]
 				sname := session.SessionName(agent.Name)
 				if session.Exists(sname) {
-					if err := session.SpawnAttach(sname); err != nil {
-						// SpawnAttach returns ErrUnknownTerminal when $TERM_PROGRAM
-						// is unrecognized. Fall back to in-place attach so the CEO
-						// is never left without a way to reach the session.
-						if err == session.ErrUnknownTerminal {
-							fmt.Fprintf(os.Stderr, "spawn-attach: unrecognized $TERM_PROGRAM; attaching in place\n")
-						}
-						c := exec.Command("tmux", "attach-session", "-t", sname)
-						return m, tea.ExecProcess(c, func(err error) tea.Msg {
-							if err != nil {
-								return actionResultMsg{err: fmt.Errorf("attach %s: %w", agent.Name, err)}
-							}
-							return actionResultMsg{text: "Detached from " + agent.Name}
-						})
-					}
-					m.statusMsg = "Attached to " + agent.Name + " in new window"
-					return m, nil
+					return m, spawnAttachCmd(agent.Name, sname)
 				}
 				m.statusMsg = "No active session for " + agent.Name
 			}
@@ -440,9 +437,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(flat) > 0 {
 					node := flat[m.ticketCursor].node
 					if node.PRNumber.Valid {
-						return m, openPRCmd(int(node.PRNumber.Int64))
+						return m, m.openPRCmd(int(node.PRNumber.Int64))
 					}
-					m.statusMsg = "no PR for this ticket"
+					m.statusMsg = fmt.Sprintf("no PR for ticket %s-%d", m.ticketPrefix, node.ID)
 				}
 			}
 
@@ -474,6 +471,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = msg.text
 		}
 		return m, func() tea.Msg { return m.fetch() }
+
+	case spawnAttachResultMsg:
+		if msg.err == nil {
+			m.statusMsg = "Attached to " + msg.agentName + " in new window"
+			return m, nil
+		}
+		// ErrUnknownTerminal: $TERM_PROGRAM unrecognized — fall back to in-place attach.
+		if errors.Is(msg.err, session.ErrUnknownTerminal) {
+			fmt.Fprintf(os.Stderr, "spawn-attach: unrecognized $TERM_PROGRAM; attaching in place\n")
+		}
+		c := exec.Command("tmux", "attach-session", "-t", msg.sessionName)
+		return m, tea.ExecProcess(c, func(err error) tea.Msg {
+			if err != nil {
+				return actionResultMsg{err: fmt.Errorf("attach %s: %w", msg.agentName, err)}
+			}
+			return actionResultMsg{text: "Detached from " + msg.agentName}
+		})
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -518,6 +532,15 @@ func (m dashboardModel) agentSessionName(name string) string {
 		}
 	}
 	return ""
+}
+
+// spawnAttachCmd runs session.SpawnAttach in a goroutine so Update stays
+// non-blocking during osascript latency (200-500ms).
+func spawnAttachCmd(agentName, sessionName string) tea.Cmd {
+	return func() tea.Msg {
+		err := session.SpawnAttach(sessionName)
+		return spawnAttachResultMsg{agentName: agentName, sessionName: sessionName, err: err}
+	}
 }
 
 // killAgentCmd kills the agent's tmux session and marks it dead in the DB.
@@ -565,11 +588,36 @@ func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 	}
 }
 
+// ansiRe matches ANSI CSI escape sequences (e.g. color codes from gh output).
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// cleanStderr sanitises captured stderr for display in the dashboard status
+// line: strips ANSI CSI sequences and truncates to 200 bytes so the footer
+// stays on one line.
+func cleanStderr(s string) string {
+	s = ansiRe.ReplaceAllString(strings.TrimSpace(s), "")
+	const limit = 200
+	if len(s) > limit {
+		return s[:limit] + "..."
+	}
+	return s
+}
+
+// defaultOpenPR opens a PR in the browser via gh, capturing stderr so errors
+// are surfaced. Passes raw stderr through cleanStderr before wrapping.
+func defaultOpenPR(prNumber int) error {
+	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNumber), "--web")
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) > 0 {
+		return fmt.Errorf("%w: %s", err, cleanStderr(string(out)))
+	}
+	return err
+}
+
 // openPRCmd opens a pull request in the browser using `gh pr view --web`.
-func openPRCmd(prNumber int) tea.Cmd {
+func (m *dashboardModel) openPRCmd(prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNumber), "--web")
-		if err := cmd.Run(); err != nil {
+		if err := m.openPRFn(prNumber); err != nil {
 			return actionResultMsg{err: fmt.Errorf("open PR #%d: %w", prNumber, err)}
 		}
 		return actionResultMsg{text: fmt.Sprintf("Opened PR #%d in browser", prNumber)}
@@ -807,22 +855,32 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	const typeWidth = 1 // visible char: "E" / "B" / "R" / " " (blank for task)
 	typ := typeCell(node.IssueType)
 
+	const assigneeWidth = 8 // visible chars: up to 8-char agent name (e.g. "obsidian") or blank
+	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")
+	if node.Assignee.Valid && node.Assignee.String != "" {
+		name := node.Assignee.String
+		if len(name) > assigneeWidth {
+			name = name[:assigneeWidth]
+		}
+		assigneeRaw = fmt.Sprintf("%-*s", assigneeWidth, name)
+	}
+
 	// Truncate title so the row fits inside the panel content area. `width` is
 	// the inner content width (outer panel width minus border and padding),
 	// passed in from renderTickets.
-	// prefix + space + type + space + id + space + status + space + priority + space + pr + space + age + space + title
+	// prefix + space + type + space + id + space + status + space + priority + space + pr + space + assignee + space + age + space + title
 	// Use lipgloss.Width(prefix) because the selected-row bullet (●) is 3 bytes / 1 cell;
 	// len() would over-count by 2. Use len(node.Status) — the raw status is what the
 	// row actually renders via coloredStatus, not any bracket-framed variant.
-	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + len(ageRaw) + 1
+	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + assigneeWidth + 1 + len(ageRaw) + 1
 	titleMax := width - fixedLen
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	return fmt.Sprintf("%s %s %s %s %s %s %s %s",
-		prefix, typ, idStr, coloredStatus, pri, prStr, age, title,
+	return fmt.Sprintf("%s %s %s %s %s %s %s %s %s",
+		prefix, typ, idStr, coloredStatus, pri, prStr, assigneeRaw, age, title,
 	)
 }
 
