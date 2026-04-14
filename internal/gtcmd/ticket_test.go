@@ -868,6 +868,24 @@ func TestTicketUndepend_invalidArgs(t *testing.T) {
 	}
 }
 
+func TestTicketUndepend_nonexistentTicket(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id1, _ := issues.Create("Real", "task", nil, nil, nil)
+
+	// Second arg is a ticket ID that doesn't exist.
+	err := ticketUndepend(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", id1), "9999",
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent ticket, got nil")
+	}
+	if !strings.Contains(err.Error(), "9999") {
+		t.Errorf("error should mention missing ticket id, got: %v", err)
+	}
+}
+
 func TestTicketUndepend_prefixedIDs(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 	cfg := &config.Config{TicketPrefix: "nc"}

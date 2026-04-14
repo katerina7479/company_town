@@ -612,6 +612,13 @@ func ticketUndepend(issues *repo.IssueRepo, prefix string, args []string) error 
 		return err
 	}
 
+	if _, err := issues.Get(id); err != nil {
+		return fmt.Errorf("ticket %d: %w", id, err)
+	}
+	if _, err := issues.Get(dependsOnID); err != nil {
+		return fmt.Errorf("ticket %d: %w", dependsOnID, err)
+	}
+
 	if err := issues.RemoveDependency(id, dependsOnID); err != nil {
 		return err
 	}

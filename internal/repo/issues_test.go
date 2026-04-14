@@ -109,6 +109,29 @@ func TestIssueRepo_RemoveDependency_idempotent(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_RemoveDependency_OnlyRemovesSpecifiedEdge(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	a, _ := repo.Create("A", "task", nil, nil, nil)
+	b, _ := repo.Create("B", "task", nil, nil, nil)
+	c, _ := repo.Create("C", "task", nil, nil, nil)
+
+	repo.AddDependency(a, b)
+	repo.AddDependency(a, c)
+
+	if err := repo.RemoveDependency(a, b); err != nil {
+		t.Fatalf("RemoveDependency(a,b): %v", err)
+	}
+
+	deps, err := repo.GetDependencies(a)
+	if err != nil {
+		t.Fatalf("GetDependencies: %v", err)
+	}
+	if len(deps) != 1 || deps[0] != c {
+		t.Errorf("expected deps=[%d], got %v", c, deps)
+	}
+}
+
 func TestIssueRepo_RemoveDependency_restoresSelectability(t *testing.T) {
 	r := setupTestRepo(t)
 
