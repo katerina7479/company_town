@@ -65,6 +65,10 @@ func Start() error {
 	}
 	defer conn.Close()
 
+	if err := config.ValidateForStart(cfg); err != nil {
+		return err
+	}
+
 	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
 	agents := repo.NewAgentRepo(conn, events)
 

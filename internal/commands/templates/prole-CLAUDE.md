@@ -96,7 +96,7 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
 
 2. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
 
-   **If ticket status is `repairing`**: the branch already exists and has prior commits on `origin`. Do NOT create a new branch. Check out the existing one:
+   **If ticket status is `repairing`**: the branch already exists and has prior commits on `origin`. The daemon will have pre-switched your worktree to that branch at assignment time — verify you are already on it with `git branch --show-current`. If not (e.g. session was restarted), check it out manually:
 
    ```bash
    git fetch origin

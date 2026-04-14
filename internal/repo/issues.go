@@ -231,15 +231,16 @@ func (r *IssueRepo) ClearAssignee(id int) error {
 }
 
 // BusyAssignees returns the set of agent names currently holding at least one
-// non-closed ticket. Used by the daemon's assignment reconciler to avoid
-// double-booking an agent whose self-reported status has not yet flipped to
-// working after a prior tick's assignment.
+// ticket that requires active work. Tickets in handoff statuses (in_review,
+// under_review, pr_open, merge_conflict) are excluded: the prole has handed
+// off to the reviewer and is free to be paired with another ticket.
+// This prevents a prole from being held idle through the whole review cycle.
 func (r *IssueRepo) BusyAssignees() (map[string]bool, error) {
 	rows, err := r.db.Query(
 		`SELECT DISTINCT assignee FROM issues
 		 WHERE assignee IS NOT NULL
 		   AND assignee != ''
-		   AND status != 'closed'`,
+		   AND status NOT IN ('closed', 'in_review', 'under_review', 'pr_open', 'merge_conflict')`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying busy assignees: %w", err)
