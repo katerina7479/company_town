@@ -205,6 +205,7 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 		sessionExists: existsFn,
 		sendKeys:      sendKeysFn,
 		restartAgent:  restartFn,
+		openPRFn:  func(int) error { return nil }, // no-op default
 		sleepFn:  func(time.Duration) {}, // no-op in tests
 		expanded: make(map[int]bool),
 	}
@@ -1475,6 +1476,124 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 	}
 }
 
+// --- priorityCell tests ---
+
+func TestPriorityCell_nullIsSpaces(t *testing.T) {
+	got := priorityCell(sql.NullString{})
+	if got != "     " {
+		t.Errorf("expected 5 spaces for NULL priority, got %q", got)
+	}
+	if len(got) != 5 {
+		t.Errorf("expected len 5, got %d", len(got))
+	}
+}
+
+func TestPriorityCell_width5(t *testing.T) {
+	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
+		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		// In test mode lipgloss renders plain text (no TTY), so len == visible width.
+		if len(cell) != 5 {
+			t.Errorf("priorityCell(%q): expected len 5, got %d (%q)", p, len(cell), cell)
+		}
+	}
+}
+
+func TestPriorityCell_containsLabel(t *testing.T) {
+	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
+		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		want := fmt.Sprintf("[%s]", p)
+		if !strings.Contains(cell, want) {
+			t.Errorf("priorityCell(%q): expected cell to contain %q, got %q", p, want, cell)
+		}
+	}
+}
+
+func TestPriorityCell_p3NotStyled(t *testing.T) {
+	// P3 is the neutral default tier — it must NOT be in priorityStyles.
+	// Without a style entry it renders via the fallthrough fmt.Sprintf branch,
+	// which produces no ANSI escape sequences (the load-bearing assertion for
+	// the symmetric-around-neutral design).
+	if _, ok := priorityStyles["P3"]; ok {
+		t.Error("P3 must not be in priorityStyles — it should render with default terminal foreground")
+	}
+	cell := priorityCell(sql.NullString{String: "P3", Valid: true})
+	if strings.Contains(cell, "\x1b[") || strings.Contains(cell, "[") {
+		t.Errorf("P3 cell must have no ANSI escape codes, got %q", cell)
+	}
+}
+
+// --- NC-90: assignee column in collapsed row ---
+
+func TestRenderIssueRow_assigneeShownWhenSet(t *testing.T) {
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:       42,
+			Status:   "in_progress",
+			Title:    "Some ticket",
+			Assignee: sql.NullString{String: "copper", Valid: true},
+		},
+	}
+	row := renderIssueRow(node, 0, 120)
+	if !strings.Contains(row, "copper") {
+		t.Errorf("renderIssueRow for assigned ticket should contain assignee name, got: %q", row)
+	}
+}
+
+func TestRenderIssueRow_assigneeBlankWhenUnset(t *testing.T) {
+	// Two tickets with same-length titles: one assigned, one not.
+	// Both rows must have equal visible width so columns stay aligned.
+	assigned := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:       1,
+			Status:   "open",
+			Title:    "Same title here",
+			Assignee: sql.NullString{String: "iron", Valid: true},
+		},
+	}
+	unassigned := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:     2,
+			Status: "open",
+			Title:  "Same title here",
+		},
+	}
+	rowA := renderIssueRow(assigned, 0, 120)
+	rowU := renderIssueRow(unassigned, 0, 120)
+
+	// Unassigned row must not contain a stray agent name.
+	if strings.Contains(rowU, "iron") {
+		t.Errorf("unassigned row should not contain 'iron', got: %q", rowU)
+	}
+
+	// Both rows must have the same visible width (lipgloss strips ANSI).
+	wA := lipgloss.Width(rowA)
+	wU := lipgloss.Width(rowU)
+	if wA != wU {
+		t.Errorf("assigned row width=%d, unassigned row width=%d — columns misaligned", wA, wU)
+	}
+}
+
+func TestRenderIssueRow_assigneeTruncatedAt8Chars(t *testing.T) {
+	// An agent name longer than 8 chars must be truncated, not overflow the cell.
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:       10,
+			Status:   "in_progress",
+			Title:    "Long assignee test",
+			Assignee: sql.NullString{String: "verylongname", Valid: true},
+		},
+	}
+	row := renderIssueRow(node, 0, 120)
+	// Must contain the first 8 chars of the name.
+	if !strings.Contains(row, "verylong") {
+		t.Errorf("renderIssueRow should contain truncated assignee 'verylong', got: %q", row)
+	}
+	// Must not contain the full name beyond 8 chars.
+	if strings.Contains(row, "verylongname") {
+		t.Errorf("renderIssueRow should truncate assignee to 8 chars, got: %q", row)
+	}
+}
+
 func TestColorStatus_mergeConflict(t *testing.T) {
 	// merge_conflict must render as a non-empty styled string distinct from
 	// the repairing style, so the dashboard operator can visually distinguish
@@ -1491,5 +1610,84 @@ func TestColorStatus_mergeConflict(t *testing.T) {
 	rep := colorStatus("repairing")
 	if mc == rep {
 		t.Errorf("colorStatus(merge_conflict) == colorStatus(repairing): expected distinct styles")
+	}
+}
+
+// --- openPRCmd tests ---
+
+func TestOpenPRCmd_success(t *testing.T) {
+	var called int
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.openPRFn = func(prNumber int) error {
+		called = prNumber
+		return nil
+	}
+
+	cmd := m.openPRCmd(42)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err != nil {
+		t.Fatalf("expected no error, got %v", msg.err)
+	}
+	if !strings.Contains(msg.text, "42") {
+		t.Errorf("success text %q does not mention PR number", msg.text)
+	}
+	if called != 42 {
+		t.Errorf("openPRFn called with %d, want 42", called)
+	}
+}
+
+func TestOpenPRCmd_surfacesStderr(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.openPRFn = func(prNumber int) error {
+		return fmt.Errorf("exit status 1\nno pull requests found for branch")
+	}
+
+	cmd := m.openPRCmd(99)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Error must include the PR number for context
+	if !strings.Contains(msg.err.Error(), "99") {
+		t.Errorf("error %q does not mention PR number", msg.err.Error())
+	}
+	// Error must include the stderr text from gh
+	if !strings.Contains(msg.err.Error(), "no pull requests found") {
+		t.Errorf("error %q does not include stderr text", msg.err.Error())
+	}
+}
+
+func TestCleanStderr_truncatesLongInput(t *testing.T) {
+	// 1KB of stderr — must be capped at 200 + "..." = 203 bytes
+	long := strings.Repeat("x", 1024)
+	got := cleanStderr(long)
+	if len(got) > 210 {
+		t.Errorf("cleanStderr length %d exceeds 210; status line would overflow", len(got))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("cleanStderr %q should end with ...", got)
+	}
+}
+
+func TestCleanStderr_stripsANSI(t *testing.T) {
+	input := "\x1b[31mred error text\x1b[0m"
+	got := cleanStderr(input)
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("cleanStderr still contains ANSI codes: %q", got)
+	}
+	if !strings.Contains(got, "red error text") {
+		t.Errorf("cleanStderr %q does not contain the plain text", got)
 	}
 }

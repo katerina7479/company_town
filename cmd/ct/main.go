@@ -8,6 +8,10 @@ import (
 	"github.com/katerina7479/company_town/internal/commands"
 )
 
+// version is set at build time via -ldflags "-X main.version=<tag>".
+// Falls back to "dev" for local builds.
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -16,6 +20,11 @@ func main() {
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
+
+	if cmd == "--version" || cmd == "version" {
+		fmt.Println("ct version", version)
+		return
+	}
 
 	// Reject unknown commands before entering log middleware.
 	switch cmd {
