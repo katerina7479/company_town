@@ -86,10 +86,17 @@ func Init() error {
 	cfgPath := config.ConfigPath(projectRoot)
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		cfg := config.DefaultConfig(projectRoot, "")
+		// Pick a free port starting from the default (3307) so two projects on
+		// the same machine don't collide on the hardcoded default.
+		port, err := pickFreePort(cfg.Dolt.Port)
+		if err != nil {
+			return fmt.Errorf("finding free dolt port: %w", err)
+		}
+		cfg.Dolt.Port = port
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
-		fmt.Println("  created: config.json (edit github_repo and ticket_prefix)")
+		fmt.Printf("  created: config.json (dolt port=%d; edit github_repo and ticket_prefix)\n", port)
 	} else {
 		fmt.Println("  exists:  config.json")
 	}
