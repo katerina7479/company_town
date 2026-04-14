@@ -675,3 +675,37 @@ func scanIssueRow(rows *sql.Rows) (*Issue, error) {
 	}
 	return &i, nil
 }
+
+// SetParent sets the parent_id of issue id to parentID.
+// Returns an error if the issue does not exist.
+func (r *IssueRepo) SetParent(id, parentID int) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		parentID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("setting parent: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
+// ClearParent removes the parent_id from the issue, making it a root-level ticket.
+// Returns an error if the issue does not exist.
+func (r *IssueRepo) ClearParent(id int) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET parent_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("clearing parent: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}

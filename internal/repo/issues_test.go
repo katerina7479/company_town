@@ -1357,3 +1357,60 @@ func TestUpdateStatus_acceptsMergeConflict(t *testing.T) {
 		t.Errorf("expected status=merge_conflict, got %q", issue.Status)
 	}
 }
+
+func TestIssueRepo_SetParent(t *testing.T) {
+	r := setupTestRepo(t)
+
+	child, _ := r.Create("Child", "task", nil, nil, nil)
+	parent, _ := r.Create("Parent", "epic", nil, nil, nil)
+
+	if err := r.SetParent(child, parent); err != nil {
+		t.Fatalf("SetParent: %v", err)
+	}
+
+	got, err := r.Get(child)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.ParentID.Valid || int(got.ParentID.Int64) != parent {
+		t.Errorf("ParentID = %v, want %d", got.ParentID, parent)
+	}
+}
+
+func TestIssueRepo_SetParent_notFound(t *testing.T) {
+	r := setupTestRepo(t)
+	if err := r.SetParent(9999, 1); err == nil {
+		t.Error("expected error for nonexistent ticket")
+	}
+}
+
+func TestIssueRepo_ClearParent(t *testing.T) {
+	r := setupTestRepo(t)
+
+	parent, _ := r.Create("Parent", "epic", nil, nil, nil)
+	child, _ := r.Create("Child", "task", &parent, nil, nil)
+
+	got, _ := r.Get(child)
+	if !got.ParentID.Valid {
+		t.Fatalf("expected ParentID to be set initially")
+	}
+
+	if err := r.ClearParent(child); err != nil {
+		t.Fatalf("ClearParent: %v", err)
+	}
+
+	got, err := r.Get(child)
+	if err != nil {
+		t.Fatalf("Get after clear: %v", err)
+	}
+	if got.ParentID.Valid {
+		t.Errorf("expected ParentID NULL after clear, got %d", got.ParentID.Int64)
+	}
+}
+
+func TestIssueRepo_ClearParent_notFound(t *testing.T) {
+	r := setupTestRepo(t)
+	if err := r.ClearParent(9999); err == nil {
+		t.Error("expected error for nonexistent ticket")
+	}
+}
