@@ -28,7 +28,7 @@ func main() {
 
 	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "init", "start", "stop", "nuke", "architect", "artisan", "attach", "dashboard", "metrics", "daemon":
+	case "init", "start", "stop", "nuke", "architect", "artisan", "attach", "dashboard", "metrics", "daemon", "doctor":
 		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
@@ -83,6 +83,8 @@ func main() {
 			return commands.Metrics(args)
 		case "daemon":
 			return runDaemon()
+		case "doctor":
+			return commands.Doctor()
 		}
 		return nil
 	})
@@ -110,5 +112,6 @@ Commands:
   attach <name>       Attach to a running agent session
   dashboard           Open the live agents + tickets TUI
   metrics [--since N] Show system performance metrics (default: last 7 days)
-  daemon              Run the daemon (internal — started by ct start)`)
+  daemon              Run the daemon (internal — started by ct start)
+  doctor              Check system dependencies and project setup`)
 }
