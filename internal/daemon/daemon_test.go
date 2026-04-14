@@ -2883,3 +2883,170 @@ func TestHandleCIRunning_obsCounters(t *testing.T) {
 		t.Errorf("expected prEventsCIFail=1, got %d", d.obs.prEventsCIFail)
 	}
 }
+
+func TestClassifyChecks(t *testing.T) {
+	type ciCheck = struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	}
+	cases := []struct {
+		name        string
+		checks      []ciCheck
+		wantStatus  string
+		wantFailing []string
+	}{
+		{
+			name:       "empty rollup is passing (no CI configured)",
+			checks:     nil,
+			wantStatus: "passing",
+		},
+		{
+			name: "all SUCCESS is passing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "SUCCESS"},
+				{Name: "test", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			wantStatus: "passing",
+		},
+		{
+			name: "NEUTRAL and SKIPPED count as passing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "NEUTRAL"},
+				{Name: "docs", Status: "COMPLETED", Conclusion: "SKIPPED"},
+			},
+			wantStatus: "passing",
+		},
+		{
+			name: "pending check makes status pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "IN_PROGRESS", Conclusion: ""},
+				{Name: "test", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			wantStatus: "pending",
+		},
+		{
+			name: "QUEUED is pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "QUEUED", Conclusion: ""},
+			},
+			wantStatus: "pending",
+		},
+		{
+			name: "WAITING is pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "WAITING", Conclusion: ""},
+			},
+			wantStatus: "pending",
+		},
+		{
+			name: "FAILURE conclusion is failing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "FAILURE"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"lint"},
+		},
+		{
+			name: "CANCELLED conclusion is failing",
+			checks: []ciCheck{
+				{Name: "test", Status: "COMPLETED", Conclusion: "CANCELLED"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"test"},
+		},
+		{
+			name: "TIMED_OUT conclusion is failing",
+			checks: []ciCheck{
+				{Name: "build", Status: "COMPLETED", Conclusion: "TIMED_OUT"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"build"},
+		},
+		{
+			name: "STARTUP_FAILURE conclusion is failing",
+			checks: []ciCheck{
+				{Name: "deploy", Status: "COMPLETED", Conclusion: "STARTUP_FAILURE"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"deploy"},
+		},
+		{
+			name: "ACTION_REQUIRED conclusion is failing",
+			checks: []ciCheck{
+				{Name: "approve", Status: "COMPLETED", Conclusion: "ACTION_REQUIRED"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"approve"},
+		},
+		{
+			name: "failing takes precedence over pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "IN_PROGRESS", Conclusion: ""},
+				{Name: "test", Status: "COMPLETED", Conclusion: "FAILURE"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"test"},
+		},
+		{
+			name: "multiple failing checks all reported",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "FAILURE"},
+				{Name: "test", Status: "COMPLETED", Conclusion: "CANCELLED"},
+				{Name: "build", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"lint", "test"},
+		},
+		{
+			name: "CANCELLED-only rollup is failing, not passing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "CANCELLED"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"lint"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, gotFailing := classifyChecks(tc.checks)
+			if gotStatus != tc.wantStatus {
+				t.Errorf("status: got %q, want %q", gotStatus, tc.wantStatus)
+			}
+			if len(gotFailing) != len(tc.wantFailing) {
+				t.Errorf("failing count: got %v, want %v", gotFailing, tc.wantFailing)
+				return
+			}
+			for i, name := range tc.wantFailing {
+				if gotFailing[i] != name {
+					t.Errorf("failing[%d]: got %q, want %q", i, gotFailing[i], name)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleOpenPR_inReview_noCIReclassification(t *testing.T) {
+	// Once a ticket is in_review, the daemon must not reclassify it based on
+	// CI state. The reviewer owns the ticket; the daemon's handleOpenPR default
+	// path calls checkForHumanComments, which early-returns for non-pr_open.
+	// This test pins that invariant: an in_review ticket with failing CI must
+	// not move to repairing.
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Already-reviewed ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 99)
+
+	// CI is failing — if the daemon incorrectly re-checked CI for in_review
+	// tickets, it would move the ticket to repairing.
+	d.getPRStateFn = newPRStateFn("OPEN", "MERGEABLE", "failing", []string{"lint"})
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "in_review" {
+		t.Errorf("in_review ticket must not be reclassified by CI; got status %q", updated.Status)
+	}
+}

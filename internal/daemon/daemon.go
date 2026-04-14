@@ -1355,7 +1355,7 @@ func (d *Daemon) getPRState(prNum int) (state, mergeable, checks string, failing
 // and the names of any failing checks. Failing takes precedence over pending;
 // no checks is treated as passing (CI not configured).
 //
-// Failing conclusions: FAILURE, TIMED_OUT, STARTUP_FAILURE, ACTION_REQUIRED.
+// Failing conclusions: FAILURE, CANCELLED, TIMED_OUT, STARTUP_FAILURE, ACTION_REQUIRED.
 // Pending statuses: IN_PROGRESS, QUEUED, WAITING.
 // Passing conclusions: SUCCESS, NEUTRAL, SKIPPED.
 func classifyChecks(checks []struct {
@@ -1370,7 +1370,7 @@ func classifyChecks(checks []struct {
 			hasPending = true
 		case "COMPLETED":
 			switch c.Conclusion {
-			case "FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
+			case "FAILURE", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
 				failing = append(failing, c.Name)
 			}
 		}

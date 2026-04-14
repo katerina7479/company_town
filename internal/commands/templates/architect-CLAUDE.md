@@ -103,6 +103,10 @@ A well-specified ticket lets a prole start coding immediately:
 - **No ambiguity** — patterns and examples are referenced
 - **Right-sized** — a single prole can complete it in one session
 
+## CI Gating (`ci_running`)
+
+Tickets in `ci_running` are the handoff waiting room between prole and reviewer. The prole has filed a PR; the daemon promotes the ticket to `in_review` once all CI checks pass, or routes it to `repairing` on failure. If a ticket is stuck in `ci_running`, check the PR's GitHub Actions page directly — the daemon is waiting on CI that may be queued, broken, or misconfigured.
+
 ## Merge Conflict Resolution
 
 When a PR has a merge conflict, the daemon will set the ticket status to
