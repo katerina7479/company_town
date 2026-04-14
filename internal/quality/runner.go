@@ -1,6 +1,7 @@
 package quality
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -98,6 +99,6 @@ func (r *Runner) evalMetric(result Result, threshold, warnThreshold float64, out
 // isExitError reports whether err is a non-zero exit from a command that ran.
 // A non-ExitError means the command could not be started at all.
 func isExitError(err error) bool {
-	_, ok := err.(*exec.ExitError)
-	return ok
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr)
 }

@@ -61,7 +61,7 @@ func StartServer(doltDir, ctDir string, cfg *config.DoltConfig) error {
 
 	if !isPortAvailable(cfg.Host, cfg.Port) {
 		return fmt.Errorf("dolt port %d is already in use — either stop the process using that port "+
-		"or edit .company_town/config.json dolt.port to a free port", cfg.Port)
+			"or edit .company_town/config.json dolt.port to a free port", cfg.Port)
 	}
 
 	logFile, err := os.OpenFile(filepath.Join(ctDir, "logs", "dolt-server.log"),
@@ -93,7 +93,7 @@ func StartServer(doltDir, ctDir string, cfg *config.DoltConfig) error {
 
 	fmt.Printf("  Dolt server started (pid=%d, port=%d)\n", cmd.Process.Pid, cfg.Port)
 
-	cmd.Process.Release()
+	cmd.Process.Release() //nolint:errcheck // best-effort OS resource release
 	logFile.Close()
 
 	return nil
@@ -109,12 +109,12 @@ func StopServer(ctDir string) error {
 	proc, err := os.FindProcess(state.PID)
 	if err != nil {
 		cleanServerState(ctDir)
-		return nil
+		return nil //nolint:nilerr // process not found means already stopped
 	}
 
 	if err := proc.Signal(os.Interrupt); err != nil {
 		cleanServerState(ctDir)
-		return nil
+		return nil //nolint:nilerr // signal failure means process already dead; treat as stopped
 	}
 
 	cleanServerState(ctDir)

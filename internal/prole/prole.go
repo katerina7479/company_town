@@ -59,14 +59,14 @@ func EnsureBareRepo(cfg *config.Config) error {
 	// Configure fetch refspec (bare clones don't set this by default)
 	gitCfg := exec.Command("git", "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
 	gitCfg.Dir = barePath
-	gitCfg.Run()
+	gitCfg.Run() //nolint:errcheck // best-effort git config (bare repo fetch refspec)
 
 	// Fetch to populate remote tracking refs
 	fetchCmd := exec.Command("git", "fetch", "origin")
 	fetchCmd.Dir = barePath
 	fetchCmd.Stdout = os.Stdout
 	fetchCmd.Stderr = os.Stderr
-	fetchCmd.Run()
+	fetchCmd.Run() //nolint:errcheck // best-effort fetch
 
 	return nil
 }
@@ -112,7 +112,7 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		pushCmd := exec.Command("git", "remote", "set-url", "--push", "origin",
 			mustGetOriginURL(cfg))
 		pushCmd.Dir = wtPath
-		pushCmd.Run()
+		pushCmd.Run() //nolint:errcheck // best-effort push remote setup
 	} else {
 		// Worktree exists — pull latest from main
 		pullCmd := exec.Command("git", "pull", "origin", "main", "--ff-only")
@@ -195,7 +195,7 @@ func Reset(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 	fetchCmd.Dir = BareRepoPath(cfg)
 	fetchCmd.Stdout = os.Stdout
 	fetchCmd.Stderr = os.Stderr
-	fetchCmd.Run()
+	fetchCmd.Run() //nolint:errcheck // best-effort fetch
 
 	// Reset worktree to latest main
 	branch := fmt.Sprintf("prole/%s/standby", name)
@@ -473,7 +473,7 @@ func PruneDeadWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.
 	if _, err := os.Stat(barePath); err == nil {
 		pruneCmd := exec.Command("git", "worktree", "prune")
 		pruneCmd.Dir = barePath
-		pruneCmd.Run()
+		pruneCmd.Run() //nolint:errcheck // best-effort worktree prune
 	}
 
 	return pruned, nil
