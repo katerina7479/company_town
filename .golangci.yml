@@ -1,58 +1,29 @@
-# golangci-lint config for company_town
-# See https://golangci-lint.run/usage/configuration/
+version: "2"
 
 run:
   timeout: 5m
-  go: "1.22"
-  tests: true
 
 linters:
-  disable-all: true
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
-    - unused
-    - gosimple
-    - errorlint
-    - nilerr
-    - rowserrcheck
-    - sqlclosecheck
     - gosec
-    - gofmt
+    - gocritic
     - misspell
     - unconvert
+    - unparam
+  settings:
+    gosec:
+      excludes:
+        - G104  # Unhandled errors (too noisy for now)
 
-linters-settings:
-  errcheck:
-    exclude-functions:
-      - (io.Closer).Close
-      - fmt.Fprintln
-      - fmt.Fprintf
-      - fmt.Fprint
-
-  gosec:
-    excludes:
-      - G204
-      - G304
-      - G306
-
-  staticcheck:
-    checks:
-      - all
-      - "-SA1019"
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - errorlint
-
-    - path: internal/db/migrations/
-      linters:
-        - errcheck
-
   max-issues-per-linter: 0
   max-same-issues: 0
