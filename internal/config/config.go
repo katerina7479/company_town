@@ -239,7 +239,16 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,
-			Checks:                  []QualityCheckConfig{},
+			Checks: []QualityCheckConfig{
+				{
+					Name:          "go_test_coverage",
+					Command:       "go test ./... -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
+					Type:          "metric",
+					Threshold:     70.0,
+					WarnThreshold: 60.0,
+					Enabled:       true,
+				},
+			},
 		},
 	}
 }
