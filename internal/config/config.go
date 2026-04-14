@@ -94,6 +94,7 @@ type Config struct {
 	PRBackfillIntervalSeconds    int           `json:"pr_backfill_interval_seconds"`
 	RestartDeadAgents            bool          `json:"restart_dead_agents"`
 	RestartCooldownSeconds       int           `json:"restart_cooldown_seconds"`
+	RepairCycleThreshold         int           `json:"repair_cycle_threshold"`
 	Quality                      QualityConfig `json:"quality"`
 }
 
@@ -260,6 +261,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		PRBackfillIntervalSeconds:    300,
 		RestartDeadAgents:            true,
 		RestartCooldownSeconds:       300,
+		RepairCycleThreshold:         3,
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,

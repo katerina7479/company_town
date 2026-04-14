@@ -20,9 +20,10 @@ CREATE TABLE IF NOT EXISTS issues (
   assignee      TEXT,
   parent_id     INTEGER,
   priority      TEXT,
-  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  closed_at     DATETIME,
+  created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  closed_at           DATETIME,
+  repair_cycle_count  INTEGER  NOT NULL DEFAULT 0,
   FOREIGN KEY (parent_id) REFERENCES issues(id)
 );
 

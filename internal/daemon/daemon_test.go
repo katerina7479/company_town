@@ -2650,3 +2650,144 @@ func TestRunCmd_noStderrOnFailure(t *testing.T) {
 		t.Errorf("expected exit status in error, got: %v", err)
 	}
 }
+
+// --- handleRepairCycleEscalation tests ---
+
+func TestHandleRepairCycleEscalation_escalatesWhenThresholdReached(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Bouncy ticket", "task", nil, nil, nil)
+	// Simulate 3 transitions to repairing (each UpdateStatus("repairing") increments the count).
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation message, got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-mayor" {
+		t.Errorf("expected message to ct-mayor, got %q", (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "ESCALATION", "Bouncy ticket", "on_hold") {
+		t.Errorf("escalation message missing expected content: %q", (*sent)[0].msg)
+	}
+
+	// Ticket must be on_hold.
+	ticket, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ticket.Status != "on_hold" {
+		t.Errorf("expected ticket status on_hold, got %q", ticket.Status)
+	}
+}
+
+func TestHandleRepairCycleEscalation_noEscalationBelowThreshold(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Fine ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing") // count = 2, below threshold of 3
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations (below threshold), got %d: %v", len(*sent), *sent)
+	}
+
+	ticket, _ := issues.Get(id)
+	if ticket.Status != "repairing" {
+		t.Errorf("expected ticket to stay in repairing, got %q", ticket.Status)
+	}
+}
+
+func TestHandleRepairCycleEscalation_disabledWhenThresholdZero(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 0 // disabled
+
+	id, _ := issues.Create("Many bounces", "task", nil, nil, nil)
+	for i := 0; i < 10; i++ {
+		issues.UpdateStatus(id, "repairing")
+	}
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations when threshold=0, got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairCycleEscalation_noEscalationWhenMayorNotRunning(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Orphaned ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 escalations when Mayor not running, got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairCycleEscalation_cooldownSuppressesRepeat(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+	d.nudgeCooldown = 5 * time.Minute
+
+	id, _ := issues.Create("Repeated escalation", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+
+	d.handleRepairCycleEscalation()
+	// First call should escalate and move to on_hold; move it back for second call.
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	d.handleRepairCycleEscalation()
+
+	// Cooldown is active — second call should not produce another message.
+	if len(*sent) != 1 {
+		t.Errorf("expected exactly 1 escalation (cooldown suppresses second), got %d", len(*sent))
+	}
+}
+
+func TestUpdateStatus_incrementsRepairCycleCount(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("creating test db: %v", err)
+	}
+	defer conn.Close()
+	issues := repo.NewIssueRepo(conn, nil)
+
+	id, _ := issues.Create("Counting ticket", "task", nil, nil, nil)
+
+	// Non-repairing transitions do not increment.
+	issues.UpdateStatus(id, "in_progress")
+	issues.UpdateStatus(id, "in_review")
+
+	ticket, _ := issues.Get(id)
+	if ticket.RepairCycleCount != 0 {
+		t.Errorf("expected 0 after non-repairing transitions, got %d", ticket.RepairCycleCount)
+	}
+
+	// Each repairing transition increments by 1.
+	issues.UpdateStatus(id, "repairing")
+	ticket, _ = issues.Get(id)
+	if ticket.RepairCycleCount != 1 {
+		t.Errorf("expected 1 after first repairing, got %d", ticket.RepairCycleCount)
+	}
+
+	issues.UpdateStatus(id, "repairing")
+	ticket, _ = issues.Get(id)
+	if ticket.RepairCycleCount != 2 {
+		t.Errorf("expected 2 after second repairing, got %d", ticket.RepairCycleCount)
+	}
+}

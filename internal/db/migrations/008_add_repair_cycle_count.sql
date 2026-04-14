@@ -1,0 +1,1 @@
+ALTER TABLE issues ADD COLUMN repair_cycle_count INT NOT NULL DEFAULT 0;
