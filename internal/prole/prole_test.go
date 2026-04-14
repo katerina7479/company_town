@@ -278,7 +278,7 @@ func setupPruneEnv(t *testing.T) (cfg *config.Config, agents *repo.AgentRepo, ba
 	// Worktrees are placed under ProlesDir(cfg) so they pass the isSafeWorktreePath guard.
 	addWorktree = func(name string) string {
 		wtPath := WorktreePath(cfg, name)
-		if err := os.MkdirAll(filepath.Dir(wtPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(wtPath), 0750); err != nil {
 			t.Fatal(err)
 		}
 		branch := "prole/" + name + "/standby"
@@ -622,7 +622,7 @@ func makeSafePathCfg(t *testing.T) *config.Config {
 	root := t.TempDir()
 	ctDir := filepath.Join(root, ".company_town")
 	for _, sub := range []string{"proles", "repo.git", "db"} {
-		if err := os.MkdirAll(filepath.Join(ctDir, sub), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(ctDir, sub), 0750); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -632,7 +632,7 @@ func makeSafePathCfg(t *testing.T) *config.Config {
 func TestIsSafeWorktreePath_validProle(t *testing.T) {
 	cfg := makeSafePathCfg(t)
 	path := filepath.Join(ProlesDir(cfg), "iron")
-	if err := os.MkdirAll(path, 0755); err != nil {
+	if err := os.MkdirAll(path, 0750); err != nil {
 		t.Fatal(err)
 	}
 	if !isSafeWorktreePath(cfg, path) {
