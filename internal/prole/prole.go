@@ -360,7 +360,7 @@ func SwitchToBranch(wtPath, barePath, branch string) error {
 	// Fetch branch from origin into the bare repo so the worktree can see it.
 	fetchCmd := exec.Command("git", "fetch", "origin", branch)
 	fetchCmd.Dir = barePath
-	fetchCmd.Run() // best-effort; branch may already be local
+	_ = fetchCmd.Run() // best-effort; branch may already be local, or offline — checkout below surfaces real failures
 
 	checkoutCmd := exec.Command("git", "checkout", branch)
 	checkoutCmd.Dir = wtPath
