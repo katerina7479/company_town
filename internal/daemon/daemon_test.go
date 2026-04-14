@@ -2420,8 +2420,8 @@ func TestHandlePREvents_conflictingOpenPR_movesToMergeConflict(t *testing.T) {
 	issues.UpdateStatus(id, "pr_open")
 	issues.SetPR(id, 88)
 
-	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
-		return "OPEN", "CONFLICTING", false, nil
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "CONFLICTING", "passing", nil, false, nil
 	}
 
 	d.handlePREvents()
@@ -2445,8 +2445,8 @@ func TestHandlePREvents_mergeableAfterConflict_movesToPROpen(t *testing.T) {
 	issues.UpdateStatus(id, "merge_conflict")
 	issues.SetPR(id, 99)
 
-	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
-		return "OPEN", "MERGEABLE", false, nil
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "MERGEABLE", "passing", nil, false, nil
 	}
 
 	d.handlePREvents()
@@ -2468,8 +2468,8 @@ func TestHandlePREvents_dirtyMergeability_isNoop(t *testing.T) {
 	issues.UpdateStatus(id, "pr_open")
 	issues.SetPR(id, 101)
 
-	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
-		return "OPEN", "DIRTY", false, nil
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "DIRTY", "passing", nil, false, nil
 	}
 
 	d.handlePREvents()
@@ -2490,8 +2490,8 @@ func TestHandlePREvents_unknownIsNoop(t *testing.T) {
 	issues.UpdateStatus(id, "merge_conflict")
 	issues.SetPR(id, 112)
 
-	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
-		return "OPEN", "UNKNOWN", false, nil
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "UNKNOWN", "passing", nil, false, nil
 	}
 
 	d.handlePREvents()
@@ -2503,9 +2503,9 @@ func TestHandlePREvents_unknownIsNoop(t *testing.T) {
 }
 
 // TestHandlePRConflicting_skipsNonPROpenStatus verifies that the conflict handler
-// only fires when the ticket is in pr_open. The non-obvious case is under_review:
-// the reviewer still owns the ticket in that state and the daemon must not grab it
-// even if the branch is dirty — the reviewer decides what to do with the PR.
+// only fires when the ticket is in pr_open or ci_running. The non-obvious case is
+// under_review: the reviewer still owns the ticket in that state and the daemon
+// must not grab it even if the branch is dirty — the reviewer decides what to do.
 func TestHandlePRConflicting_skipsNonPROpenStatus(t *testing.T) {
 	statuses := []struct {
 		status  string
@@ -2529,8 +2529,8 @@ func TestHandlePRConflicting_skipsNonPROpenStatus(t *testing.T) {
 			issues.UpdateStatus(id, tc.status)
 			issues.SetPR(id, 200)
 
-			d.getPRStateFn = func(prNum int) (string, string, bool, error) {
-				return "OPEN", "CONFLICTING", false, nil
+			d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+				return "OPEN", "CONFLICTING", "passing", nil, false, nil
 			}
 
 			d.handlePREvents()
@@ -2551,8 +2551,8 @@ func TestHandlePREvents_obsCountersForConflict(t *testing.T) {
 	issues.UpdateStatus(id, "pr_open")
 	issues.SetPR(id, 110)
 
-	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
-		return "OPEN", "CONFLICTING", false, nil
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "CONFLICTING", "passing", nil, false, nil
 	}
 
 	d.handlePREvents()
@@ -2570,8 +2570,8 @@ func TestHandlePREvents_obsCountersForConflictResolved(t *testing.T) {
 	issues.UpdateStatus(id, "merge_conflict")
 	issues.SetPR(id, 111)
 
-	d.getPRStateFn = func(prNum int) (string, string, bool, error) {
-		return "OPEN", "MERGEABLE", false, nil
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "MERGEABLE", "passing", nil, false, nil
 	}
 
 	d.handlePREvents()
@@ -2648,5 +2648,406 @@ func TestRunCmd_noStderrOnFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exit status") {
 		t.Errorf("expected exit status in error, got: %v", err)
+	}
+}
+
+// --- ci_running state machine tests (nc-130) ---
+
+// newPRStateFn returns a getPRStateFn stub that reports an OPEN PR with the
+// given mergeable/checks/failing values. Convenience for ci_running tests that
+// don't exercise the merged or closed code paths.
+func newPRStateFn(mergeable, checks string, failing []string) func(int) (string, string, string, []string, bool, error) {
+	return func(_ int) (string, string, string, []string, bool, error) {
+		return "OPEN", mergeable, checks, failing, false, nil
+	}
+}
+
+func TestHandleCIRunning_passingMovesToInReview(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 42)
+	issues.Assign(id, "tin", "prole/tin/nc-42")
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "passing", nil)
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "in_review" {
+		t.Errorf("expected status=in_review after CI passes, got %q", updated.Status)
+	}
+	// Assignee cleared so reviewer can pick up; orphan-reconcile can recover.
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Errorf("expected assignee cleared after CI pass, got %q", updated.Assignee.String)
+	}
+}
+
+func TestHandleCIRunning_failingMovesToRepairingAndNudgesProle(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 42)
+	issues.Assign(id, "tin", "prole/tin/nc-42")
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test", "lint"})
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge to prole, got %d", len(*sent))
+	}
+	if (*sent)[0].session != proleSession {
+		t.Errorf("expected nudge to %q, got %q", proleSession, (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "CI FAILURE", "PR #42", "NC-"+itoa(id), "test", "lint") {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleCIRunning_pendingIsNoop(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 43)
+	issues.Assign(id, "tin", "prole/tin/nc-43")
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "pending", nil)
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "ci_running" {
+		t.Errorf("expected status unchanged (ci_running) while checks pending, got %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge while pending, got %d", len(*sent))
+	}
+}
+
+func TestHandleCIRunning_conflictingMovesToMergeConflict(t *testing.T) {
+	architectSession := "ct-architect"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{architectSession})
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 44)
+
+	d.getPRStateFn = newPRStateFn("CONFLICTING", "passing", nil)
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict (conflict takes precedence), got %q", updated.Status)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 architect nudge, got %d", len(*sent))
+	}
+	if !containsAll((*sent)[0].msg, "MERGE CONFLICT", "PR #44") {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleCIRunning_noNudgeWhenProleSessionAbsent(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 50)
+	issues.Assign(id, "tin", "prole/tin/nc-50")
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
+	d.handlePREvents()
+
+	// Ticket should still be moved to repairing even without an active session.
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge (session absent), got %d", len(*sent))
+	}
+}
+
+func TestHandleCIRunning_noNudgeWhenNoAssignee(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+
+	id, _ := issues.Create("Unassigned ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 51)
+	// no Assign call — ticket has no assignee
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge (no assignee), got %d", len(*sent))
+	}
+}
+
+func TestHandleCIRunning_noSpam(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+	d.nudgeCooldown = 1 * time.Hour
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 55)
+	issues.Assign(id, "tin", "prole/tin/nc-55")
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
+
+	// First call — moves ticket to repairing and nudges.
+	d.handlePREvents()
+	firstCount := len(*sent)
+
+	// Move ticket back to ci_running to simulate a re-push that still fails.
+	issues.UpdateStatus(id, "ci_running")
+
+	// Second call within cooldown with same failing checks — should not nudge again.
+	d.handlePREvents()
+
+	if len(*sent) != firstCount {
+		t.Errorf("expected no additional nudge within cooldown, got %d total nudges", len(*sent))
+	}
+}
+
+func TestHandleCIRunning_nudgesAgainAfterCooldownWithDifferentFailure(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+	d.nudgeCooldown = 1 * time.Hour
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 80)
+	issues.Assign(id, "tin", "prole/tin/nc-80")
+
+	// First call — test fails; nudged.
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
+	d.handlePREvents()
+	firstCount := len(*sent)
+
+	// Simulate prole pushed a partial fix; ticket back to ci_running, different check fails.
+	issues.UpdateStatus(id, "ci_running")
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"security"})
+
+	// Advance clock past the cooldown — different digest + expired cooldown → nudge fires.
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	d.handlePREvents()
+
+	if len(*sent) <= firstCount {
+		t.Errorf("expected nudge after cooldown + digest change, got %d total nudges", len(*sent))
+	}
+	if !containsAll((*sent)[len(*sent)-1].msg, "CI FAILURE", "PR #80", "security") {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[len(*sent)-1].msg)
+	}
+}
+
+func TestHandleCIRunning_obsCounters(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+	d.obs = &tickObservations{}
+
+	// One ticket passes CI, one fails.
+	passID, _ := issues.Create("Pass ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(passID, "ci_running")
+	issues.SetPR(passID, 70)
+
+	failID, _ := issues.Create("Fail ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(failID, "ci_running")
+	issues.SetPR(failID, 71)
+
+	call := 0
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		call++
+		if prNum == 70 {
+			return "OPEN", "MERGEABLE", "passing", nil, false, nil
+		}
+		return "OPEN", "MERGEABLE", "failing", []string{"lint"}, false, nil
+	}
+
+	d.handlePREvents()
+
+	if d.obs.prEventsCIPass != 1 {
+		t.Errorf("expected prEventsCIPass=1, got %d", d.obs.prEventsCIPass)
+	}
+	if d.obs.prEventsCIFail != 1 {
+		t.Errorf("expected prEventsCIFail=1, got %d", d.obs.prEventsCIFail)
+	}
+}
+
+func TestClassifyChecks(t *testing.T) {
+	type ciCheck = struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	}
+	cases := []struct {
+		name        string
+		checks      []ciCheck
+		wantStatus  string
+		wantFailing []string
+	}{
+		{
+			name:       "empty rollup is passing (no CI configured)",
+			checks:     nil,
+			wantStatus: "passing",
+		},
+		{
+			name: "all SUCCESS is passing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "SUCCESS"},
+				{Name: "test", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			wantStatus: "passing",
+		},
+		{
+			name: "NEUTRAL and SKIPPED count as passing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "NEUTRAL"},
+				{Name: "docs", Status: "COMPLETED", Conclusion: "SKIPPED"},
+			},
+			wantStatus: "passing",
+		},
+		{
+			name: "pending check makes status pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "IN_PROGRESS", Conclusion: ""},
+				{Name: "test", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			wantStatus: "pending",
+		},
+		{
+			name: "QUEUED is pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "QUEUED", Conclusion: ""},
+			},
+			wantStatus: "pending",
+		},
+		{
+			name: "WAITING is pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "WAITING", Conclusion: ""},
+			},
+			wantStatus: "pending",
+		},
+		{
+			name: "FAILURE conclusion is failing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "FAILURE"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"lint"},
+		},
+		{
+			name: "CANCELLED conclusion is failing",
+			checks: []ciCheck{
+				{Name: "test", Status: "COMPLETED", Conclusion: "CANCELLED"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"test"},
+		},
+		{
+			name: "TIMED_OUT conclusion is failing",
+			checks: []ciCheck{
+				{Name: "build", Status: "COMPLETED", Conclusion: "TIMED_OUT"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"build"},
+		},
+		{
+			name: "STARTUP_FAILURE conclusion is failing",
+			checks: []ciCheck{
+				{Name: "deploy", Status: "COMPLETED", Conclusion: "STARTUP_FAILURE"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"deploy"},
+		},
+		{
+			name: "ACTION_REQUIRED conclusion is failing",
+			checks: []ciCheck{
+				{Name: "approve", Status: "COMPLETED", Conclusion: "ACTION_REQUIRED"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"approve"},
+		},
+		{
+			name: "failing takes precedence over pending",
+			checks: []ciCheck{
+				{Name: "lint", Status: "IN_PROGRESS", Conclusion: ""},
+				{Name: "test", Status: "COMPLETED", Conclusion: "FAILURE"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"test"},
+		},
+		{
+			name: "multiple failing checks all reported",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "FAILURE"},
+				{Name: "test", Status: "COMPLETED", Conclusion: "CANCELLED"},
+				{Name: "build", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"lint", "test"},
+		},
+		{
+			name: "CANCELLED-only rollup is failing, not passing",
+			checks: []ciCheck{
+				{Name: "lint", Status: "COMPLETED", Conclusion: "CANCELLED"},
+			},
+			wantStatus:  "failing",
+			wantFailing: []string{"lint"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, gotFailing := classifyChecks(tc.checks)
+			if gotStatus != tc.wantStatus {
+				t.Errorf("status: got %q, want %q", gotStatus, tc.wantStatus)
+			}
+			if len(gotFailing) != len(tc.wantFailing) {
+				t.Errorf("failing count: got %v, want %v", gotFailing, tc.wantFailing)
+				return
+			}
+			for i, name := range tc.wantFailing {
+				if gotFailing[i] != name {
+					t.Errorf("failing[%d]: got %q, want %q", i, gotFailing[i], name)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleOpenPR_inReview_noCIReclassification(t *testing.T) {
+	// Once a ticket is in_review, the daemon must not reclassify it based on
+	// CI state. The reviewer owns the ticket; the daemon's handleOpenPR default
+	// path calls checkForHumanComments, which early-returns for non-pr_open.
+	// This test pins that invariant: an in_review ticket with failing CI must
+	// not move to repairing.
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Already-reviewed ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 99)
+
+	// CI is failing — if the daemon incorrectly re-checked CI for in_review
+	// tickets, it would move the ticket to repairing.
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"lint"})
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "in_review" {
+		t.Errorf("in_review ticket must not be reclassified by CI; got status %q", updated.Status)
 	}
 }

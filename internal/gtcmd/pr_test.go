@@ -164,7 +164,7 @@ func TestPRUpdate_wrongStatus_open(t *testing.T) {
 	}
 }
 
-func TestPRCreate_ClearsAssignee(t *testing.T) {
+func TestPRCreate_SetsCIRunning(t *testing.T) {
 	issues := setupPRTestRepo(t)
 
 	id, err := issues.Create("A task", "task", nil, nil, nil)
@@ -200,15 +200,16 @@ func TestPRCreate_ClearsAssignee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Assignee.Valid && got.Assignee.String != "" {
-		t.Errorf("expected assignee cleared, got %q", got.Assignee.String)
+	// Prole stays assigned — they are still responsible if CI fails.
+	if !got.Assignee.Valid || got.Assignee.String != "iron" {
+		t.Errorf("expected assignee=iron (kept through ci_running), got %q", got.Assignee.String)
 	}
-	if got.Status != "in_review" {
-		t.Errorf("expected status=in_review, got %q", got.Status)
+	if got.Status != "ci_running" {
+		t.Errorf("expected status=ci_running, got %q", got.Status)
 	}
 }
 
-func TestPRUpdate_ClearsAssignee(t *testing.T) {
+func TestPRUpdate_SetsCIRunning(t *testing.T) {
 	issues := setupPRTestRepo(t)
 
 	id, err := issues.Create("A task", "task", nil, nil, nil)
@@ -234,11 +235,12 @@ func TestPRUpdate_ClearsAssignee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Assignee.Valid && got.Assignee.String != "" {
-		t.Errorf("expected assignee cleared, got %q", got.Assignee.String)
+	// Prole stays assigned — they are still responsible if CI fails again.
+	if !got.Assignee.Valid || got.Assignee.String != "iron" {
+		t.Errorf("expected assignee=iron (kept through ci_running), got %q", got.Assignee.String)
 	}
-	if got.Status != "in_review" {
-		t.Errorf("expected status=in_review, got %q", got.Status)
+	if got.Status != "ci_running" {
+		t.Errorf("expected status=ci_running, got %q", got.Status)
 	}
 }
 
@@ -470,8 +472,8 @@ func TestPRCreate_PushProceedsWhenCommitsExist(t *testing.T) {
 		t.Error("expected gitPushFn to be called when commits exist")
 	}
 	got, _ := issues.Get(id)
-	if got.Status != "in_review" {
-		t.Errorf("expected status=in_review, got %q", got.Status)
+	if got.Status != "ci_running" {
+		t.Errorf("expected status=ci_running, got %q", got.Status)
 	}
 }
 
