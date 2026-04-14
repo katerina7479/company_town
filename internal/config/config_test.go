@@ -169,6 +169,16 @@ func TestConfigLoad_workflowSameFromTo(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_TicketPrefixNotCt(t *testing.T) {
+	cfg := DefaultConfig("/tmp/proj", "")
+	if cfg.TicketPrefix == "ct" {
+		t.Error("default ticket_prefix should not collide with binary name 'ct'")
+	}
+	if cfg.TicketPrefix == "" {
+		t.Error("default ticket_prefix should not be empty (breaks config.Load)")
+	}
+}
+
 func TestDefaultConfig_reviewerAcceptWorkflow(t *testing.T) {
 	cfg := DefaultConfig("/tmp", "x/y")
 	wf := cfg.Agents.Reviewer.Workflow
@@ -208,8 +218,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.GithubRepo != "owner/repo" {
 		t.Errorf("GithubRepo = %q, want %q", cfg.GithubRepo, "owner/repo")
 	}
-	if cfg.TicketPrefix != "ct" {
-		t.Errorf("TicketPrefix = %q, want %q", cfg.TicketPrefix, "ct")
+	if cfg.TicketPrefix != "tk" {
+		t.Errorf("TicketPrefix = %q, want %q", cfg.TicketPrefix, "tk")
 	}
 	if cfg.Version != "1.0.0" {
 		t.Errorf("Version = %q, want %q", cfg.Version, "1.0.0")

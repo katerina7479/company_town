@@ -196,7 +196,7 @@ func validateTransition(path string, tt *TicketTransition) error {
 func DefaultConfig(projectRoot, githubRepo string) *Config {
 	return &Config{
 		Version:      "1.0.0",
-		TicketPrefix: "ct",
+		TicketPrefix: "tk",
 		ProjectRoot:  projectRoot,
 		GithubRepo:   githubRepo,
 		Dolt: DoltConfig{
