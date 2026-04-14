@@ -162,8 +162,8 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 }
 
 // Assign sets the assignee and branch on an issue. It does NOT change the
-// ticket status — the prole must explicitly acknowledge with
-// `gt ticket status <id> in_progress` to claim the work.
+// ticket status. To claim the work, run `gt ticket status <id> in_progress`,
+// which atomically sets both the ticket status and the agent to working.
 func (r *IssueRepo) Assign(id int, assignee, branch string) error {
 	result, err := r.db.Exec(
 		`UPDATE issues SET assignee = ?, branch = ?,

@@ -467,7 +467,7 @@ func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
 	}
 
 	// Move to under_review — assignee must remain "iron"
-	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
+	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
 		t.Fatalf("ticketStatus under_review: %v", err)
 	}
 	got, _ := issues.Get(id)
@@ -476,7 +476,7 @@ func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
 	}
 
 	// Move to pr_open — assignee must remain "iron"
-	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "pr_open"}); err != nil {
+	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "pr_open"}); err != nil {
 		t.Fatalf("ticketStatus pr_open: %v", err)
 	}
 	got, _ = issues.Get(id)
@@ -485,10 +485,10 @@ func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
 	}
 
 	// Move to repairing from a fresh under_review — assignee must remain "iron"
-	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
+	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
 		t.Fatalf("ticketStatus under_review (2): %v", err)
 	}
-	if err := ticketStatus(issues, []string{fmt.Sprintf("%d", id), "repairing"}); err != nil {
+	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "repairing"}); err != nil {
 		t.Fatalf("ticketStatus repairing: %v", err)
 	}
 	got, _ = issues.Get(id)
@@ -1090,5 +1090,170 @@ func TestTicketUnparent_idempotentWhenNoParent(t *testing.T) {
 	// Unparent a ticket that has no parent — should succeed silently
 	if err := ticketUnparent(issues, cfg.TicketPrefix, []string{fmt.Sprintf("%d", id)}); err != nil {
 		t.Errorf("unparent on ticket with no parent should succeed, got: %v", err)
+	}
+}
+
+func TestTicketStatus_InProgress_SetsAgentWorking(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	// Register agent and create + assign a ticket.
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	id, err := issues.Create("my ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/nc-126"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	// Transition to in_progress — agent should become working.
+	if err := ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "in_progress"}); err != nil {
+		t.Fatalf("ticketStatus in_progress: %v", err)
+	}
+
+	agent, err := agents.Get("iron")
+	if err != nil {
+		t.Fatalf("agents.Get: %v", err)
+	}
+	if agent.Status != "working" {
+		t.Errorf("expected agent status=working after in_progress, got %q", agent.Status)
+	}
+	if !agent.CurrentIssue.Valid || int(agent.CurrentIssue.Int64) != id {
+		t.Errorf("expected current_issue=%d, got valid=%v value=%v", id, agent.CurrentIssue.Valid, agent.CurrentIssue.Int64)
+	}
+}
+
+func TestTicketStatus_InProgress_NoAssignee_Errors(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	id, err := issues.Create("unassigned ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// No assignee — should error.
+	err = ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "in_progress"})
+	if err == nil {
+		t.Fatal("expected error for unassigned ticket, got nil")
+	}
+	if !strings.Contains(err.Error(), "no assignee") {
+		t.Errorf("error should mention 'no assignee', got: %v", err)
+	}
+	// Ticket must remain in its original state — transition must not have applied.
+	got, _ := issues.Get(id)
+	if got.Status == "in_progress" {
+		t.Error("ticket should not transition to in_progress when assignee is missing")
+	}
+}
+
+func TestTicketStatus_NonInProgress_NoAgentUpdate(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	id, err := issues.Create("ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/nc-126"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	// Transition to in_review — agent status must NOT change.
+	if err := ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "in_review"}); err != nil {
+		t.Fatalf("ticketStatus in_review: %v", err)
+	}
+
+	agent, _ := agents.Get("iron")
+	if agent.Status != "idle" {
+		t.Errorf("expected agent status unchanged (idle) after in_review, got %q", agent.Status)
+	}
+
+	// Multi-step walk: open → in_progress (agent becomes working) → in_review (agent unchanged)
+	// Reset to open first.
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("reset to open: %v", err)
+	}
+	if err := ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "in_progress"}); err != nil {
+		t.Fatalf("in_progress: %v", err)
+	}
+	agent, _ = agents.Get("iron")
+	if agent.Status != "working" {
+		t.Errorf("expected working after in_progress, got %q", agent.Status)
+	}
+	if err := ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "in_review"}); err != nil {
+		t.Fatalf("in_review: %v", err)
+	}
+	agent, _ = agents.Get("iron")
+	if agent.Status != "working" {
+		t.Errorf("expected agent status still working after in_review (no agent update), got %q", agent.Status)
+	}
+}
+
+func TestTicketStatus_InProgress_AlreadyWorkingOnDifferentTicket(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Create two tickets assigned to the same agent.
+	idA, err := issues.Create("ticket A", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create A: %v", err)
+	}
+	idB, err := issues.Create("ticket B", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create B: %v", err)
+	}
+	if err := issues.Assign(idA, "iron", "prole/iron/a"); err != nil {
+		t.Fatalf("Assign A: %v", err)
+	}
+	if err := issues.Assign(idB, "iron", "prole/iron/b"); err != nil {
+		t.Fatalf("Assign B: %v", err)
+	}
+
+	// Start working on ticket A.
+	if err := ticketStatus(issues, agents, []string{fmt.Sprintf("%d", idA), "in_progress"}); err != nil {
+		t.Fatalf("in_progress A: %v", err)
+	}
+	agent, _ := agents.Get("iron")
+	if !agent.CurrentIssue.Valid || int(agent.CurrentIssue.Int64) != idA {
+		t.Errorf("expected current_issue=%d after A, got %v", idA, agent.CurrentIssue.Int64)
+	}
+
+	// Switch to ticket B — current_issue must update to B.
+	if err := ticketStatus(issues, agents, []string{fmt.Sprintf("%d", idB), "in_progress"}); err != nil {
+		t.Fatalf("in_progress B: %v", err)
+	}
+	agent, _ = agents.Get("iron")
+	if !agent.CurrentIssue.Valid || int(agent.CurrentIssue.Int64) != idB {
+		t.Errorf("expected current_issue=%d after B, got %v", idB, agent.CurrentIssue.Int64)
+	}
+}
+
+func TestTicketStatus_InProgress_AgentRowMissing(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	// Assign ticket to an agent that has no row in the agents table.
+	id, err := issues.Create("ghost ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.Assign(id, "ghost", "prole/ghost/1"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	err = ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "in_progress"})
+	if err == nil {
+		t.Fatal("expected error when agent row is missing, got nil")
+	}
+
+	// Ticket must NOT have transitioned — the agent update is applied first.
+	got, _ := issues.Get(id)
+	if got.Status == "in_progress" {
+		t.Error("ticket should not transition to in_progress when agent row is missing")
 	}
 }
