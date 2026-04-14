@@ -2,6 +2,7 @@ package commands
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -48,9 +49,9 @@ func TestParseVersion(t *testing.T) {
 
 func TestVersionAtLeast(t *testing.T) {
 	cases := []struct {
-		maj, min, pat         int
+		maj, min, pat          int
 		reqMaj, reqMin, reqPat int
-		want                  bool
+		want                   bool
 	}{
 		{1, 50, 1, 1, 0, 0, true},
 		{0, 9, 0, 1, 0, 0, false},
@@ -188,21 +189,24 @@ func TestCheckGit(t *testing.T) {
 // --- checkConfig ---
 
 func TestCheckConfig(t *testing.T) {
-	goodCfg := &config.Config{TicketPrefix: "nc", GithubRepo: "owner/repo"}
-	noRepoCfg := &config.Config{TicketPrefix: "nc"}
+	goodCfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		GithubRepo:   "owner/repo",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+	}
 
 	cases := []struct {
-		name      string
-		findErr   error
-		loadCfg   *config.Config
-		loadErr   error
-		wantStat  string
-		wantCfg   bool
+		name     string
+		findErr  error
+		loadCfg  *config.Config
+		loadErr  error
+		wantStat string
+		wantCfg  bool
 	}{
 		{"not in project", errors.New("no project root"), nil, nil, "warn", false},
 		{"config parse error", nil, nil, errors.New("bad json"), "fail", false},
-		{"ok with repo", nil, goodCfg, nil, "ok", true},
-		{"ok no repo", nil, noRepoCfg, nil, "warn", true},
+		{"ok", nil, goodCfg, nil, "ok", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -223,6 +227,64 @@ func TestCheckConfig(t *testing.T) {
 				t.Error("expected cfg to be nil")
 			}
 		})
+	}
+}
+
+func TestCheckConfig_missingTicketPrefix(t *testing.T) {
+	cfg := &config.Config{
+		ProjectRoot: "/tmp/proj",
+		GithubRepo:  "owner/repo",
+		Agents:      config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+	}
+	deps := doctorDeps{
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return cfg, nil },
+	}
+	r, _ := checkConfig(deps)
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if !strings.Contains(r.Detail, "ticket_prefix") {
+		t.Errorf("detail %q should mention ticket_prefix", r.Detail)
+	}
+}
+
+func TestCheckConfig_missingGithubRepo(t *testing.T) {
+	cfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+	}
+	deps := doctorDeps{
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return cfg, nil },
+	}
+	r, _ := checkConfig(deps)
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if !strings.Contains(r.Detail, "github_repo") {
+		t.Errorf("detail %q should mention github_repo", r.Detail)
+	}
+}
+
+func TestCheckConfig_missingMultipleFields(t *testing.T) {
+	cfg := &config.Config{} // all empty
+	deps := doctorDeps{
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return cfg, nil },
+	}
+	r, _ := checkConfig(deps)
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	for _, field := range []string{"ticket_prefix", "project_root", "github_repo", "agents.mayor.model"} {
+		if !strings.Contains(r.Detail, field) {
+			t.Errorf("detail %q should mention %q", r.Detail, field)
+		}
+	}
+	if r.Fix == "" {
+		t.Error("expected Fix to be set")
 	}
 }
 
@@ -253,7 +315,12 @@ func TestCheckDaemon(t *testing.T) {
 // --- runDoctor ---
 
 func TestRunDoctor_allPass(t *testing.T) {
-	goodCfg := &config.Config{TicketPrefix: "nc", GithubRepo: "owner/repo"}
+	goodCfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		GithubRepo:   "owner/repo",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+	}
 	deps := doctorDeps{
 		runCmd: func(name string, args ...string) (string, error) {
 			switch name {
@@ -282,7 +349,12 @@ func TestRunDoctor_allPass(t *testing.T) {
 }
 
 func TestRunDoctor_oneFail(t *testing.T) {
-	goodCfg := &config.Config{TicketPrefix: "nc", GithubRepo: "owner/repo"}
+	goodCfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		GithubRepo:   "owner/repo",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+	}
 	deps := doctorDeps{
 		runCmd: func(name string, args ...string) (string, error) {
 			if name == "dolt" {

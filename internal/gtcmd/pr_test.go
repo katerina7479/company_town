@@ -1,10 +1,7 @@
 package gtcmd
 
 import (
-	"bytes"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"testing"
 
@@ -25,22 +22,6 @@ func setupPRTestRepo(t *testing.T) *repo.IssueRepo {
 
 func testCfg() *config.Config {
 	return &config.Config{TicketPrefix: "nc"}
-}
-
-// captureOutput runs f() and returns everything written to os.Stdout and os.Stderr.
-func captureOutput(f func()) (stdout, stderr string) {
-	oldOut, oldErr := os.Stdout, os.Stderr
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
-	os.Stdout, os.Stderr = wOut, wErr
-	f()
-	wOut.Close()
-	wErr.Close()
-	os.Stdout, os.Stderr = oldOut, oldErr
-	var bufOut, bufErr bytes.Buffer
-	io.Copy(&bufOut, rOut)
-	io.Copy(&bufErr, rErr)
-	return bufOut.String(), bufErr.String()
 }
 
 // stubPRShowFns replaces the three gh injection points for the duration of the test.
@@ -312,7 +293,7 @@ func TestPRShow_prefixedTicketID(t *testing.T) {
 	commentsJSON := `{"comments":[]}`
 	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, []byte(commentsJSON), nil)
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"nc-1"})
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
@@ -333,7 +314,7 @@ func TestPRShow_softFailOnReviews(t *testing.T) {
 	stubPRShowFns(t, []byte(metaJSON), nil, nil, fmt.Errorf("permission denied"), []byte(commentsJSON), nil)
 
 	var outStr, errStr string
-	outStr, errStr = captureOutput(func() {
+	outStr, errStr = captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"1"})
 		if err != nil {
 			t.Errorf("expected nil (soft-fail), got %v", err)
@@ -357,7 +338,7 @@ func TestPRShow_softFailOnComments(t *testing.T) {
 	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, nil, fmt.Errorf("not found"))
 
 	var outStr, errStr string
-	outStr, errStr = captureOutput(func() {
+	outStr, errStr = captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"1"})
 		if err != nil {
 			t.Errorf("expected nil (soft-fail), got %v", err)
@@ -390,7 +371,7 @@ func TestPRShow_activityLimit(t *testing.T) {
 	]}`
 	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, []byte(commentsJSON), nil)
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"1"})
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)

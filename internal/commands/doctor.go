@@ -6,24 +6,31 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/session"
 )
 
+var (
+	doctorOkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // bright green
+	doctorWarnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // bright yellow
+	doctorFailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // bright red
+)
+
 // checkResult holds the outcome of a single doctor check.
 type checkResult struct {
-	Name    string
-	Status  string // "ok", "fail", "warn"
-	Detail  string
-	Fix     string // copy-pasteable fix command, if any
+	Name   string
+	Status string // "ok", "fail", "warn"
+	Detail string
+	Fix    string // copy-pasteable fix command, if any
 }
 
 // doctorDeps groups injected functions for testability.
 type doctorDeps struct {
-	runCmd     func(name string, args ...string) (string, error)
-	loadConfig func(root string) (*config.Config, error)
-	findRoot   func() (string, error)
+	runCmd        func(name string, args ...string) (string, error)
+	loadConfig    func(root string) (*config.Config, error)
+	findRoot      func() (string, error)
 	sessionExists func(name string) bool
 }
 
@@ -43,10 +50,8 @@ func defaultDoctorDeps() doctorDeps {
 
 // parseVersion extracts the first "X.Y.Z" or "X.Y" version string from s.
 func parseVersion(s string) (major, minor, patch int, ok bool) {
-	// find digit sequences separated by dots
 	words := strings.Fields(s)
 	for _, w := range words {
-		// strip leading 'v'
 		w = strings.TrimPrefix(w, "v")
 		parts := strings.SplitN(w, ".", 3)
 		if len(parts) < 2 {
@@ -96,7 +101,7 @@ func checkDolt(deps doctorDeps) checkResult {
 		return checkResult{
 			Name:   "dolt",
 			Status: "fail",
-			Detail: ver + " (need ≥ 1.0.0)",
+			Detail: ver + " (need >= 1.0.0)",
 			Fix:    "curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash",
 		}
 	}
@@ -122,7 +127,7 @@ func checkTmux(deps doctorDeps) checkResult {
 		return checkResult{
 			Name:   "tmux",
 			Status: "fail",
-			Detail: ver + " (need ≥ 3.0)",
+			Detail: ver + " (need >= 3.0)",
 			Fix:    "brew upgrade tmux",
 		}
 	}
@@ -170,7 +175,7 @@ func checkGit(deps doctorDeps) checkResult {
 		return checkResult{
 			Name:   "git",
 			Status: "fail",
-			Detail: ver + " (need ≥ 2.30)",
+			Detail: ver + " (need >= 2.30)",
 			Fix:    "brew upgrade git",
 		}
 	}
@@ -197,11 +202,25 @@ func checkConfig(deps doctorDeps) (checkResult, *config.Config) {
 		}, nil
 	}
 
+	var missing []string
+	if cfg.TicketPrefix == "" {
+		missing = append(missing, "ticket_prefix")
+	}
+	if cfg.ProjectRoot == "" {
+		missing = append(missing, "project_root")
+	}
 	if cfg.GithubRepo == "" {
+		missing = append(missing, "github_repo")
+	}
+	if cfg.Agents.Mayor.Model == "" {
+		missing = append(missing, "agents.mayor.model")
+	}
+	if len(missing) > 0 {
 		return checkResult{
 			Name:   "config",
-			Status: "warn",
-			Detail: ".company_town/config.json ok (github_repo not set)",
+			Status: "fail",
+			Detail: "missing required fields: " + strings.Join(missing, ", "),
+			Fix:    "edit .company_town/config.json",
 		}, cfg
 	}
 
@@ -232,7 +251,7 @@ func runDoctor(deps doctorDeps) ([]checkResult, bool) {
 	cfgResult, cfg := checkConfig(deps)
 	results = append(results, cfgResult)
 
-	// Only check daemon if we're inside a project
+	// Only check daemon if we're inside a project.
 	if cfg != nil {
 		results = append(results, checkDaemon(deps))
 	}
@@ -247,7 +266,7 @@ func runDoctor(deps doctorDeps) ([]checkResult, bool) {
 	return results, anyFail
 }
 
-// Doctor implements `ct doctor` — checks system dependencies and project setup.
+// Doctor implements `ct doctor` -- checks system dependencies and project setup.
 func Doctor() error {
 	deps := defaultDoctorDeps()
 	results, anyFail := runDoctor(deps)
@@ -263,15 +282,15 @@ func printDoctorResults(results []checkResult) {
 		var icon string
 		switch r.Status {
 		case "ok":
-			icon = "✓"
+			icon = doctorOkStyle.Render("\u2713")
 		case "warn":
-			icon = "!"
+			icon = doctorWarnStyle.Render("!")
 		default:
-			icon = "✗"
+			icon = doctorFailStyle.Render("\u2717")
 		}
 		line := fmt.Sprintf("%s %-12s %s", icon, r.Name, r.Detail)
 		if r.Fix != "" {
-			line += fmt.Sprintf(" — run '%s'", r.Fix)
+			line += fmt.Sprintf(" -- run '%s'", r.Fix)
 		}
 		fmt.Println(line)
 	}
