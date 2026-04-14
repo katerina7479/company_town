@@ -169,12 +169,15 @@ func TestPRCreate_ClearsAssignee(t *testing.T) {
 		t.Fatalf("updating status: %v", err)
 	}
 
+	origCount := gitCommitCountFn
 	origPush := gitPushFn
 	origGH := ghPRCreateFn
 	t.Cleanup(func() {
+		gitCommitCountFn = origCount
 		gitPushFn = origPush
 		ghPRCreateFn = origGH
 	})
+	gitCommitCountFn = func() (int, error) { return 1, nil }
 	gitPushFn = func(args ...string) error { return nil }
 	ghPRCreateFn = func(title, body string) (string, error) {
 		return "https://github.com/x/y/pull/42", nil
@@ -382,5 +385,83 @@ func TestPRShow_activityLimit(t *testing.T) {
 	}
 	if !strings.Contains(outStr, "comment 7") {
 		t.Errorf("expected most recent comment in output, got: %s", outStr)
+	}
+}
+
+func TestPRCreate_ErrorsOnEmptyBranch(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("assigning: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+
+	origCount := gitCommitCountFn
+	t.Cleanup(func() { gitCommitCountFn = origCount })
+	gitCommitCountFn = func() (int, error) { return 0, nil }
+
+	pushCalled := false
+	origPush := gitPushFn
+	t.Cleanup(func() { gitPushFn = origPush })
+	gitPushFn = func(args ...string) error { pushCalled = true; return nil }
+
+	err = prCreate(issues, testCfg(), []string{"1"})
+	if err == nil {
+		t.Fatal("expected error for empty branch, got nil")
+	}
+	if !strings.Contains(err.Error(), "no commits yet") {
+		t.Errorf("expected error to mention 'no commits yet', got: %v", err)
+	}
+	if pushCalled {
+		t.Error("gitPushFn should not be called when branch has no commits")
+	}
+	got, _ := issues.Get(id)
+	if got.Status != "in_progress" {
+		t.Errorf("expected status unchanged (in_progress), got %q", got.Status)
+	}
+}
+
+func TestPRCreate_PushProceedsWhenCommitsExist(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, err := issues.Create("A task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("assigning: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+
+	origCount := gitCommitCountFn
+	origPush := gitPushFn
+	origGH := ghPRCreateFn
+	t.Cleanup(func() {
+		gitCommitCountFn = origCount
+		gitPushFn = origPush
+		ghPRCreateFn = origGH
+	})
+	gitCommitCountFn = func() (int, error) { return 3, nil }
+	pushCalled := false
+	gitPushFn = func(args ...string) error { pushCalled = true; return nil }
+	ghPRCreateFn = func(title, body string) (string, error) {
+		return "https://github.com/x/y/pull/99", nil
+	}
+
+	if err := prCreate(issues, testCfg(), []string{"1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !pushCalled {
+		t.Error("expected gitPushFn to be called when commits exist")
+	}
+	got, _ := issues.Get(id)
+	if got.Status != "in_review" {
+		t.Errorf("expected status=in_review, got %q", got.Status)
 	}
 }

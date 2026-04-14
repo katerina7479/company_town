@@ -56,6 +56,26 @@ var (
 		return cmd.Run()
 	}
 
+	// gitCommitCountFn counts commits on HEAD not reachable from origin/main.
+	// Falls back to counting all HEAD commits if origin/main is unavailable,
+	// and returns 0 if even that fails (unborn branch).
+	gitCommitCountFn = func() (int, error) {
+		cmd := exec.Command("git", "rev-list", "--count", "origin/main..HEAD")
+		out, err := cmd.Output()
+		if err != nil {
+			cmd2 := exec.Command("git", "rev-list", "--count", "HEAD")
+			out, err = cmd2.Output()
+			if err != nil {
+				return 0, nil
+			}
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+		if err != nil {
+			return 0, fmt.Errorf("parsing commit count: %w", err)
+		}
+		return n, nil
+	}
+
 	ghPRCreateFn = func(title, body string) (string, error) {
 		cmd := exec.Command("gh", "pr", "create", "--title", title, "--body", body)
 		cmd.Stderr = os.Stderr
@@ -252,7 +272,17 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 		return fmt.Errorf("ticket %d has no branch set", id)
 	}
 
-	// Push the branch first
+	// Verify the branch has commits before attempting a push.
+	commitCount, err := gitCommitCountFn()
+	if err != nil {
+		return fmt.Errorf("counting commits on branch: %w", err)
+	}
+	if commitCount == 0 {
+		return fmt.Errorf("ticket %s-%d branch %s has no commits yet — make at least one commit before running `gt pr create`",
+			cfg.TicketPrefix, id, issue.Branch.String)
+	}
+
+	// Push the branch
 	if err := gitPushFn("-u", "origin", "HEAD"); err != nil {
 		return fmt.Errorf("pushing branch: %w", err)
 	}
