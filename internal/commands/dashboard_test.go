@@ -205,9 +205,9 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 		sessionExists: existsFn,
 		sendKeys:      sendKeysFn,
 		restartAgent:  restartFn,
-		openPRFn:  func(int) error { return nil }, // no-op default
-		sleepFn:  func(time.Duration) {}, // no-op in tests
-		expanded: make(map[int]bool),
+		openPRFn:      func(int) error { return nil }, // no-op default
+		sleepFn:       func(time.Duration) {},        // no-op in tests
+		expanded:      make(map[int]bool),
 	}
 	return m, agents
 }
@@ -411,7 +411,10 @@ func TestRestartAgentCmd_killFails(t *testing.T) {
 		func(string) error { return fmt.Errorf("tmux error") },
 		func(string) bool { return true },
 		func(string, string) error { return nil },
-		func(string, string) error { t.Error("restartAgent should not be called after kill failure"); return nil },
+		func(string, string) error {
+			t.Error("restartAgent should not be called after kill failure")
+			return nil
+		},
 	)
 
 	agent := &repo.Agent{Name: "copper", Type: "prole"}

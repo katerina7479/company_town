@@ -25,16 +25,16 @@ import (
 // tick. Handlers write to it via nil-guarded d.obs assignments so the struct
 // can be omitted in tests that don't care about the summary line.
 type tickObservations struct {
-	dead             int  // proles deleted (handleDeadSessions)
-	worktreesSkip    bool // stale-worktree handler was interval-guarded
-	worktreesPruned  int  // stale worktrees pruned (0 if skipped)
-	prBackfillFound  int  // tickets missing PR number
-	prBackfillDone   int  // PR numbers successfully backfilled
-	drafts           int  // draft tickets found
-	assignCandidates int  // selectable ticket count
-	assignSlots      int  // available prole slot count
-	assignPaired     int  // tickets actually assigned
-	inReview         int  // in_review tickets with a PR number
+	dead                     int  // proles deleted (handleDeadSessions)
+	worktreesSkip            bool // stale-worktree handler was interval-guarded
+	worktreesPruned          int  // stale worktrees pruned (0 if skipped)
+	prBackfillFound          int  // tickets missing PR number
+	prBackfillDone           int  // PR numbers successfully backfilled
+	drafts                   int  // draft tickets found
+	assignCandidates         int  // selectable ticket count
+	assignSlots              int  // available prole slot count
+	assignPaired             int  // tickets actually assigned
+	inReview                 int  // in_review tickets with a PR number
 	prEventsTotal            int  // tickets with PRs checked
 	prEventsMerged           int  // PRs merged this tick
 	prEventsRepairing        int  // open PRs moved to repairing (human comment)
@@ -47,14 +47,14 @@ type tickObservations struct {
 
 // Daemon polls for state changes and routes work to agents.
 type Daemon struct {
-	cfg           *config.Config
-	issues        *repo.IssueRepo
-	agents        *repo.AgentRepo
-	logger        *log.Logger
-	stop          chan struct{}
-	sendKeys      func(session, msg string) error
-	sessionExists func(session string) bool
-	killSession   func(session string) error
+	cfg                 *config.Config
+	issues              *repo.IssueRepo
+	agents              *repo.AgentRepo
+	logger              *log.Logger
+	stop                chan struct{}
+	sendKeys            func(session, msg string) error
+	sessionExists       func(session string) bool
+	killSession         func(session string) error
 	lastNudged          map[string]time.Time
 	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
 	nudgeCooldown       time.Duration
@@ -71,9 +71,9 @@ type Daemon struct {
 	qualityInterval     time.Duration
 
 	// Stale worktree pruning
-	pruneStaleWorktrees  func() (int, error)
-	lastWorktreePrune    time.Time
-	worktreeInterval     time.Duration
+	pruneStaleWorktrees func() (int, error)
+	lastWorktreePrune   time.Time
+	worktreeInterval    time.Duration
 
 	// Idle prole worktree reset — reconciler that brings idle proles' worktrees
 	// back to their standby branch at origin/main. Independent of PR merge
@@ -121,14 +121,14 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	agentRepo := repo.NewAgentRepo(db, events)
 
 	return &Daemon{
-		cfg:           cfg,
-		issues:        repo.NewIssueRepo(db, events),
-		agents:        agentRepo,
-		logger:        logger,
-		stop:          make(chan struct{}),
-		sendKeys:      session.SendKeys,
-		sessionExists: session.Exists,
-		killSession:   session.Kill,
+		cfg:                 cfg,
+		issues:              repo.NewIssueRepo(db, events),
+		agents:              agentRepo,
+		logger:              logger,
+		stop:                make(chan struct{}),
+		sendKeys:            session.SendKeys,
+		sessionExists:       session.Exists,
+		killSession:         session.Kill,
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
 		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
@@ -857,7 +857,6 @@ func (d *Daemon) handleDeadSessions() {
 	}
 }
 
-
 // handleDraftTickets prompts the Architect to pick up draft tickets.
 func (d *Daemon) handleDraftTickets() {
 	drafts, err := d.issues.List("draft")
@@ -1045,7 +1044,6 @@ func (d *Daemon) restartDeadReviewers() {
 		}
 	}
 }
-
 
 // handlePREvents checks GitHub for PR state changes.
 func (d *Daemon) handlePREvents() {

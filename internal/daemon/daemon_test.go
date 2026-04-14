@@ -75,9 +75,9 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		qualityInterval:         0, // disabled by default in tests
 		worktreeInterval:        0, // disabled by default in tests
 		worktreeResetInterval:   0, // disabled by default in tests
-		nowFn:               time.Now,
-		lastRestartedAt:     make(map[string]time.Time),
-		restartDeadAgents:   false, // disabled by default in tests
+		nowFn:                   time.Now,
+		lastRestartedAt:         make(map[string]time.Time),
+		restartDeadAgents:       false, // disabled by default in tests
 	}
 
 	return d, issues, agents, &sent
@@ -1261,17 +1261,17 @@ func TestHandleStuckAgents_skipsNullStatusChangedAt(t *testing.T) {
 	var sent []sentMessage
 
 	d := &Daemon{
-		cfg:             cfg,
-		issues:          repo.NewIssueRepo(conn, nil),
-		agents:          agents,
-		logger:          log.New(io.Discard, "", 0),
-		stop:            make(chan struct{}),
-		sessionExists:   func(s string) bool { return sessions[s] },
-		sendKeys:        func(s, msg string) error { sent = append(sent, sentMessage{session: s, msg: msg}); return nil },
-		lastNudged:      make(map[string]time.Time),
-		lastNudgeDigest: make(map[string]string),
+		cfg:                 cfg,
+		issues:              repo.NewIssueRepo(conn, nil),
+		agents:              agents,
+		logger:              log.New(io.Discard, "", 0),
+		stop:                make(chan struct{}),
+		sessionExists:       func(s string) bool { return sessions[s] },
+		sendKeys:            func(s, msg string) error { sent = append(sent, sentMessage{session: s, msg: msg}); return nil },
+		lastNudged:          make(map[string]time.Time),
+		lastNudgeDigest:     make(map[string]string),
 		stuckAgentThreshold: 30 * time.Minute,
-		nowFn:           func() time.Time { return time.Now().Add(24 * time.Hour) },
+		nowFn:               func() time.Time { return time.Now().Add(24 * time.Hour) },
 	}
 
 	d.handleStuckAgents()

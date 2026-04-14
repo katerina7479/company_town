@@ -9,17 +9,17 @@ import (
 )
 
 type Agent struct {
-	ID               int
-	Name             string
-	Type             string
-	Specialty        sql.NullString
-	Status           string
-	CurrentIssue     sql.NullInt64
-	TmuxSession      sql.NullString
-	WorktreePath     sql.NullString
-	TimeCreated      time.Time
-	TimeEnded        sql.NullTime
-	StatusChangedAt  sql.NullTime
+	ID              int
+	Name            string
+	Type            string
+	Specialty       sql.NullString
+	Status          string
+	CurrentIssue    sql.NullInt64
+	TmuxSession     sql.NullString
+	WorktreePath    sql.NullString
+	TimeCreated     time.Time
+	TimeEnded       sql.NullTime
+	StatusChangedAt sql.NullTime
 }
 
 type AgentRepo struct {

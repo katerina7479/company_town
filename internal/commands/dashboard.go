@@ -70,9 +70,9 @@ var (
 
 	statusStyles = map[string]lipgloss.Style{
 		// Agent statuses
-		"working": lipgloss.NewStyle().Foreground(lipgloss.Color("2")),  // green
-		"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")),  // yellow
-		"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // red
+		"working": lipgloss.NewStyle().Foreground(lipgloss.Color("2")), // green
+		"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")), // yellow
+		"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")), // red
 		// Ticket statuses
 		"draft":          lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
 		"open":           lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue

@@ -4,10 +4,10 @@ import "testing"
 
 func TestProleBranchName(t *testing.T) {
 	cases := []struct {
-		prefix   string
-		prole    string
-		id       int
-		want     string
+		prefix string
+		prole  string
+		id     int
+		want   string
 	}{
 		{"nc", "copper", 56, "prole/copper/nc-56"},
 		{"NC", "iron", 1, "prole/iron/NC-1"},

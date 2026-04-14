@@ -532,7 +532,6 @@ func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error)
 	return issues, rows.Err()
 }
 
-
 // ListEpicsWithAllChildrenClosed returns epics that are not closed but have at
 // least one child and all children are closed.
 func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
