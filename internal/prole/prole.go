@@ -244,6 +244,14 @@ func List(agents *repo.AgentRepo, cfg *config.Config) ([]*repo.Agent, error) {
 	return proles, nil
 }
 
+// isValidWorktreePath returns true if path is a non-empty absolute path.
+// A corrupted DB value (relative path, empty after trim, etc.) must never be
+// used as a git working directory — the commands would silently operate on the
+// wrong location.
+func isValidWorktreePath(path string) bool {
+	return path != "" && filepath.IsAbs(path)
+}
+
 // idleProlesNeedingReset returns the subset of agents that are candidates for
 // worktree reset: idle proles with no current issue and a registered worktree
 // path. Exposed as a pure filter so the selection logic is unit-testable
@@ -257,7 +265,7 @@ func idleProlesNeedingReset(all []*repo.Agent) []*repo.Agent {
 		if a.CurrentIssue.Valid {
 			continue
 		}
-		if !a.WorktreePath.Valid || a.WorktreePath.String == "" {
+		if !a.WorktreePath.Valid || !isValidWorktreePath(a.WorktreePath.String) {
 			continue
 		}
 		out = append(out, a)
@@ -441,7 +449,7 @@ func PruneDeadWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.
 		if a.Type != "prole" || a.Status != "dead" {
 			continue
 		}
-		if !a.WorktreePath.Valid || a.WorktreePath.String == "" {
+		if !a.WorktreePath.Valid || !isValidWorktreePath(a.WorktreePath.String) {
 			continue
 		}
 		wtPath := a.WorktreePath.String

@@ -58,6 +58,65 @@ func TestIdleProlesNeedingReset_selection(t *testing.T) {
 	}
 }
 
+func TestIsValidWorktreePath(t *testing.T) {
+	cases := []struct {
+		path  string
+		valid bool
+	}{
+		{"/absolute/path", true},
+		{"/wt/prole-foo", true},
+		{"relative/path", false},
+		{"./relative", false},
+		{"../traversal", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isValidWorktreePath(c.path); got != c.valid {
+			t.Errorf("isValidWorktreePath(%q) = %v, want %v", c.path, got, c.valid)
+		}
+	}
+}
+
+func TestIdleProlesNeedingReset_skipsCorruptedPath(t *testing.T) {
+	mk := func(name, worktree string) *repo.Agent {
+		a := &repo.Agent{Name: name, Type: "prole", Status: "idle"}
+		a.WorktreePath.Valid = true
+		a.WorktreePath.String = worktree
+		return a
+	}
+
+	all := []*repo.Agent{
+		mk("relative-path", "worktrees/prole-foo"),
+		mk("dot-relative", "./worktrees/prole-bar"),
+		mk("traversal", "../../../etc/passwd"),
+		mk("absolute", "/wt/good-prole"),
+	}
+
+	got := idleProlesNeedingReset(all)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 selected (absolute path only), got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "absolute" {
+		t.Errorf("expected 'absolute' selected, got %q", got[0].Name)
+	}
+}
+
+func TestPruneDeadWorktrees_skipsRelativePath(t *testing.T) {
+	cfg, agents, _, _ := setupPruneEnv(t)
+
+	agents.Register("relpath", "prole", nil)
+	agents.UpdateStatus("relpath", "dead")
+	agents.SetWorktree("relpath", "worktrees/relpath") // relative — corrupted DB value
+
+	pruned, err := PruneDeadWorktrees(cfg, agents, silentLogger())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pruned) != 0 {
+		t.Errorf("expected 0 pruned (relative path skipped), got %v", pruned)
+	}
+}
+
 func TestCreate_MaxProlesEnforced(t *testing.T) {
 	agents := setupAgentRepo(t)
 
