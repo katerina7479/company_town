@@ -353,6 +353,23 @@ func deployProleCLAUDEMD(name, wtPath string, cfg *config.Config) error {
 	return os.WriteFile(filepath.Join(proleDir, "CLAUDE.md"), []byte(content), 0644)
 }
 
+// SwitchToBranch fetches branch from origin into the bare repo and checks it
+// out in the worktree. Called by assign.Execute when handing a repair ticket
+// to a (potentially different) prole so it resumes from the existing commits.
+func SwitchToBranch(wtPath, barePath, branch string) error {
+	// Fetch branch from origin into the bare repo so the worktree can see it.
+	fetchCmd := exec.Command("git", "fetch", "origin", branch)
+	fetchCmd.Dir = barePath
+	fetchCmd.Run() // best-effort; branch may already be local
+
+	checkoutCmd := exec.Command("git", "checkout", branch)
+	checkoutCmd.Dir = wtPath
+	if err := checkoutCmd.Run(); err != nil {
+		return fmt.Errorf("checking out %s in worktree %s: %w", branch, wtPath, err)
+	}
+	return nil
+}
+
 // addWorktreeForProle adds a git worktree at wtPath on the given branch.
 // If the branch already exists in the bare repo (stale from a previous prole
 // incarnation), it is reset to origin/main before the worktree is created.
