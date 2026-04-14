@@ -73,6 +73,108 @@ func TestIssueRepo_Dependencies(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_RemoveDependency(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id1, _ := repo.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := repo.Create("Ticket 2", "task", nil, nil, nil)
+
+	if err := repo.AddDependency(id2, id1); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	// Remove the edge
+	if err := repo.RemoveDependency(id2, id1); err != nil {
+		t.Fatalf("RemoveDependency: %v", err)
+	}
+
+	deps, err := repo.GetDependencies(id2)
+	if err != nil {
+		t.Fatalf("GetDependencies after remove: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Errorf("expected no deps after remove, got %v", deps)
+	}
+}
+
+func TestIssueRepo_RemoveDependency_idempotent(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id1, _ := repo.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := repo.Create("Ticket 2", "task", nil, nil, nil)
+
+	// Remove an edge that does not exist — should succeed silently
+	if err := repo.RemoveDependency(id2, id1); err != nil {
+		t.Errorf("RemoveDependency on non-existent edge should succeed, got %v", err)
+	}
+}
+
+func TestIssueRepo_RemoveDependency_OnlyRemovesSpecifiedEdge(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	a, _ := repo.Create("A", "task", nil, nil, nil)
+	b, _ := repo.Create("B", "task", nil, nil, nil)
+	c, _ := repo.Create("C", "task", nil, nil, nil)
+
+	repo.AddDependency(a, b)
+	repo.AddDependency(a, c)
+
+	if err := repo.RemoveDependency(a, b); err != nil {
+		t.Fatalf("RemoveDependency(a,b): %v", err)
+	}
+
+	deps, err := repo.GetDependencies(a)
+	if err != nil {
+		t.Fatalf("GetDependencies: %v", err)
+	}
+	if len(deps) != 1 || deps[0] != c {
+		t.Errorf("expected deps=[%d], got %v", c, deps)
+	}
+}
+
+func TestIssueRepo_RemoveDependency_restoresSelectability(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id1, _ := r.Create("Blocker", "task", nil, nil, nil)
+	id2, _ := r.Create("Blocked", "task", nil, nil, nil)
+	r.UpdateStatus(id1, "open")
+	r.UpdateStatus(id2, "open")
+
+	if err := r.AddDependency(id2, id1); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	// id2 should not be selectable while id1 is open
+	tickets, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	for _, tk := range tickets {
+		if tk.ID == id2 {
+			t.Error("id2 should not be selectable while dependency unresolved")
+		}
+	}
+
+	// Remove dependency — id2 should now be selectable
+	if err := r.RemoveDependency(id2, id1); err != nil {
+		t.Fatalf("RemoveDependency: %v", err)
+	}
+
+	tickets, err = r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable after remove: %v", err)
+	}
+	found := false
+	for _, tk := range tickets {
+		if tk.ID == id2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("id2 should be selectable after dependency removed")
+	}
+}
+
 func TestIssueRepo_Ready(t *testing.T) {
 	repo := setupTestRepo(t)
 

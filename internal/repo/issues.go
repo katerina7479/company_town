@@ -371,6 +371,19 @@ func (r *IssueRepo) AddDependency(issueID, dependsOnID int) error {
 	return nil
 }
 
+// RemoveDependency removes the dependency edge where issueID depends on dependsOnID.
+// It is idempotent: removing a non-existent edge succeeds silently.
+func (r *IssueRepo) RemoveDependency(issueID, dependsOnID int) error {
+	_, err := r.db.Exec(
+		`DELETE FROM issue_dependencies WHERE issue_id = ? AND depends_on_id = ?`,
+		issueID, dependsOnID,
+	)
+	if err != nil {
+		return fmt.Errorf("removing dependency: %w", err)
+	}
+	return nil
+}
+
 // GetDependencies returns the IDs of issues that issueID depends on.
 func (r *IssueRepo) GetDependencies(issueID int) ([]int, error) {
 	rows, err := r.db.Query(
