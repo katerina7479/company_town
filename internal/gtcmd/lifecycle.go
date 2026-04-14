@@ -156,6 +156,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		Model:    model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	}); err != nil {
 		return fmt.Errorf("creating session: %w", err)
 	}
