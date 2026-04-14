@@ -74,7 +74,7 @@ func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.
 	case "review":
 		return ticketReview(issues, args[1:])
 	case "status":
-		return ticketStatus(issues, args[1:])
+		return ticketStatus(issues, agents, args[1:])
 	case "close":
 		return ticketClose(issues, agents, args[1:])
 	case "delete":
@@ -375,7 +375,7 @@ func ticketUnassign(issues *repo.IssueRepo, args []string) error {
 	return nil
 }
 
-func ticketStatus(issues *repo.IssueRepo, args []string) error {
+func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: gt ticket status <id> <status>")
 	}
@@ -387,6 +387,27 @@ func ticketStatus(issues *repo.IssueRepo, args []string) error {
 
 	status := args[1]
 
+	// For in_progress transitions enforce the two-part invariant:
+	// (a) a prole must be assigned before claiming work — an unassigned ticket
+	//     "in progress" would be a lying state with no agent doing anything;
+	// (b) the assignee's agent row is updated atomically (status=working,
+	//     current_issue=id) before the ticket status changes, so a partial
+	//     failure surfaces to the caller rather than leaving both half-applied.
+	if status == "in_progress" {
+		issue, err := issues.Get(id)
+		if err != nil {
+			return err
+		}
+		if !issue.Assignee.Valid || issue.Assignee.String == "" {
+			return fmt.Errorf("cannot move ticket %d to in_progress: no assignee — run `gt ticket assign %d <agent>` first", id, id)
+		}
+		if agents != nil {
+			if err := agents.SetCurrentIssue(issue.Assignee.String, &id); err != nil {
+				return fmt.Errorf("setting agent %s to working on ticket %d: %w", issue.Assignee.String, id, err)
+			}
+		}
+	}
+
 	// Capture before value for annotation; tolerate lookup failure.
 	var before string
 	if t, err := issues.Get(id); err == nil {
@@ -394,11 +415,11 @@ func ticketStatus(issues *repo.IssueRepo, args []string) error {
 	}
 
 	if err := issues.UpdateStatus(id, status); err != nil {
-		return err
+		return fmt.Errorf("updating ticket status (agent may be in inconsistent state): %w", err)
 	}
 
 	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), before, status)
-	fmt.Printf("Ticket %d → %s\n", id, status)
+	fmt.Printf("Ticket %d \u2192 %s\n", id, status)
 	return nil
 }
 

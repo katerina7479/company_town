@@ -136,12 +136,16 @@ func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
 		val = *issueID
 	}
 
-	_, err := r.db.Exec(
+	result, err := r.db.Exec(
 		`UPDATE agents SET current_issue = ?, status = 'working', status_changed_at = ? WHERE name = ?`,
 		val, time.Now(), name,
 	)
 	if err != nil {
 		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("agent %s not found", name)
 	}
 
 	if r.events != nil {

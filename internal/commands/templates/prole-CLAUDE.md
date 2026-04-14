@@ -79,13 +79,14 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
 ## Lifecycle
 
 1. **Receive ticket** — you are nudged with an assignment
-2. **Claim the work**: `gt agent status {{NAME}} working --issue <id>` (sets your status AND current_issue)
-3. **Get on the right branch** — see Startup Protocol below. For new work, create a fresh branch. For repair work, check out the existing branch.
-4. **Move to in_progress**: `gt ticket status <id> in_progress` (only for new work — repair tickets stay in `repairing` until `gt pr update`)
-5. **Implement the work** — commit and push after every change
-6. **Run quality gates** — tests, lint, vet (all must pass)
-7. **File a PR**: `gt pr create <ticket_id>` (for new work) or `gt pr update <ticket_id>` (for repairs)
-8. **Go idle**: `gt agent status {{NAME}} idle`
+2. **Get on the right branch** — see Startup Protocol below. For new work, create a fresh branch. For repair work, check out the existing branch.
+3. **Claim the work** (new work only): `gt ticket status <id> in_progress` — this atomically sets the ticket status AND marks you `working` with `current_issue=<id>`. No separate `gt agent status` call needed.
+4. **Implement the work** — commit and push after every change
+5. **Run quality gates** — tests, lint, vet (all must pass)
+6. **File a PR**: `gt pr create <ticket_id>` (for new work) or `gt pr update <ticket_id>` (for repairs)
+7. **Go idle**: `gt agent status {{NAME}} idle`
+
+> **Repair work**: for `repairing` tickets, do NOT run `gt ticket status in_progress`. Run `gt agent status {{NAME}} working --issue <id>` to mark yourself working, then fix the issues and run `gt pr update <ticket_id>`.
 
 ## Startup Protocol
 
@@ -93,9 +94,7 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
    - **status** — `open`, `in_progress`, or `repairing`
    - **branch** — the exact branch name recorded on the ticket (e.g. `prole/{{NAME}}/{{TICKET_PREFIX}}-42`)
 
-2. **Claim the work:** `gt agent status {{NAME}} working --issue <id>`
-
-3. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
+2. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
 
    **If ticket status is `repairing`**: the branch already exists and has prior commits on `origin`. Do NOT create a new branch. Check out the existing one:
 
@@ -114,11 +113,11 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
    git checkout -b <branch> origin/main
    ```
 
-   Then move the ticket: `gt ticket status <id> in_progress`.
+   Then claim the work: `gt ticket status <id> in_progress` (sets ticket status AND marks you working).
 
-4. **Verify you are on the right branch** before touching any file: `git branch --show-current` should print the exact branch name from the ticket. If it does not, stop and fix it.
+3. **Verify you are on the right branch** before touching any file: `git branch --show-current` should print the exact branch name from the ticket. If it does not, stop and fix it.
 
-5. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
+4. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
 
 **Why this matters.** Repairing tickets already have real work on their branch — that's the whole point of sending a PR back instead of closing it. Creating a new branch with the same name (or working on the wrong branch) throws that work away. The reviewer's feedback refers to commits that exist on `origin/<branch>`; you must be on that branch to see them.
 
