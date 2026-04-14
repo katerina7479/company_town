@@ -250,6 +250,22 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_ModelsAreCurrent(t *testing.T) {
+	cfg := DefaultConfig("/tmp", "owner/repo")
+	if cfg.Agents.Mayor.Model != "claude-opus-4-6" {
+		t.Errorf("Mayor.Model = %q, want claude-opus-4-6", cfg.Agents.Mayor.Model)
+	}
+	if cfg.Agents.Architect.Model != "claude-opus-4-6" {
+		t.Errorf("Architect.Model = %q, want claude-opus-4-6", cfg.Agents.Architect.Model)
+	}
+	if cfg.Agents.Reviewer.Model != "claude-sonnet-4-6" {
+		t.Errorf("Reviewer.Model = %q, want claude-sonnet-4-6", cfg.Agents.Reviewer.Model)
+	}
+	if cfg.Agents.Prole.Model != "claude-sonnet-4-6" {
+		t.Errorf("Prole.Model = %q, want claude-sonnet-4-6", cfg.Agents.Prole.Model)
+	}
+}
+
 func TestWrite_roundTrip(t *testing.T) {
 	dir := t.TempDir()
 	ctDir := filepath.Join(dir, DirName)
