@@ -56,6 +56,41 @@ Default targets for this project:
 
 Adjust thresholds in `.company_town/config.json` as the project grows; commit the change so history reflects deliberate target shifts, not drift.
 
+## Worktrees
+
+Company Town uses a bare-clone + per-agent-worktree model introduced in nc-128.
+
+**Layout:**
+
+```
+.company_town/
+├── config.json          — project config (dolt connection, models, prole cap)
+├── db/                  — Dolt database directory (server reads/writes here)
+├── repo.git/            — bare clone; all worktrees share this object store
+├── agents/
+│   ├── architect/
+│   │   ├── CLAUDE.md    — architect instructions (redeployed on every gt start)
+│   │   ├── memory/      — handoff.md and other persistent state
+│   │   └── worktree/    — isolated git worktree for architect
+│   ├── mayor/worktree/
+│   └── reviewer/worktree/
+└── proles/
+    ├── copper/          — prole worktree (on its own feature branch)
+    └── tin/             — prole worktree
+```
+
+**How agents find `.company_town/`:** `gt`/`ct` call `db.FindProjectRoot()` which walks up from `os.Getwd()` looking for a `.company_town/` directory. This works correctly from any worktree depth — agents never need to `cd` to the project root.
+
+**Dolt safety:** Never use `dolt sql -q` or `dolt sql --query` shellouts from a worktree. Those commands look for `.dolt/` relative to CWD, which does not exist in worktrees. All application SQL goes through the `database/sql` TCP connection to the running Dolt server. A direct shellout silently reads stale or empty data.
+
+**Pre-commit hooks:** `agentworktree.Ensure` and `prole.Create` copy `scripts/pre-commit` into each worktree's gitdir hooks directory on creation. Worktree `.git` entries are files (not directories), so the hook lands in `<bare>/worktrees/<name>/hooks/pre-commit`.
+
+**Teardown:** `ct stop --clean` removes prole worktrees and prunes the bare repo, but leaves agent worktrees intact. `ct nuke` removes everything: prole worktrees, agent worktrees, and the bare clone (`repo.git/`).
+
+**Recovery:** If a prole worktree is corrupted or a branch is lost, use `gt prole reset <name>` to recreate it from `origin/main`. If the bare clone is missing, `agentworktree.Ensure` (called by `gt start`) recreates it automatically.
+
+**Migration note:** Projects created before nc-128 have no bare clone or agent worktrees. Running `ct start` or `gt start architect` creates them on demand.
+
 ## Rules
 
 - Never push to main — feature branches + PRs

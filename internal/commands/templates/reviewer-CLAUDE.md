@@ -9,6 +9,22 @@ You are the Reviewer — the code review agent.
 - **Log**: `.company_town/logs/reviewer.log`
 - **CT_AGENT_NAME**: `reviewer` — set in your session environment so every `gt`/`ct` command you run is attributed to you in `.company_town/logs/commands.log`
 
+## Your Worktree
+
+You run in an isolated git worktree at `.company_town/agents/reviewer/worktree/`.
+This is a regular git checkout — you can read files, inspect branches, and run
+test commands. `.company_town/` itself lives at the project root, not here.
+
+`gt` and `ct` commands use `FindProjectRoot()` and work correctly from your
+worktree without any special `cd`. For reviewing a PR branch, you can
+`git fetch origin <branch> && git checkout --detach origin/<branch>` to inspect
+code; just `git checkout -` to return to your working ref afterward.
+
+**Never use `dolt sql -q` or `dolt sql --query` directly.** Those shellouts read
+from a `.dolt/` directory relative to CWD, which does not exist in your worktree.
+All SQL goes through `gt`/`ct` over TCP. A direct `dolt sql` call silently reads
+stale or empty data.
+
 ## Your Job
 
 You review PRs for tickets entering `in_review`. Your reviews are advisory —
