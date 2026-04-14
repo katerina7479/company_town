@@ -1186,15 +1186,29 @@ func TestIssueRepo_BusyAssignees_oneBusy(t *testing.T) {
 func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	// Held across several non-closed statuses.
+	// Active statuses — prole is still doing work, must stay in busy set.
 	for _, tc := range []struct {
 		agent  string
 		status string
 	}{
 		{"copper", "open"},
 		{"iron", "in_progress"},
-		{"tin", "in_review"},
 		{"zinc", "repairing"},
+	} {
+		id, _ := repo.Create("T", "task", nil, nil, nil)
+		repo.UpdateStatus(id, tc.status)
+		repo.Assign(id, tc.agent, "prole/"+tc.agent+"/x")
+	}
+
+	// Handoff statuses — prole handed off to reviewer, slot is free.
+	for _, tc := range []struct {
+		agent  string
+		status string
+	}{
+		{"tin", "in_review"},
+		{"lead", "under_review"},
+		{"brass", "pr_open"},
+		{"gold", "merge_conflict"},
 	} {
 		id, _ := repo.Create("T", "task", nil, nil, nil)
 		repo.UpdateStatus(id, tc.status)
@@ -1203,20 +1217,79 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 
 	// Closed ticket — assignee should be excluded.
 	closedID, _ := repo.Create("Closed", "task", nil, nil, nil)
-	repo.Assign(closedID, "lead", "prole/lead/x")
+	repo.Assign(closedID, "silver", "prole/silver/x")
 	repo.UpdateStatus(closedID, "closed")
 
 	busy, err := repo.BusyAssignees()
 	if err != nil {
 		t.Fatalf("BusyAssignees: %v", err)
 	}
-	for _, name := range []string{"copper", "iron", "tin", "zinc"} {
+
+	// Active statuses must be in the busy set.
+	for _, name := range []string{"copper", "iron", "zinc"} {
 		if !busy[name] {
-			t.Errorf("expected %s in busy set, got %v", name, busy)
+			t.Errorf("expected %s (active status) in busy set, got %v", name, busy)
 		}
 	}
-	if busy["lead"] {
-		t.Errorf("closed ticket assignee 'lead' should be excluded, got %v", busy)
+	// Handoff and closed statuses must NOT be in the busy set.
+	for _, name := range []string{"tin", "lead", "brass", "gold", "silver"} {
+		if busy[name] {
+			t.Errorf("expected %s (handoff/closed status) NOT in busy set, got %v", name, busy)
+		}
+	}
+}
+
+func TestIssueRepo_BusyAssignees_handoffStatusesExcluded(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// All four handoff statuses should free the prole slot.
+	for _, tc := range []struct {
+		agent  string
+		status string
+	}{
+		{"tin", "in_review"},
+		{"lead", "under_review"},
+		{"brass", "pr_open"},
+		{"gold", "merge_conflict"},
+	} {
+		id, _ := repo.Create("T", "task", nil, nil, nil)
+		repo.UpdateStatus(id, tc.status)
+		repo.Assign(id, tc.agent, "prole/"+tc.agent+"/x")
+	}
+
+	busy, err := repo.BusyAssignees()
+	if err != nil {
+		t.Fatalf("BusyAssignees: %v", err)
+	}
+	if len(busy) != 0 {
+		t.Errorf("all handoff statuses should be excluded from busy set, got %v", busy)
+	}
+}
+
+func TestIssueRepo_BusyAssignees_activeStatusesIncluded(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	// in_progress and repairing are still active — prole must be held busy.
+	for _, tc := range []struct {
+		agent  string
+		status string
+	}{
+		{"iron", "in_progress"},
+		{"zinc", "repairing"},
+	} {
+		id, _ := repo.Create("T", "task", nil, nil, nil)
+		repo.UpdateStatus(id, tc.status)
+		repo.Assign(id, tc.agent, "prole/"+tc.agent+"/x")
+	}
+
+	busy, err := repo.BusyAssignees()
+	if err != nil {
+		t.Fatalf("BusyAssignees: %v", err)
+	}
+	for _, name := range []string{"iron", "zinc"} {
+		if !busy[name] {
+			t.Errorf("expected %s (active status) in busy set, got %v", name, busy)
+		}
 	}
 }
 
