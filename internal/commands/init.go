@@ -96,7 +96,7 @@ func Init() error {
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
-		fmt.Printf("  created: config.json (dolt port=%d; edit github_repo and ticket_prefix)\n", port)
+		fmt.Printf("  created: config.json (dolt port=%d; set github_repo and change ticket_prefix from \"tk\" to your project prefix)\n", port)
 	} else {
 		fmt.Println("  exists:  config.json")
 	}
@@ -131,7 +131,7 @@ func Init() error {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
-	// 7. Write .gitignore for .company_town
+	// 7. Write .gitignore inside .company_town (ignores its own contents).
 	gitignorePath := filepath.Join(ctDir, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
 		content := "# Everything in .company_town is local runtime state\n*\n"
@@ -140,8 +140,79 @@ func Init() error {
 		}
 	}
 
+	// 8. Ensure .company_town/ is excluded from the project root .gitignore so
+	// it is never accidentally committed. Append only if not already present.
+	if err := ensureRootGitignore(projectRoot); err != nil {
+		return fmt.Errorf("updating root .gitignore: %w", err)
+	}
+
 	fmt.Println("\nCompany Town initialized.")
 	fmt.Println("Next: edit .company_town/config.json, then run `ct start`")
+	return nil
+}
+
+// matchesCompanyTownEntry reports whether a .gitignore line already excludes
+// .company_town/ in any of the four equivalent forms:
+//
+//	.company_town/       (canonical)
+//	.company_town        (no trailing slash)
+//	/.company_town/      (root-anchored)
+//	/.company_town       (root-anchored, no trailing slash)
+//
+// Inline comments (# …) and surrounding whitespace are stripped before
+// comparison, so ".company_town/  # local runtime state" also matches.
+func matchesCompanyTownEntry(line string) bool {
+	if idx := strings.Index(line, "#"); idx >= 0 {
+		line = line[:idx]
+	}
+	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "/")
+	line = strings.TrimSuffix(line, "/")
+	return line == ".company_town"
+}
+
+// ensureRootGitignore adds a .company_town/ exclusion to the project root's
+// .gitignore. If the file does not exist it is created. If the entry is already
+// present the file is left unchanged.
+func ensureRootGitignore(projectRoot string) error {
+	const entry = ".company_town/"
+	path := filepath.Join(projectRoot, ".gitignore")
+
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading root .gitignore: %w", err)
+	}
+
+	// Check each line; recognise all equivalent forms so we don't duplicate.
+	for _, line := range strings.Split(string(existing), "\n") {
+		if matchesCompanyTownEntry(line) {
+			fmt.Println("  exists:  .gitignore (.company_town/ already excluded)")
+			return nil
+		}
+	}
+
+	// Append with a trailing newline; prepend a blank line if the file is
+	// non-empty and does not already end with one.
+	suffix := entry + "\n"
+	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		suffix = "\n" + suffix
+	}
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("opening root .gitignore: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(suffix); err != nil {
+		return fmt.Errorf("writing root .gitignore: %w", err)
+	}
+
+	if len(existing) == 0 {
+		fmt.Println("  created: .gitignore (excludes .company_town/)")
+	} else {
+		fmt.Println("  updated: .gitignore (added .company_town/)")
+	}
 	return nil
 }
 

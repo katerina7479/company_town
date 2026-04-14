@@ -75,14 +75,14 @@ type QualityConfig struct {
 }
 
 type Config struct {
-	Version                 string       `json:"version"`
-	TicketPrefix            string       `json:"ticket_prefix"`
-	ProjectRoot             string       `json:"project_root"`
-	GithubRepo              string       `json:"github_repo"`
-	Dolt                    DoltConfig   `json:"dolt"`
-	LogDir                  string       `json:"log_dir"`
-	MaxProles               int          `json:"max_proles"`
-	Agents                  AgentsConfig `json:"agents"`
+	Version                      string        `json:"version"`
+	TicketPrefix                 string        `json:"ticket_prefix"`
+	ProjectRoot                  string        `json:"project_root"`
+	GithubRepo                   string        `json:"github_repo"`
+	Dolt                         DoltConfig    `json:"dolt"`
+	LogDir                       string        `json:"log_dir"`
+	MaxProles                    int           `json:"max_proles"`
+	Agents                       AgentsConfig  `json:"agents"`
 	PollingIntervalSeconds       int           `json:"polling_interval_seconds"`
 	NudgeCooldownSeconds         int           `json:"nudge_cooldown_seconds"`
 	ContextHandoffThreshold      float64       `json:"context_handoff_threshold"`
@@ -196,7 +196,7 @@ func validateTransition(path string, tt *TicketTransition) error {
 func DefaultConfig(projectRoot, githubRepo string) *Config {
 	return &Config{
 		Version:      "1.0.0",
-		TicketPrefix: "ct",
+		TicketPrefix: "tk",
 		ProjectRoot:  projectRoot,
 		GithubRepo:   githubRepo,
 		Dolt: DoltConfig{
@@ -220,7 +220,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 				},
 			},
 			Prole: AgentConfig{
-				Model: "claude-sonnet-4-5",
+				Model:    "claude-sonnet-4-5",
 				Workflow: &WorkflowConfig{
 					// Accept and Release are nil: prole acceptance is implicit in picking up
 					// the assignment; there is no automatic ticket side-effect.

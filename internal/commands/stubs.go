@@ -115,7 +115,11 @@ func startDaemon(cfg *config.Config) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	_ = session.ApplyStatusBar(name, "daemon")
+	return nil
 }
 
 // Architect implements `ct architect` — starts the Architect agent.

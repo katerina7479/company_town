@@ -27,12 +27,13 @@ func Exists(name string) bool {
 
 // AgentSessionConfig holds everything needed to launch an agent session.
 type AgentSessionConfig struct {
-	Name     string            // tmux session name (e.g. "ct-mayor")
-	WorkDir  string            // project root
-	Model    string            // claude model
-	AgentDir string            // .company_town/agents/<role>/ — contains CLAUDE.md
-	Prompt   string            // initial prompt to send to Claude Code
-	EnvVars  map[string]string // extra environment variables for the session
+	Name      string            // tmux session name (e.g. "ct-mayor")
+	WorkDir   string            // project root
+	Model     string            // claude model
+	AgentDir  string            // .company_town/agents/<role>/ — contains CLAUDE.md
+	Prompt    string            // initial prompt to send to Claude Code
+	EnvVars   map[string]string // extra environment variables for the session
+	AgentType string            // agent type for status bar coloring; derived from Name if empty
 }
 
 // CreateInteractive creates a tmux session with Claude Code in interactive mode.
@@ -79,6 +80,12 @@ func CreateInteractive(cfg AgentSessionConfig) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("creating tmux session %s: %w", cfg.Name, err)
 	}
+
+	agentType := cfg.AgentType
+	if agentType == "" {
+		agentType = AgentTypeFromSessionName(cfg.Name)
+	}
+	_ = ApplyStatusBar(cfg.Name, agentType)
 
 	return nil
 }

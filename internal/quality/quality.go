@@ -20,9 +20,9 @@ const (
 type Status string
 
 const (
-	StatusPass Status = "pass"
-	StatusFail Status = "fail"
-	StatusWarn Status = "warn" // metric check below threshold but not catastrophic
+	StatusPass  Status = "pass"
+	StatusFail  Status = "fail"
+	StatusWarn  Status = "warn"  // metric check below threshold but not catastrophic
 	StatusError Status = "error" // check could not be run (e.g. command not found)
 )
 
