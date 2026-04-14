@@ -696,7 +696,7 @@ func TestIssueRepo_ClearAssigneeByAgent_repairingTicket(t *testing.T) {
 func TestIssueRepo_ClearAssigneeByAgent_leavesOtherStatuses(t *testing.T) {
 	repo := setupTestRepo(t)
 
-	for _, status := range []string{"in_review", "pr_open"} {
+	for _, status := range []string{"in_review", "pr_open", "closed"} {
 		id, _ := repo.Create("Ticket "+status, "task", nil, nil, nil)
 		repo.UpdateStatus(id, status)
 		repo.SetAssignee(id, "iron")
@@ -707,7 +707,34 @@ func TestIssueRepo_ClearAssigneeByAgent_leavesOtherStatuses(t *testing.T) {
 		t.Fatalf("ClearAssigneeByAgent: %v", err)
 	}
 	if n != 0 {
-		t.Errorf("expected 0 rows affected (in_review/pr_open statuses skipped), got %d", n)
+		t.Errorf("expected 0 rows affected (in_review/pr_open/closed statuses skipped), got %d", n)
+	}
+}
+
+func TestIssueRepo_ClearAssigneeByAgent_ciRunningTicket(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, _ := repo.Create("CI running ticket", "task", nil, nil, nil)
+	repo.UpdateStatus(id, "ci_running")
+	repo.SetAssignee(id, "iron")
+
+	n, err := repo.ClearAssigneeByAgent("iron")
+	if err != nil {
+		t.Fatalf("ClearAssigneeByAgent: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row affected, got %d", n)
+	}
+
+	issue, _ := repo.Get(id)
+	if issue.Assignee.Valid {
+		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+	// ci_running tickets retain their status — CI is still in flight and the PR
+	// is already open. The daemon's CI reconciler resolves the ticket when the
+	// run completes; flipping to open would lose the PR reference.
+	if issue.Status != "ci_running" {
+		t.Errorf("expected status='ci_running' (retained), got %q", issue.Status)
 	}
 }
 
