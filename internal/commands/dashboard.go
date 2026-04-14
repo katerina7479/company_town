@@ -391,11 +391,13 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			if m.focusedPanel == 0 && len(m.data.agents) > 0 {
 				agent := m.data.agents[m.agentCursor]
-				sname := session.SessionName(agent.Name)
-				if session.Exists(sname) {
-					return m, spawnAttachCmd(agent.Name, sname)
+				if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
+					m.statusMsg = fmt.Sprintf("agent %s has no tmux session recorded", agent.Name)
+				} else if !m.sessionExists(agent.TmuxSession.String) {
+					m.statusMsg = fmt.Sprintf("session %s not running", agent.TmuxSession.String)
+				} else {
+					return m, spawnAttachCmd(agent.Name, agent.TmuxSession.String)
 				}
-				m.statusMsg = "No active session for " + agent.Name
 			}
 
 		case "x":
@@ -546,7 +548,10 @@ func spawnAttachCmd(agentName, sessionName string) tea.Cmd {
 // killAgentCmd kills the agent's tmux session and marks it dead in the DB.
 func (m dashboardModel) killAgentCmd(a *repo.Agent) tea.Cmd {
 	return func() tea.Msg {
-		sname := session.SessionName(a.Name)
+		if !a.TmuxSession.Valid || a.TmuxSession.String == "" {
+			return actionResultMsg{err: fmt.Errorf("agent %s has no tmux session recorded", a.Name)}
+		}
+		sname := a.TmuxSession.String
 		if err := m.killSession(sname); err != nil {
 			return actionResultMsg{err: fmt.Errorf("kill session %s: %w", a.Name, err)}
 		}
@@ -560,7 +565,10 @@ func (m dashboardModel) killAgentCmd(a *repo.Agent) tea.Cmd {
 // stopAgentCmd sends a graceful shutdown signal to the agent's tmux session.
 func (m dashboardModel) stopAgentCmd(a *repo.Agent) tea.Cmd {
 	return func() tea.Msg {
-		sname := session.SessionName(a.Name)
+		if !a.TmuxSession.Valid || a.TmuxSession.String == "" {
+			return actionResultMsg{err: fmt.Errorf("agent %s has no tmux session recorded", a.Name)}
+		}
+		sname := a.TmuxSession.String
 		if !m.sessionExists(sname) {
 			return actionResultMsg{err: fmt.Errorf("no active session for %s", a.Name)}
 		}
@@ -576,7 +584,10 @@ func (m dashboardModel) stopAgentCmd(a *repo.Agent) tea.Cmd {
 // so the new tmux session has time to start before refreshing the dashboard.
 func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 	return func() tea.Msg {
-		sname := session.SessionName(a.Name)
+		if !a.TmuxSession.Valid || a.TmuxSession.String == "" {
+			return actionResultMsg{err: fmt.Errorf("agent %s has no tmux session recorded", a.Name)}
+		}
+		sname := a.TmuxSession.String
 		if err := m.killSession(sname); err != nil {
 			return actionResultMsg{err: fmt.Errorf("kill session for %s: %w", a.Name, err)}
 		}
