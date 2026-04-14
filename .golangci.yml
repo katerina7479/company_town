@@ -13,8 +13,6 @@ linters:
     - unused
     - gosec
     - gocritic
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - unparam
@@ -22,6 +20,11 @@ linters:
     gosec:
       excludes:
         - G104  # Unhandled errors (too noisy for now)
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 issues:
   max-issues-per-linter: 0
