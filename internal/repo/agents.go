@@ -77,7 +77,7 @@ func (r *AgentRepo) Get(name string) (*Agent, error) {
 func (r *AgentRepo) UpdateStatus(name, status string) error {
 	var oldStatus string
 	if r.events != nil {
-		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus)
+		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus) //nolint:errcheck // event pre-read; scan failure is non-fatal
 	}
 
 	var timeEnded interface{}
@@ -95,7 +95,7 @@ func (r *AgentRepo) UpdateStatus(name, status string) error {
 
 	// Verify the agent exists (RowsAffected can be 0 if value unchanged)
 	var count int
-	r.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE name = ?`, name).Scan(&count)
+	r.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE name = ?`, name).Scan(&count) //nolint:errcheck // event pre-read; scan failure falls through to count==0 check
 	if count == 0 {
 		return fmt.Errorf("agent %s not found", name)
 	}
@@ -128,7 +128,7 @@ func (r *AgentRepo) SetTmuxSession(name, sessionName string) error {
 func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
 	var oldStatus string
 	if r.events != nil {
-		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus)
+		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus) //nolint:errcheck // event pre-read; scan failure is non-fatal
 	}
 
 	var val interface{}
@@ -154,7 +154,7 @@ func (r *AgentRepo) SetCurrentIssue(name string, issueID *int) error {
 func (r *AgentRepo) ClearCurrentIssue(name string) error {
 	var oldStatus string
 	if r.events != nil {
-		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus)
+		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus) //nolint:errcheck // event pre-read; scan failure is non-fatal
 	}
 
 	_, err := r.db.Exec(

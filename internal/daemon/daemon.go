@@ -1124,7 +1124,7 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 	if d.sessionExists(mayorSession) {
 		msg := fmt.Sprintf("PR #%d merged. Ticket %s-%d (%s) is now closed.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
-		d.sendKeys(mayorSession, msg)
+		d.sendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
 	}
 }
 
@@ -1146,7 +1146,7 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 		msg := fmt.Sprintf("ESCALATION: PR #%d for ticket %s-%d (%s) was closed without merging. "+
 			"Please decide next action.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
-		d.sendKeys(mayorSession, msg)
+		d.sendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
 	}
 }
 

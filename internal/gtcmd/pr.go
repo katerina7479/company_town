@@ -155,12 +155,12 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	}
 
 	var meta struct {
-		Number         int    `json:"number"`
-		Title          string `json:"title"`
-		State          string `json:"state"`
-		HeadRefName    string `json:"headRefName"`
-		Mergeable      string `json:"mergeable"`
-		ReviewDecision string `json:"reviewDecision"`
+		Number            int    `json:"number"`
+		Title             string `json:"title"`
+		State             string `json:"state"`
+		HeadRefName       string `json:"headRefName"`
+		Mergeable         string `json:"mergeable"`
+		ReviewDecision    string `json:"reviewDecision"`
 		StatusCheckRollup []struct {
 			Name       string `json:"name"`
 			Status     string `json:"status"`
@@ -196,7 +196,9 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	} else {
 		var resp struct {
 			Reviews []struct {
-				Author      struct{ Login string `json:"login"` } `json:"author"`
+				Author struct {
+					Login string `json:"login"`
+				} `json:"author"`
 				State       string `json:"state"`
 				SubmittedAt string `json:"submittedAt"`
 				Body        string `json:"body"`
@@ -223,7 +225,9 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	} else {
 		var resp struct {
 			Comments []struct {
-				Author    struct{ Login string `json:"login"` } `json:"author"`
+				Author struct {
+					Login string `json:"login"`
+				} `json:"author"`
 				Body      string `json:"body"`
 				CreatedAt string `json:"createdAt"`
 			} `json:"comments"`

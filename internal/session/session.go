@@ -156,7 +156,7 @@ func ListCompanyTown() ([]string, error) {
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, nil
+		return nil, nil //nolint:nilerr // tmux not running means no sessions; return empty list
 	}
 
 	var sessions []string

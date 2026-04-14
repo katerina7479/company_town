@@ -185,11 +185,11 @@ func Stop(args []string) error {
 	}
 
 	if signalPath != "" {
-		os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)
+		os.WriteFile(signalPath, []byte("handoff requested\n"), 0644) //nolint:errcheck // best-effort signal file write
 	}
 
 	cmd := exec.Command("tmux", "send-keys", "-t", sessionName, "System is shutting down. Write handoff.md and exit cleanly.", "Enter")
-	cmd.Run()
+	cmd.Run() //nolint:errcheck // best-effort tmux send-keys
 
 	conn, stopCfg, err := db.OpenFromWorkingDir()
 	if err != nil {

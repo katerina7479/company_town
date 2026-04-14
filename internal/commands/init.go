@@ -253,7 +253,7 @@ func LoadTemplate(agentType string) (string, error) {
 	// Append shared commands reference
 	ref, err := templateFS.ReadFile("templates/commands-reference.md")
 	if err != nil {
-		return content, nil // non-fatal if missing
+		return content, nil //nolint:nilerr // non-fatal: commands reference template is optional
 	}
 
 	return content + "\n" + string(ref), nil

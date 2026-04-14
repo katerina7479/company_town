@@ -28,6 +28,14 @@ Dolt (MySQL-compatible). Server config: `.company_town/dolt-data/config.yaml`.
 Tables: `issues`, `agents`, `issue_dependencies`.
 Migrations embedded in `internal/db/migrations/`.
 
+## Linting
+
+`golangci-lint` runs in CI with the config in `.golangci.yml`. The enabled linter set is intentionally narrow — see the comments in that file before adding new linters. To run locally:
+
+```bash
+golangci-lint run ./...
+```
+
 ## Rules
 
 - Never push to main — feature branches + PRs

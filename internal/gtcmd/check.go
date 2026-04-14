@@ -26,7 +26,7 @@ func Check(args []string) error {
 	switch args[0] {
 	case "run":
 		err := checkRun()
-		if err == errChecksFailed {
+		if errors.Is(err, errChecksFailed) {
 			os.Exit(1)
 		}
 		return err
