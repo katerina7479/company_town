@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,134 @@ func TestWriteClaudeMDCreatesFile(t *testing.T) {
 
 	if string(got) != expected {
 		t.Errorf("newly created CLAUDE.md does not match embedded template")
+	}
+}
+
+func TestEnsureRootGitignore_createsFileWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf(".gitignore not created: %v", err)
+	}
+	if !strings.Contains(string(data), ".company_town/") {
+		t.Errorf(".gitignore missing .company_town/ entry: %s", data)
+	}
+}
+
+func TestEnsureRootGitignore_appendsToExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	existing := "node_modules/\n.env\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("reading .gitignore: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "node_modules/") {
+		t.Error("existing content was lost")
+	}
+	if !strings.Contains(content, ".company_town/") {
+		t.Errorf(".gitignore missing .company_town/ entry: %s", content)
+	}
+}
+
+func TestEnsureRootGitignore_idempotent(t *testing.T) {
+	dir := t.TempDir()
+	existing := "node_modules/\n.company_town/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("reading .gitignore: %v", err)
+	}
+	// Entry must not be duplicated.
+	count := strings.Count(string(data), ".company_town/")
+	if count != 1 {
+		t.Errorf("expected exactly 1 .company_town/ entry, got %d: %s", count, data)
+	}
+}
+
+func TestEnsureRootGitignore_noTrailingNewlineInExisting(t *testing.T) {
+	dir := t.TempDir()
+	// File exists but has no trailing newline.
+	existing := "node_modules/"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("reading .gitignore: %v", err)
+	}
+	content := string(data)
+	// Must separate existing content from new entry with a newline.
+	if !strings.Contains(content, "\n.company_town/") {
+		t.Errorf("entry not properly separated: %q", content)
+	}
+}
+
+func TestEnsureRootGitignore_bareNameIsEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	// ".company_town" (no trailing slash) is equivalent — must not duplicate.
+	existing := "node_modules/\n.company_town\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(before) != string(after) {
+		t.Errorf("file was modified but .company_town (no slash) should be treated as equivalent:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+func TestEnsureRootGitignore_rootAnchoredIsEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	// "/.company_town/" (root-anchored) is equivalent — must not duplicate.
+	existing := "node_modules/\n/.company_town/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(before) != string(after) {
+		t.Errorf("file was modified but /.company_town/ should be treated as equivalent:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+func TestEnsureRootGitignore_inlineCommentIsEquivalent(t *testing.T) {
+	dir := t.TempDir()
+	// ".company_town/  # local runtime state" must be treated as already present.
+	existing := ".company_town/  # local runtime state\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err := ensureRootGitignore(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(before) != string(after) {
+		t.Errorf("file was modified but entry with inline comment should be equivalent:\nbefore=%q\nafter=%q", before, after)
 	}
 }
 
