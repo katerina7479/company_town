@@ -73,7 +73,7 @@ func Ensure(cfg *config.Config, agentDir string) (string, error) {
 // createWorktree adds a new git worktree at wtPath in detached HEAD state at
 // origin/main. The parent directory is created if needed.
 func createWorktree(barePath, wtPath string) error {
-	if err := os.MkdirAll(filepath.Dir(wtPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(wtPath), 0750); err != nil {
 		return fmt.Errorf("creating parent dir for worktree: %w", err)
 	}
 	cmd := exec.Command("git", "worktree", "add", "--detach", wtPath, "origin/main")

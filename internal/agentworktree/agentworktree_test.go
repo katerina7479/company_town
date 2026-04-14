@@ -43,11 +43,11 @@ func setupTestRepo(t *testing.T) *config.Config {
 	}
 	runGit(t, projectDir, "add", ".")
 	runGit(t, projectDir, "commit", "-m", "init")
-	runGit(t, projectDir, "push", "origin", "main")
+	runGit(t, projectDir, "push", "origin", "HEAD:main")
 
 	// Create .company_town dir so config can find the project root.
 	ctDir := filepath.Join(projectDir, ".company_town")
-	if err := os.MkdirAll(ctDir, 0755); err != nil {
+	if err := os.MkdirAll(ctDir, 0750); err != nil {
 		t.Fatalf("creating .company_town: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestEnsure_CreatesWorktree(t *testing.T) {
 	cfg := setupTestRepo(t)
 
 	agentDir := filepath.Join(cfg.ProjectRoot, ".company_town", "agents", "architect")
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
 		t.Fatalf("creating agentDir: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestEnsure_IdempotentOnSecondCall(t *testing.T) {
 	cfg := setupTestRepo(t)
 
 	agentDir := filepath.Join(cfg.ProjectRoot, ".company_town", "agents", "reviewer")
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
 		t.Fatalf("creating agentDir: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestEnsure_WorktreeInsideAgentDir(t *testing.T) {
 	cfg := setupTestRepo(t)
 
 	agentDir := filepath.Join(cfg.ProjectRoot, ".company_town", "agents", "mayor")
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
 		t.Fatalf("creating agentDir: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestEnsure_CLAUDEMDInParentDiscoverableFromWorktree(t *testing.T) {
 	cfg := setupTestRepo(t)
 
 	agentDir := filepath.Join(cfg.ProjectRoot, ".company_town", "agents", "architect")
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
 		t.Fatalf("creating agentDir: %v", err)
 	}
 

@@ -587,4 +587,3 @@ func TestPRCreate_WorkDirPassedToGitFns(t *testing.T) {
 		t.Errorf("gitPushFn received workDir=%q, want %q", gotPushDir, wantDir)
 	}
 }
-
