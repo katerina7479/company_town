@@ -14,8 +14,8 @@ import (
 	"github.com/katerina7479/company_town/internal/cmdlog"
 )
 
-// captureOutput runs f() and returns everything written to os.Stdout and os.Stderr.
-func captureOutput(f func()) (stdout, stderr string) {
+// captureLogOutput runs f() and returns everything written to os.Stdout and os.Stderr.
+func captureLogOutput(f func()) (stdout, stderr string) {
 	oldOut, oldErr := os.Stdout, os.Stderr
 	rOut, wOut, _ := os.Pipe()
 	rErr, wErr, _ := os.Pipe()
@@ -86,7 +86,7 @@ func TestLogTail_emptyFile(t *testing.T) {
 }
 
 func TestLogTail_missingFile_friendlyMessage(t *testing.T) {
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logTail("/no/such/path/commands.log", nil); err != nil {
 			t.Errorf("expected nil error for missing file, got: %v", err)
 		}
@@ -106,7 +106,7 @@ func TestLogTail_defaultN(t *testing.T) {
 	}
 	path := writeTestLog(t, entries)
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logTail(path, nil); err != nil {
 			t.Errorf("logTail: %v", err)
 		}
@@ -132,7 +132,7 @@ func TestLogTail_fewerThanN(t *testing.T) {
 	path := writeTestLog(t, entries)
 
 	var lineCount int
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logTail(path, []string{"-n", "10"}); err != nil {
 			t.Errorf("logTail: %v", err)
 		}
@@ -157,7 +157,7 @@ func TestLogTail_returnsLastN(t *testing.T) {
 	}
 	path := writeTestLog(t, entries)
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logTail(path, []string{"-n", "3"}); err != nil {
 			t.Errorf("logTail: %v", err)
 		}
@@ -174,7 +174,7 @@ func TestLogTail_jsonPassthrough(t *testing.T) {
 		makeEntry("copper", "gt", []string{"ticket", "status", "56", "repairing"}, nil, base),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logTail(path, []string{"--json"}); err != nil {
 			t.Errorf("logTail --json: %v", err)
 		}
@@ -196,7 +196,7 @@ func TestLogShow_filterByEntity(t *testing.T) {
 			base.Add(time.Minute)),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--entity", "nc-56"}); err != nil {
 			t.Errorf("logShow: %v", err)
 		}
@@ -217,7 +217,7 @@ func TestLogShow_filterByActor(t *testing.T) {
 		makeEntry("iron", "gt", []string{"ticket", "show", "2"}, nil, base.Add(time.Minute)),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--actor", "copper"}); err != nil {
 			t.Errorf("logShow --actor: %v", err)
 		}
@@ -238,7 +238,7 @@ func TestLogShow_filterBySince(t *testing.T) {
 		makeEntry("iron", "gt", []string{"ticket", "show", "recent"}, nil, now.Add(-10*time.Minute)),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--since", "1h"}); err != nil {
 			t.Errorf("logShow --since: %v", err)
 		}
@@ -272,7 +272,7 @@ func TestLogShow_missingFlagValue(t *testing.T) {
 
 func TestLogShow_nonexistentFile(t *testing.T) {
 	// Spec §Implementation notes: missing file → friendly message + exit 0, not an error.
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		err := logShow("/no/such/path/commands.log", []string{"--actor", "x"})
 		if err != nil {
 			t.Errorf("expected nil error for missing file, got: %v", err)
@@ -290,7 +290,7 @@ func TestLogShow_filterCommand(t *testing.T) {
 		makeEntry("iron", "gt", []string{"ticket", "show", "56"}, nil, base.Add(time.Minute)),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--command", "status"}); err != nil {
 			t.Errorf("logShow --command: %v", err)
 		}
@@ -324,7 +324,7 @@ func TestLogShow_filterEntityShortcut(t *testing.T) {
 			base.Add(time.Minute)),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--entity", "56"}); err != nil {
 			t.Errorf("logShow bare-number entity: %v", err)
 		}
@@ -355,7 +355,7 @@ func TestLogShow_combinedFilters(t *testing.T) {
 		makeEntry("iron", "gt", []string{"ticket", "status", "2", "open"}, nil, base.Add(2*time.Minute)),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--actor", "copper", "--command", "status"}); err != nil {
 			t.Errorf("logShow combined: %v", err)
 		}
@@ -384,7 +384,7 @@ func TestLogShow_jsonPassthrough(t *testing.T) {
 			[]cmdlog.Annotation{{Entity: "ticket=56"}}, base),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--actor", "copper", "--json"}); err != nil {
 			t.Errorf("logShow --json: %v", err)
 		}
@@ -407,7 +407,7 @@ func TestLogShow_malformedLineSkipped(t *testing.T) {
 	content := string(data) + "\n" + "NOT_JSON_AT_ALL\n"
 	os.WriteFile(path, []byte(content), 0644)
 
-	_, errStr := captureOutput(func() {
+	_, errStr := captureLogOutput(func() {
 		if err := logShow(path, []string{"--actor", "copper"}); err != nil {
 			t.Errorf("logShow: %v", err)
 		}
@@ -439,7 +439,7 @@ func TestLogShow_nc56Replay(t *testing.T) {
 			base.Add(10*time.Minute)),
 	})
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		if err := logShow(path, []string{"--entity", "ticket=56"}); err != nil {
 			t.Errorf("logShow nc56 replay: %v", err)
 		}
