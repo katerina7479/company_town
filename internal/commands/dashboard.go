@@ -2,10 +2,12 @@ package commands
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"regexp"
@@ -73,13 +75,13 @@ var (
 		"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")),  // yellow
 		"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")),  // red
 		// Ticket statuses
-		"draft":        lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
-		"open":         lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
-		"in_progress":  lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
-		"in_review":    lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
-		"under_review": lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
-		"pr_open":      lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
-		"reviewed":     lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
+		"draft":          lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
+		"open":           lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
+		"in_progress":    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
+		"in_review":      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
+		"under_review":   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
+		"pr_open":        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
+		"reviewed":       lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
 		"repairing":      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
 		"on_hold":        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
 		"merge_conflict": lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution
@@ -169,6 +171,13 @@ type dataMsg dashboardData
 type actionResultMsg struct {
 	text string
 	err  error
+}
+
+// spawnAttachResultMsg carries the outcome of a SpawnAttach attempt.
+type spawnAttachResultMsg struct {
+	agentName   string
+	sessionName string
+	err         error
 }
 
 // flatNode is an issue node with its render depth, used for cursor navigation.
@@ -385,13 +394,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				agent := m.data.agents[m.agentCursor]
 				sname := session.SessionName(agent.Name)
 				if session.Exists(sname) {
-					c := exec.Command("tmux", "attach-session", "-t", sname)
-					return m, tea.ExecProcess(c, func(err error) tea.Msg {
-						if err != nil {
-							return actionResultMsg{err: fmt.Errorf("attach %s: %w", agent.Name, err)}
-						}
-						return actionResultMsg{text: "Detached from " + agent.Name}
-					})
+					return m, spawnAttachCmd(agent.Name, sname)
 				}
 				m.statusMsg = "No active session for " + agent.Name
 			}
@@ -470,6 +473,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, func() tea.Msg { return m.fetch() }
 
+	case spawnAttachResultMsg:
+		if msg.err == nil {
+			m.statusMsg = "Attached to " + msg.agentName + " in new window"
+			return m, nil
+		}
+		// ErrUnknownTerminal: $TERM_PROGRAM unrecognized — fall back to in-place attach.
+		if errors.Is(msg.err, session.ErrUnknownTerminal) {
+			fmt.Fprintf(os.Stderr, "spawn-attach: unrecognized $TERM_PROGRAM; attaching in place\n")
+		}
+		c := exec.Command("tmux", "attach-session", "-t", msg.sessionName)
+		return m, tea.ExecProcess(c, func(err error) tea.Msg {
+			if err != nil {
+				return actionResultMsg{err: fmt.Errorf("attach %s: %w", msg.agentName, err)}
+			}
+			return actionResultMsg{text: "Detached from " + msg.agentName}
+		})
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -513,6 +533,15 @@ func (m dashboardModel) agentSessionName(name string) string {
 		}
 	}
 	return ""
+}
+
+// spawnAttachCmd runs session.SpawnAttach in a goroutine so Update stays
+// non-blocking during osascript latency (200-500ms).
+func spawnAttachCmd(agentName, sessionName string) tea.Cmd {
+	return func() tea.Msg {
+		err := session.SpawnAttach(sessionName)
+		return spawnAttachResultMsg{agentName: agentName, sessionName: sessionName, err: err}
+	}
 }
 
 // killAgentCmd kills the agent's tmux session and marks it dead in the DB.
