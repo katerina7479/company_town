@@ -79,14 +79,23 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
 ## Lifecycle
 
 1. **Receive ticket** — you are nudged with an assignment
-2. **Get on the right branch** — see Startup Protocol below. For new work, create a fresh branch. For repair work, check out the existing branch.
-3. **Claim the work** (new work only): `gt ticket status <id> in_progress` — this atomically sets the ticket status AND marks you `working` with `current_issue=<id>`. No separate `gt agent status` call needed.
-4. **Implement the work** — commit and push after every change
-5. **Run quality gates** — tests, lint, vet (all must pass)
-6. **File a PR**: `gt pr create <ticket_id>` (for new work) or `gt pr update <ticket_id>` (for repairs)
-7. **Go idle**: `gt agent status {{NAME}} idle`
+2. **Accept the assignment**: `gt agent accept <id>` — this is your explicit
+   "I am working on this now" signal. It sets your agent status to `working`
+   and `current_issue=<id>`. This is the dashboard's truth about what you're
+   doing. Run it FIRST, before touching any code. **This is required for
+   every ticket — new work AND repairs.**
+3. **Get on the right branch** — see Startup Protocol below. For new work, create a fresh branch. For repair work, check out the existing branch.
+4. **Move the ticket** (new work only): `gt ticket status <id> in_progress`. For repair work, leave the ticket in `repairing`.
+5. **Implement the work** — commit and push after every change
+6. **Run quality gates** — tests, lint, vet (all must pass)
+7. **File a PR**: `gt pr create <ticket_id>` (for new work) or `gt pr update <ticket_id>` (for repairs)
+8. **Go idle**: `gt agent status {{NAME}} idle`
 
-> **Repair work**: for `repairing` tickets, do NOT run `gt ticket status in_progress`. Run `gt agent status {{NAME}} working --issue <id>` to mark yourself working, then fix the issues and run `gt pr update <ticket_id>`.
+> **Why `gt agent accept` is separate from `gt ticket status`**: the ticket
+> status tracks the state of the *work*. Your agent status tracks what *you*
+> are doing. Those are different things. `gt agent accept` is YOUR statement
+> of intent — run it the moment you pick up a ticket, before any git or
+> code operation, so the dashboard reflects what's happening in real time.
 
 ## Startup Protocol
 
@@ -94,7 +103,12 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
    - **status** — `open`, `in_progress`, or `repairing`
    - **branch** — the exact branch name recorded on the ticket (e.g. `prole/{{NAME}}/{{TICKET_PREFIX}}-42`)
 
-2. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
+2. **Accept the assignment**: `gt agent accept <id>`. Do this BEFORE any git
+   operation so your agent status flips to `working` immediately. If you
+   skip this step, the dashboard will keep showing you as idle while you
+   work, and the architect will have to prompt you to fix it.
+
+3. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
 
    **If ticket status is `repairing`**: the branch already exists and has prior commits on `origin`. The daemon will have pre-switched your worktree to that branch at assignment time — verify you are already on it with `git branch --show-current`. If not (e.g. session was restarted), check it out manually:
 
@@ -113,11 +127,13 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
    git checkout -b <branch> origin/main
    ```
 
-   Then claim the work: `gt ticket status <id> in_progress` (sets ticket status AND marks you working).
+   Then move the ticket state: `gt ticket status <id> in_progress`. (Your
+   agent row was already flipped to `working` in step 2; this is just the
+   ticket side.)
 
-3. **Verify you are on the right branch** before touching any file: `git branch --show-current` should print the exact branch name from the ticket. If it does not, stop and fix it.
+4. **Verify you are on the right branch** before touching any file: `git branch --show-current` should print the exact branch name from the ticket. If it does not, stop and fix it.
 
-4. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
+5. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
 
 **Why this matters.** Repairing tickets already have real work on their branch — that's the whole point of sending a PR back instead of closing it. Creating a new branch with the same name (or working on the wrong branch) throws that work away. The reviewer's feedback refers to commits that exist on `origin/<branch>`; you must be on that branch to see them.
 
@@ -137,7 +153,8 @@ gt check list                        # Show latest result per check
 gt check history [<name>] [--limit]  # Show result history
 
 # Agent
-gt agent status {{NAME}} <status>    # Update your status
+gt agent accept <id>                 # "I'm working on this" — run FIRST on every ticket (new or repair)
+gt agent status {{NAME}} <status>    # Update your status (e.g., idle when done)
 
 # Git (after EVERY change)
 git add <files>
