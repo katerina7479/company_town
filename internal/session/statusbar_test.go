@@ -40,7 +40,8 @@ func captureExec(captured *[][]string) func(...string) error {
 
 func TestStyleSession_UnknownTypeIsNoop(t *testing.T) {
 	var calls [][]string
-	orig := styleSessionExec; styleSessionExec = captureExec(&calls)
+	orig := styleSessionExec
+	styleSessionExec = captureExec(&calls)
 	defer func() { styleSessionExec = orig }()
 	if err := ApplyStatusBar("ct-whatever", "unknown-type"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -52,7 +53,8 @@ func TestStyleSession_UnknownTypeIsNoop(t *testing.T) {
 
 func TestStyleSession_EmptyTypeIsNoop(t *testing.T) {
 	var calls [][]string
-	orig := styleSessionExec; styleSessionExec = captureExec(&calls)
+	orig := styleSessionExec
+	styleSessionExec = captureExec(&calls)
 	defer func() { styleSessionExec = orig }()
 	if err := ApplyStatusBar("ct-mayor", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,7 +67,8 @@ func TestStyleSession_EmptyTypeIsNoop(t *testing.T) {
 func TestStyleSession_EachAgentType(t *testing.T) {
 	for _, agentType := range []string{"mayor", "architect", "reviewer", "daemon", "prole", "artisan"} {
 		var calls [][]string
-		orig := styleSessionExec; styleSessionExec = captureExec(&calls)
+		orig := styleSessionExec
+		styleSessionExec = captureExec(&calls)
 		err := ApplyStatusBar("ct-test", agentType)
 		styleSessionExec = orig
 		if err != nil {
@@ -78,7 +81,10 @@ func TestStyleSession_EachAgentType(t *testing.T) {
 		color := agentTypeColors[agentType]
 		found := false
 		for _, arg := range calls[1] {
-			if strings.Contains(arg, color) { found = true; break }
+			if strings.Contains(arg, color) {
+				found = true
+				break
+			}
 		}
 		if !found {
 			t.Errorf("agentType=%q: color %q not in args %v", agentType, color, calls[1])
@@ -88,15 +94,21 @@ func TestStyleSession_EachAgentType(t *testing.T) {
 
 func TestStyleSession_StatusRightContainsHint(t *testing.T) {
 	var calls [][]string
-	orig := styleSessionExec; styleSessionExec = captureExec(&calls)
+	orig := styleSessionExec
+	styleSessionExec = captureExec(&calls)
 	defer func() { styleSessionExec = orig }()
 	if err := ApplyStatusBar("ct-mayor", "mayor"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(calls) < 1 { t.Fatal("expected at least one call") }
+	if len(calls) < 1 {
+		t.Fatal("expected at least one call")
+	}
 	found := false
 	for _, arg := range calls[0] {
-		if strings.Contains(arg, "C-b d") { found = true; break }
+		if strings.Contains(arg, "C-b d") {
+			found = true
+			break
+		}
 	}
 	if !found {
 		t.Errorf("'C-b d' not found in status-right args %v", calls[0])
@@ -108,7 +120,9 @@ func TestStyleSession_ExecErrorPropagates(t *testing.T) {
 	styleSessionExec = func(args ...string) error { return errors.New("tmux not found") }
 	defer func() { styleSessionExec = orig }()
 	err := ApplyStatusBar("ct-mayor", "mayor")
-	if err == nil { t.Fatal("expected error, got nil") }
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
 	if !strings.Contains(err.Error(), "tmux set-option") {
 		t.Errorf("expected 'tmux set-option' in error, got: %v", err)
 	}

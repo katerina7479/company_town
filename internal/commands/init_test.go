@@ -1,11 +1,60 @@
 package commands
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestPickFreePort_returnsFreeStart(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer l.Close()
+	occupied := l.Addr().(*net.TCPAddr).Port
+	got, err := pickFreePort(occupied)
+	if err != nil {
+		t.Fatalf("pickFreePort: %v", err)
+	}
+	if got == occupied {
+		t.Errorf("pickFreePort returned the occupied port %d", occupied)
+	}
+}
+
+func TestPickFreePort_unoccupiedStartReturnedDirectly(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	free := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	got, err := pickFreePort(free)
+	if err != nil {
+		t.Fatalf("pickFreePort: %v", err)
+	}
+	if got != free {
+		t.Errorf("pickFreePort(%d) = %d, want %d", free, got, free)
+	}
+}
+
+func TestPickFreePort_skipsOccupied(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer l.Close()
+	start := l.Addr().(*net.TCPAddr).Port
+	got, err := pickFreePort(start)
+	if err != nil {
+		t.Fatalf("pickFreePort(%d): %v", start, err)
+	}
+	if got <= start {
+		t.Errorf("expected port > %d (occupied), got %d", start, got)
+	}
+}
 
 func TestWriteClaudeMDOverwritesExisting(t *testing.T) {
 	dir := t.TempDir()

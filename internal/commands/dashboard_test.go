@@ -206,7 +206,7 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 		sendKeys:      sendKeysFn,
 		restartAgent:  restartFn,
 		openPRFn:      func(int) error { return nil }, // no-op default
-		sleepFn:       func(time.Duration) {},        // no-op in tests
+		sleepFn:       func(time.Duration) {},         // no-op in tests
 		expanded:      make(map[int]bool),
 	}
 	return m, agents
