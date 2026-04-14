@@ -744,7 +744,6 @@ func TestTicketPrioritize_priorityAlias(t *testing.T) {
 	}
 }
 
-
 func TestTicketUnassign_clearsAssignee(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
@@ -813,5 +812,79 @@ func TestTicketUnassign_prefixedID(t *testing.T) {
 	issue, _ := issues.Get(id)
 	if issue.Assignee.Valid {
 		t.Errorf("expected assignee=NULL, got %q", issue.Assignee.String)
+	}
+}
+
+func TestTicketUndepend_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id1, _ := issues.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := issues.Create("Ticket 2", "task", nil, nil, nil)
+
+	// Add dependency then remove it via the handler
+	if err := ticketDepend(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1),
+	}); err != nil {
+		t.Fatalf("ticketDepend: %v", err)
+	}
+
+	if err := ticketUndepend(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1),
+	}); err != nil {
+		t.Fatalf("ticketUndepend: %v", err)
+	}
+
+	deps, _ := issues.GetDependencies(id2)
+	if len(deps) != 0 {
+		t.Errorf("expected no deps after undepend, got %v", deps)
+	}
+}
+
+func TestTicketUndepend_idempotent(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id1, _ := issues.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := issues.Create("Ticket 2", "task", nil, nil, nil)
+
+	// undepend with no prior depend edge — should succeed silently
+	if err := ticketUndepend(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1),
+	}); err != nil {
+		t.Errorf("ticketUndepend on non-existent edge should succeed, got %v", err)
+	}
+}
+
+func TestTicketUndepend_invalidArgs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketUndepend(issues, cfg.TicketPrefix, []string{"1"}); err == nil {
+		t.Error("expected error for missing second arg")
+	}
+	if err := ticketUndepend(issues, cfg.TicketPrefix, []string{}); err == nil {
+		t.Error("expected error for empty args")
+	}
+}
+
+func TestTicketUndepend_prefixedIDs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id1, _ := issues.Create("Ticket 1", "task", nil, nil, nil)
+	id2, _ := issues.Create("Ticket 2", "task", nil, nil, nil)
+	issues.AddDependency(id2, id1)
+
+	// Use "nc-N" form — parseTicketID should strip the prefix
+	if err := ticketUndepend(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("nc-%d", id2), fmt.Sprintf("nc-%d", id1),
+	}); err != nil {
+		t.Fatalf("ticketUndepend with prefix: %v", err)
+	}
+
+	deps, _ := issues.GetDependencies(id2)
+	if len(deps) != 0 {
+		t.Errorf("expected no deps, got %v", deps)
 	}
 }

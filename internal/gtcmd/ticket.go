@@ -38,7 +38,7 @@ func parseTicketID(s string) (int, error) {
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|priority|close|delete|depend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|priority|close|delete|depend|undepend> ...")
 		os.Exit(1)
 	}
 
@@ -81,6 +81,8 @@ func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.
 		return ticketDelete(issues, args[1:])
 	case "depend":
 		return ticketDepend(issues, cfg.TicketPrefix, args[1:])
+	case "undepend":
+		return ticketUndepend(issues, cfg.TicketPrefix, args[1:])
 	case "describe":
 		return ticketDescribe(issues, args[1:])
 	case "prioritize", "priority":
@@ -592,5 +594,28 @@ func ticketDepend(issues *repo.IssueRepo, prefix string, args []string) error {
 	}
 
 	fmt.Printf("%s-%d now depends on %s-%d\n", prefix, id, prefix, dependsOnID)
+	return nil
+}
+
+func ticketUndepend(issues *repo.IssueRepo, prefix string, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket undepend <id> <depends-on-id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	dependsOnID, err := parseTicketID(args[1])
+	if err != nil {
+		return err
+	}
+
+	if err := issues.RemoveDependency(id, dependsOnID); err != nil {
+		return err
+	}
+
+	fmt.Printf("%s-%d no longer depends on %s-%d\n", prefix, id, prefix, dependsOnID)
 	return nil
 }
