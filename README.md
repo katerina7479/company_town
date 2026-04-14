@@ -14,6 +14,28 @@ You talk to the **Mayor** in a tmux pane. The Mayor and its daemon run the rest:
 
 ## Install
 
+### Pre-built binaries (recommended)
+
+Download the latest release from [GitHub Releases](https://github.com/katerina7479/company_town/releases):
+
+```bash
+# macOS arm64 (Apple Silicon)
+curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_darwin_arm64.tar.gz | tar xz
+sudo mv ct gt /usr/local/bin/
+
+# macOS amd64 (Intel)
+curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_darwin_amd64.tar.gz | tar xz
+sudo mv ct gt /usr/local/bin/
+
+# Linux amd64
+curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_linux_amd64.tar.gz | tar xz
+sudo mv ct gt /usr/local/bin/
+```
+
+Verify checksums with `checksums.txt` included in each release.
+
+### From source (requires Go 1.22+)
+
 ```bash
 git clone https://github.com/katerina7479/company_town.git
 cd company_town
@@ -21,6 +43,24 @@ make install        # builds and installs ct + gt to $GOPATH/bin
 ```
 
 `make build` alone drops the binaries at `./bin/ct` and `./bin/gt`.
+
+### Version
+
+```bash
+ct --version
+gt --version
+```
+
+## Releasing a new version
+
+Tag and push — GitHub Actions runs goreleaser automatically:
+
+```bash
+git tag v0.1.0
+git push --tags
+```
+
+This produces a GitHub Release with `.tar.gz` archives for macOS (arm64, amd64) and Linux (amd64), plus a `checksums.txt`.
 
 ## Quick start for a new project
 

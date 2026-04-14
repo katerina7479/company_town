@@ -1,6 +1,7 @@
 package gtcmd
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -21,6 +22,24 @@ func setupPRTestRepo(t *testing.T) *repo.IssueRepo {
 
 func testCfg() *config.Config {
 	return &config.Config{TicketPrefix: "nc"}
+}
+
+// stubPRShowFns replaces the three gh injection points for the duration of the test.
+func stubPRShowFns(t *testing.T,
+	viewOut []byte, viewErr error,
+	reviewsOut []byte, reviewsErr error,
+	commentsOut []byte, commentsErr error,
+) {
+	t.Helper()
+	origView, origReviews, origComments := ghPRViewFn, ghPRReviewsFn, ghPRCommentsFn
+	t.Cleanup(func() {
+		ghPRViewFn = origView
+		ghPRReviewsFn = origReviews
+		ghPRCommentsFn = origComments
+	})
+	ghPRViewFn = func(_ int, _ string) ([]byte, error) { return viewOut, viewErr }
+	ghPRReviewsFn = func(_ int, _ string) ([]byte, error) { return reviewsOut, reviewsErr }
+	ghPRCommentsFn = func(_ int, _ string) ([]byte, error) { return commentsOut, commentsErr }
 }
 
 func TestFormatPRTitle(t *testing.T) {
@@ -223,5 +242,145 @@ func TestPRUpdate_noBranch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no branch") {
 		t.Errorf("expected error to mention 'no branch', got: %v", err)
+	}
+}
+
+// --- gt pr show tests ---
+
+func TestPRShow_missingArg(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prShow(issues, testCfg(), []string{})
+	if err == nil {
+		t.Fatal("expected error for missing arg, got nil")
+	}
+}
+
+func TestPRShow_ticketNotFound(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prShow(issues, testCfg(), []string{"9999"})
+	if err == nil {
+		t.Fatal("expected error for non-existent ticket, got nil")
+	}
+}
+
+func TestPRShow_noPR(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	var viewCalled bool
+	origView := ghPRViewFn
+	t.Cleanup(func() { ghPRViewFn = origView })
+	ghPRViewFn = func(_ int, _ string) ([]byte, error) {
+		viewCalled = true
+		return nil, nil
+	}
+
+	_, _ = issues.Create("A task", "task", nil, nil, nil)
+	err := prShow(issues, testCfg(), []string{"1"})
+	if err == nil {
+		t.Fatal("expected error for ticket with no PR number, got nil")
+	}
+	if viewCalled {
+		t.Error("ghPRViewFn should not be called when ticket has no PR number")
+	}
+}
+
+func TestPRShow_prefixedTicketID(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("My task", "task", nil, nil, nil)
+	_ = issues.SetPR(id, 42)
+
+	metaJSON := `{"number":42,"title":"[nc-1] My task","state":"OPEN","headRefName":"prole/tin/1","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[]}`
+	reviewsJSON := `{"reviews":[]}`
+	commentsJSON := `{"comments":[]}`
+	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, []byte(commentsJSON), nil)
+
+	outStr, _ := captureOutput(func() {
+		err := prShow(issues, testCfg(), []string{"nc-1"})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	if !strings.Contains(outStr, "PR #42") {
+		t.Errorf("expected output to contain 'PR #42', got: %s", outStr)
+	}
+}
+
+func TestPRShow_softFailOnReviews(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("My task", "task", nil, nil, nil)
+	_ = issues.SetPR(id, 42)
+
+	metaJSON := `{"number":42,"title":"[nc-1] My task","state":"OPEN","headRefName":"prole/tin/1","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[]}`
+	commentsJSON := `{"comments":[{"author":{"login":"ceo"},"body":"looks good to me","createdAt":"2024-01-01T01:00:00Z"}]}`
+	stubPRShowFns(t, []byte(metaJSON), nil, nil, fmt.Errorf("permission denied"), []byte(commentsJSON), nil)
+
+	var outStr, errStr string
+	outStr, errStr = captureOutput(func() {
+		err := prShow(issues, testCfg(), []string{"1"})
+		if err != nil {
+			t.Errorf("expected nil (soft-fail), got %v", err)
+		}
+	})
+	if !strings.Contains(outStr, "looks good to me") {
+		t.Errorf("expected output to contain comment body, got: %s", outStr)
+	}
+	if !strings.Contains(errStr, "reviews") {
+		t.Errorf("expected stderr to mention 'reviews', got: %s", errStr)
+	}
+}
+
+func TestPRShow_softFailOnComments(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("My task", "task", nil, nil, nil)
+	_ = issues.SetPR(id, 42)
+
+	metaJSON := `{"number":42,"title":"[nc-1] My task","state":"OPEN","headRefName":"prole/tin/1","mergeable":"MERGEABLE","reviewDecision":"APPROVED","statusCheckRollup":[]}`
+	reviewsJSON := `{"reviews":[{"author":{"login":"reviewer"},"state":"APPROVED","submittedAt":"2024-01-01T00:00:00Z","body":"LGTM"}]}`
+	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, nil, fmt.Errorf("not found"))
+
+	var outStr, errStr string
+	outStr, errStr = captureOutput(func() {
+		err := prShow(issues, testCfg(), []string{"1"})
+		if err != nil {
+			t.Errorf("expected nil (soft-fail), got %v", err)
+		}
+	})
+	if !strings.Contains(outStr, "LGTM") {
+		t.Errorf("expected output to contain review body, got: %s", outStr)
+	}
+	if !strings.Contains(errStr, "comments") {
+		t.Errorf("expected stderr to mention 'comments', got: %s", errStr)
+	}
+}
+
+func TestPRShow_activityLimit(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("My task", "task", nil, nil, nil)
+	_ = issues.SetPR(id, 42)
+
+	metaJSON := `{"number":42,"title":"[nc-1] My task","state":"OPEN","headRefName":"prole/tin/1","mergeable":"MERGEABLE","reviewDecision":"","statusCheckRollup":[]}`
+	reviewsJSON := `{"reviews":[]}`
+	// 7 comments — only last 5 should appear
+	commentsJSON := `{"comments":[
+		{"author":{"login":"u1"},"body":"comment 1","createdAt":"2024-01-01T00:00:00Z"},
+		{"author":{"login":"u2"},"body":"comment 2","createdAt":"2024-01-01T01:00:00Z"},
+		{"author":{"login":"u3"},"body":"comment 3","createdAt":"2024-01-01T02:00:00Z"},
+		{"author":{"login":"u4"},"body":"comment 4","createdAt":"2024-01-01T03:00:00Z"},
+		{"author":{"login":"u5"},"body":"comment 5","createdAt":"2024-01-01T04:00:00Z"},
+		{"author":{"login":"u6"},"body":"comment 6","createdAt":"2024-01-01T05:00:00Z"},
+		{"author":{"login":"u7"},"body":"comment 7","createdAt":"2024-01-01T06:00:00Z"}
+	]}`
+	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, []byte(commentsJSON), nil)
+
+	outStr, _ := captureOutput(func() {
+		err := prShow(issues, testCfg(), []string{"1"})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	if strings.Contains(outStr, "comment 1") || strings.Contains(outStr, "comment 2") {
+		t.Errorf("expected old comments trimmed, but found them in output: %s", outStr)
+	}
+	if !strings.Contains(outStr, "comment 7") {
+		t.Errorf("expected most recent comment in output, got: %s", outStr)
 	}
 }

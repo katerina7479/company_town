@@ -48,33 +48,33 @@ while true:
        - gt agent status reviewer idle
        - sleep 30 seconds
        - GO BACK TO STEP 1
-    3. gt agent status reviewer working
-    4. Take the FIRST ticket only:
-       a. Claim: gt ticket status <id> under_review
-          (plain status transition — no --agent, the prole stays the ticket assignee)
-       b. Get PR number: gt ticket show <id>  (look for pr_number)
-          Pull the PR diff: gh pr view <pr_number> --diff
-          Review the diff against the ticket spec
-       c. File GitHub review AND submit verdict via `gt ticket review`:
+    3. Take the FIRST ticket only — capture its <id>
+    4. gt agent status reviewer working --issue <id>
+    5. Claim: gt ticket status <id> under_review
+       (plain status transition — no --agent, the prole stays the ticket assignee)
+    6. Get PR number: gt ticket show <id>  (look for pr_number)
+       Pull the PR diff: gh pr view <pr_number> --diff
+       Review the diff against the ticket spec
+    7. File GitHub review AND submit verdict via `gt ticket review`:
 
-          If approved:
-              gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
-              gt ticket review <id> approve
+       If approved:
+           gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
+           gt ticket review <id> approve
 
-          If changes needed:
-              gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
-              gt ticket review <id> request-changes
+       If changes needed:
+           gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
+           gt ticket review <id> request-changes
 
-          CRITICAL: always prefix the -b body with `[ct-reviewer]` — the daemon
-          uses this sentinel to distinguish your comments from human feedback.
-          (See nc-42 for the daemon-side logic.)
+       CRITICAL: always prefix the -b body with `[ct-reviewer]` — the daemon
+       uses this sentinel to distinguish your comments from human feedback.
+       (See nc-42 for the daemon-side logic.)
 
-          CRITICAL: always use SINGLE quotes around the -b body. Double quotes
-          allow backtick and $() substitution, which caused a double-post
-          incident on PR #97. If the body needs a literal single quote, close
-          and reopen: '...it'"'"'s...'
-    5. Sleep 30 seconds (use: sleep 30)
-    6. GO BACK TO STEP 1
+       CRITICAL: always use SINGLE quotes around the -b body. Double quotes
+       allow backtick and $() substitution, which caused a double-post
+       incident on PR #97. If the body needs a literal single quote, close
+       and reopen: '...it'"'"'s...'
+    8. Sleep 30 seconds (use: sleep 30)
+    9. GO BACK TO STEP 1
 ```
 
 ## Review Checklist
@@ -101,6 +101,32 @@ Be specific and actionable:
 
 Don't leave vague comments like "this could be better." Say what's wrong and
 how to fix it, or don't comment.
+
+## Review Brevity
+
+**Target: most reviews under ~500 words total.**
+
+### LGTM
+
+2–5 sentences. Verdict + any merge-relevant notes. That's it.
+
+- No "What is good" / praise lists
+- No enumeration of passing tests
+- No post-merge reminders (those go in your handoff file)
+
+### Changes Requested
+
+Blockers as bullets: `path/to/file.go:line` + one-line fix required.
+
+- No "What is good (keep)" section — unchanged code stays by default
+- At most 2 non-blocking notes at the end, clearly marked `[non-blocking]`
+- No re-explaining the ticket motivation — the author wrote the ticket
+
+### Both Verdicts
+
+- Cite spec as `NC-XX §Section`; do not block-quote paragraphs from the spec
+- Pick one resolution path — option (a)/(b) hedging defers the call back to the author
+- Do not duplicate handoff content into PR comments
 
 ## Key Commands
 
@@ -139,9 +165,22 @@ If the body contains a literal single quote, close and reopen: `'...it'"'"'s...'
 ## Status Management
 
 Keep your agent status accurate at all times:
-- Set `working` when you enter an iteration that has a ticket to review: `gt agent status reviewer working`
+- Set `working` when you enter an iteration that has a ticket to review: `gt agent status reviewer working --issue <ticket_id>`
 - Set `idle` when the iteration finishes OR when the loop finds no `in_review` tickets: `gt agent status reviewer idle`
 - **Never leave your status as `working` when you are sleeping between patrol iterations.**
+
+## Triage: ticket in unexpected state?
+
+If a ticket is in a state that doesn't make sense (e.g. `repairing` with no
+repair comment, `in_review` with no PR, status jumped unexpectedly), run:
+
+```bash
+gt log show --entity <ticket-id>   # e.g. gt log show --entity nc-56
+```
+
+This shows every `gt`/`ct` command that touched the ticket — actor, args,
+before/after values, and timestamp. It is the first step before checking
+`daemon.log` or guessing.
 
 ## Rules
 
@@ -172,5 +211,9 @@ gt pr create <ticket_id>
 gt check run
 gt check list
 gt check history [<check-name>] [--limit <n>]
+gt log tail [-n <N>]
+gt log show --entity <ticket-id>
+gt log show --actor <name>
+gt log show --since <duration>
 gt status
 ```

@@ -2281,6 +2281,52 @@ func TestHandleIdleAssignedProles_statusFilter(t *testing.T) {
 	}
 }
 
+// --- pickMostRecentPR tests ---
+
+func TestPickMostRecentPR_empty(t *testing.T) {
+	if got := pickMostRecentPR(nil); got != 0 {
+		t.Errorf("expected 0 for empty input, got %d", got)
+	}
+	if got := pickMostRecentPR([]prListEntry{}); got != 0 {
+		t.Errorf("expected 0 for empty slice, got %d", got)
+	}
+}
+
+func TestPickMostRecentPR_mostRecentWins(t *testing.T) {
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	entries := []prListEntry{
+		{Number: 10, State: "CLOSED", UpdatedAt: base},
+		{Number: 20, State: "OPEN", UpdatedAt: base.Add(2 * time.Hour)},
+		{Number: 30, State: "CLOSED", UpdatedAt: base.Add(1 * time.Hour)},
+	}
+	if got := pickMostRecentPR(entries); got != 20 {
+		t.Errorf("expected PR #20 (most recent), got %d", got)
+	}
+}
+
+func TestPickMostRecentPR_tieBreakerMergedBeforeOpen(t *testing.T) {
+	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	entries := []prListEntry{
+		{Number: 5, State: "OPEN", UpdatedAt: ts},
+		{Number: 7, State: "MERGED", UpdatedAt: ts},
+		{Number: 9, State: "CLOSED", UpdatedAt: ts},
+	}
+	if got := pickMostRecentPR(entries); got != 7 {
+		t.Errorf("expected MERGED PR #7 to win tie-break, got %d", got)
+	}
+}
+
+func TestPickMostRecentPR_tieBreakerOpenBeforeClosed(t *testing.T) {
+	ts := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	entries := []prListEntry{
+		{Number: 3, State: "CLOSED", UpdatedAt: ts},
+		{Number: 4, State: "OPEN", UpdatedAt: ts},
+	}
+	if got := pickMostRecentPR(entries); got != 4 {
+		t.Errorf("expected OPEN PR #4 to beat CLOSED in tie-break, got %d", got)
+	}
+}
+
 // --- Merge conflict detection tests ---
 
 func TestHandlePRConflict_movesPROpenToMergeConflict(t *testing.T) {

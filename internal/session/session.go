@@ -175,3 +175,91 @@ func shellQuote(s string) string {
 	escaped := strings.ReplaceAll(s, "'", "'\\''")
 	return "'" + escaped + "'"
 }
+
+// ErrUnknownTerminal is returned by SpawnAttach when $TERM_PROGRAM is
+// unrecognized. Callers should fall back to in-place tmux attach.
+var ErrUnknownTerminal = fmt.Errorf("unrecognized TERM_PROGRAM; falling back to in-place attach")
+
+// spawnAttachExec is the exec seam for terminal spawn functions.
+// Tests swap this to capture argv and stub outputs.
+var spawnAttachExec = func(name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	return cmd.CombinedOutput()
+}
+
+// SpawnAttach opens a new terminal window running tmux attach -t sessionName.
+// The calling process keeps running. Supported: Ghostty, iTerm2, Terminal.app.
+// Returns ErrUnknownTerminal for unrecognized $TERM_PROGRAM.
+func SpawnAttach(sessionName string) error {
+	termProg := strings.TrimSpace(os.Getenv("TERM_PROGRAM"))
+	switch termProg {
+	case "ghostty":
+		return spawnGhostty(sessionName)
+	case "iTerm.app":
+		return spawnITerm(sessionName)
+	case "Apple_Terminal":
+		return spawnAppleTerminal(sessionName)
+	default:
+		return ErrUnknownTerminal
+	}
+}
+
+// attachArgv returns the tmux attach command string for use in a terminal script.
+func attachArgv(sessionName string) string {
+	return "tmux attach-session -t " + shellQuote(sessionName)
+}
+
+// osascriptQuote wraps s in AppleScript string delimiters, escaping double quotes.
+func osascriptQuote(s string) string {
+	escaped := strings.ReplaceAll(s, `"`, `\" & quote & "`)
+	return `"` + escaped + `"`
+}
+
+func spawnGhostty(sessionName string) error {
+	script := fmt.Sprintf(`
+tell application "Ghostty"
+	activate
+	tell application "System Events"
+		tell process "Ghostty"
+			keystroke "n" using command down
+			delay 0.3
+			keystroke %s
+			key code 52
+		end tell
+	end tell
+end tell`, osascriptQuote(attachArgv(sessionName)))
+	out, err := spawnAttachExec("osascript", "-e", script)
+	if err != nil {
+		return fmt.Errorf("ghostty osascript: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func spawnITerm(sessionName string) error {
+	script := fmt.Sprintf(`
+tell application "iTerm"
+	activate
+	set newWin to (create window with default profile)
+	tell current session of newWin
+		write text %s
+	end tell
+end tell`, osascriptQuote(attachArgv(sessionName)))
+	out, err := spawnAttachExec("osascript", "-e", script)
+	if err != nil {
+		return fmt.Errorf("iTerm osascript: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func spawnAppleTerminal(sessionName string) error {
+	script := fmt.Sprintf(`
+tell application "Terminal"
+	activate
+	do script %s
+end tell`, osascriptQuote(attachArgv(sessionName)))
+	out, err := spawnAttachExec("osascript", "-e", script)
+	if err != nil {
+		return fmt.Errorf("Terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

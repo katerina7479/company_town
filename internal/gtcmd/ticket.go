@@ -38,7 +38,7 @@ func parseTicketID(s string) (int, error) {
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|close|delete|depend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|priority|close|delete|depend> ...")
 		os.Exit(1)
 	}
 
@@ -52,6 +52,12 @@ func Ticket(args []string) error {
 	issues := repo.NewIssueRepo(conn, events)
 	agents := repo.NewAgentRepo(conn, events)
 
+	return ticketDispatch(issues, agents, cfg, args)
+}
+
+// ticketDispatch is the inner dispatcher, separated from Ticket so tests can
+// inject repos directly without needing a running Dolt server.
+func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.Config, args []string) error {
 	switch args[0] {
 	case "create":
 		return ticketCreate(issues, cfg.TicketPrefix, args[1:])
@@ -77,7 +83,7 @@ func Ticket(args []string) error {
 		return ticketDepend(issues, cfg.TicketPrefix, args[1:])
 	case "describe":
 		return ticketDescribe(issues, args[1:])
-	case "prioritize":
+	case "prioritize", "priority":
 		return ticketPrioritize(issues, args[1:])
 	case "type":
 		return ticketType(issues, args[1:])
@@ -88,7 +94,7 @@ func Ticket(args []string) error {
 
 func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3>]")
+		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3|P4|P5>]")
 	}
 
 	var parentID *int
@@ -139,7 +145,7 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 			i++
 			p := args[i]
 			if !isValidPriority(p) {
-				return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3", p)
+				return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3, P4, P5", p)
 			}
 			priority = &p
 		default:
@@ -157,6 +163,11 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 		return fmt.Errorf("gt ticket create: expected one title, got %d positional args (quote the title if it contains spaces): %v", len(positional), positional)
 	}
 	title := positional[0]
+
+	if priority == nil {
+		defaultPriority := "P3"
+		priority = &defaultPriority
+	}
 
 	id, err := issues.Create(title, issueType, parentID, specialty, priority)
 	if err != nil {
@@ -510,7 +521,7 @@ func isValidPriority(p string) bool {
 
 func ticketPrioritize(issues *repo.IssueRepo, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: gt ticket prioritize <id> <P0|P1|P2|P3>")
+		return fmt.Errorf("usage: gt ticket priority <id> <P0|P1|P2|P3|P4|P5>")
 	}
 
 	id, err := parseTicketID(args[0])
@@ -520,7 +531,7 @@ func ticketPrioritize(issues *repo.IssueRepo, args []string) error {
 
 	priority := args[1]
 	if !isValidPriority(priority) {
-		return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3", priority)
+		return fmt.Errorf("invalid priority %q: must be one of P0, P1, P2, P3, P4, P5", priority)
 	}
 
 	if err := issues.SetPriority(id, priority); err != nil {

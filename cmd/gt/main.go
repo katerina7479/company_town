@@ -8,6 +8,10 @@ import (
 	"github.com/katerina7479/company_town/internal/gtcmd"
 )
 
+// version is set at build time via -ldflags "-X main.version=<tag>".
+// Falls back to "dev" for local builds.
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -17,9 +21,14 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
+	if cmd == "--version" || cmd == "version" {
+		fmt.Println("gt version", version)
+		return
+	}
+
 	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "ticket", "prole", "agent", "pr", "start", "stop", "status", "check", "migrate":
+	case "ticket", "prole", "agent", "pr", "create", "start", "stop", "status", "check", "migrate", "log":
 		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
@@ -45,8 +54,12 @@ func main() {
 			return gtcmd.Status()
 		case "check":
 			return gtcmd.Check(args)
+		case "create":
+			return gtcmd.Create(args)
 		case "migrate":
 			return gtcmd.Migrate()
+		case "log":
+			return gtcmd.Log(args)
 		}
 		return nil
 	})
@@ -55,12 +68,32 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Emit a rate-limited stderr warning if the caller's agent row has drifted.
+	// Skip on:
+	//   - read-only introspection commands (status, check) — drift rendered inline
+	//   - agent lifecycle verbs (accept, release, do, status) — actively correcting state
+	skipDrift := cmd == "status" || cmd == "check" ||
+		(cmd == "agent" && len(args) > 0 && isAgentExemptVerb(args[0]))
+	gtcmd.WarnDriftOnStdErr(skipDrift)
+}
+
+// isAgentExemptVerb returns true for gt agent subcommands that should not
+// trigger a drift warning. These are verbs that actively fix or report state,
+// so a warning would be confusing or redundant.
+func isAgentExemptVerb(verb string) bool {
+	switch verb {
+	case "accept", "release", "do", "status":
+		return true
+	}
+	return false
 }
 
 func printUsage() {
 	fmt.Println(`Usage: gt <command>
 
 Commands:
+  create <reviewer> <name>                                      Create agents
   ticket <create|show|list|ready|assign|status|close|depend>   Manage tickets
   prole <create|reset|list>                                     Manage proles
   agent <register|status>                                        Manage agents
@@ -69,5 +102,6 @@ Commands:
   stop <agent>                                                   Stop an agent (graceful)
   status                                                         Print system status
   check <run|list|history>                                       Run and view quality checks
-  migrate                                                        Apply pending database migrations`)
+  migrate                                                        Apply pending database migrations
+  log <tail|show> [flags]                                        Read the command audit log`)
 }
