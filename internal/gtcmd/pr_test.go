@@ -293,7 +293,7 @@ func TestPRShow_prefixedTicketID(t *testing.T) {
 	commentsJSON := `{"comments":[]}`
 	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, []byte(commentsJSON), nil)
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"nc-1"})
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
@@ -314,7 +314,7 @@ func TestPRShow_softFailOnReviews(t *testing.T) {
 	stubPRShowFns(t, []byte(metaJSON), nil, nil, fmt.Errorf("permission denied"), []byte(commentsJSON), nil)
 
 	var outStr, errStr string
-	outStr, errStr = captureOutput(func() {
+	outStr, errStr = captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"1"})
 		if err != nil {
 			t.Errorf("expected nil (soft-fail), got %v", err)
@@ -338,7 +338,7 @@ func TestPRShow_softFailOnComments(t *testing.T) {
 	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, nil, fmt.Errorf("not found"))
 
 	var outStr, errStr string
-	outStr, errStr = captureOutput(func() {
+	outStr, errStr = captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"1"})
 		if err != nil {
 			t.Errorf("expected nil (soft-fail), got %v", err)
@@ -371,7 +371,7 @@ func TestPRShow_activityLimit(t *testing.T) {
 	]}`
 	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, []byte(commentsJSON), nil)
 
-	outStr, _ := captureOutput(func() {
+	outStr, _ := captureLogOutput(func() {
 		err := prShow(issues, testCfg(), []string{"1"})
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
