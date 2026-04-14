@@ -2650,3 +2650,226 @@ func TestRunCmd_noStderrOnFailure(t *testing.T) {
 		t.Errorf("expected exit status in error, got: %v", err)
 	}
 }
+
+// --- PR CI check detection tests (nc-130) ---
+
+func TestHandlePRCIChecks_movesPROpenToRepairingAndNudgesProle(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 42)
+	issues.Assign(id, "tin", "prole/tin/nc-42")
+
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return true, []string{"test", "lint"}, nil
+	}
+
+	d.handlePRCIChecks()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge to prole, got %d", len(*sent))
+	}
+	if (*sent)[0].session != proleSession {
+		t.Errorf("expected nudge to %q, got %q", proleSession, (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "CI FAILURE", "PR #42", "NC-"+itoa(id), "test", "lint") {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandlePRCIChecks_noNudgeWhenProleSessionAbsent(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 50)
+	issues.Assign(id, "tin", "prole/tin/nc-50")
+
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return true, []string{"test"}, nil
+	}
+
+	d.handlePRCIChecks()
+
+	// Ticket should still be moved to repairing even without an active session.
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge (session absent), got %d", len(*sent))
+	}
+}
+
+func TestHandlePRCIChecks_noNudgeWhenNoAssignee(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+
+	id, _ := issues.Create("Unassigned ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 51)
+	// no Assign call — ticket has no assignee
+
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return true, []string{"test"}, nil
+	}
+
+	d.handlePRCIChecks()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge (no assignee), got %d", len(*sent))
+	}
+}
+
+func TestHandlePRCIChecks_noSpam(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+	d.nudgeCooldown = 1 * time.Hour
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 55)
+	issues.Assign(id, "tin", "prole/tin/nc-55")
+
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return true, []string{"test"}, nil
+	}
+
+	// First call — moves ticket to repairing and nudges.
+	d.handlePRCIChecks()
+	firstCount := len(*sent)
+
+	// Move ticket back to pr_open to simulate a re-push that still fails.
+	issues.UpdateStatus(id, "pr_open")
+
+	// Second call within cooldown with the same failing checks — should not nudge again.
+	d.handlePRCIChecks()
+
+	if len(*sent) != firstCount {
+		t.Errorf("expected no additional nudge within cooldown, got %d total nudges", len(*sent))
+	}
+}
+
+func TestHandlePRCIChecks_noopIfAllPassed(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 60)
+	issues.Assign(id, "tin", "prole/tin/nc-60")
+
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return false, nil, nil
+	}
+
+	d.handlePRCIChecks()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "pr_open" {
+		t.Errorf("expected status=pr_open (no change), got %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge (all checks passed), got %d", len(*sent))
+	}
+}
+
+func TestHandlePRCIChecks_skipsNonPROpenStatus(t *testing.T) {
+	statuses := []string{
+		"draft", "open", "in_progress", "in_review", "under_review",
+		"repairing", "merge_conflict", "reviewed", "closed",
+	}
+
+	for _, status := range statuses {
+		t.Run(status, func(t *testing.T) {
+			d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+			id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+			issues.UpdateStatus(id, status)
+			issues.SetPR(id, 200)
+			issues.Assign(id, "tin", "prole/tin/nc-200")
+
+			var called bool
+			d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+				called = true
+				return true, []string{"test"}, nil
+			}
+
+			d.handlePRCIChecks()
+
+			updated, _ := issues.Get(id)
+			if updated.Status != status {
+				t.Errorf("status %q: expected no change, got %q", status, updated.Status)
+			}
+			if called {
+				t.Errorf("status %q: getPRCIChecks should not be called for non-pr_open tickets", status)
+			}
+			if len(*sent) != 0 {
+				t.Errorf("status %q: expected no nudge, got %d", status, len(*sent))
+			}
+		})
+	}
+}
+
+func TestHandlePRCIChecks_obsCounter(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+	d.obs = &tickObservations{}
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 70)
+
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return true, []string{"test"}, nil
+	}
+
+	d.handlePRCIChecks()
+
+	if d.obs.prEventsCIFailed != 1 {
+		t.Errorf("expected prEventsCIFailed=1, got %d", d.obs.prEventsCIFailed)
+	}
+}
+
+func TestHandlePRCIChecks_nudgesAgainAfterCooldownWithDifferentFailure(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+	d.nudgeCooldown = 1 * time.Hour
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 80)
+	issues.Assign(id, "tin", "prole/tin/nc-80")
+
+	// First call — test fails; nudged.
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return true, []string{"test"}, nil
+	}
+	d.handlePRCIChecks()
+	firstCount := len(*sent)
+
+	// Simulate prole pushed a partial fix; ticket back to pr_open, different check now fails.
+	issues.UpdateStatus(id, "pr_open")
+	d.getPRCIChecksFn = func(_ int) (bool, []string, error) {
+		return true, []string{"security"}, nil
+	}
+
+	// Advance clock past the cooldown — different digest + expired cooldown → nudge fires.
+	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	d.handlePRCIChecks()
+
+	if len(*sent) <= firstCount {
+		t.Errorf("expected nudge after cooldown + digest change, got %d total nudges", len(*sent))
+	}
+	if !containsAll((*sent)[len(*sent)-1].msg, "CI FAILURE", "PR #80", "security") {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[len(*sent)-1].msg)
+	}
+}
