@@ -38,7 +38,7 @@ func parseTicketID(s string) (int, error) {
 // Ticket dispatches gt ticket subcommands.
 func Ticket(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|priority|close|delete|depend|undepend> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt ticket <create|show|list|ready|assign|unassign|status|type|priority|close|delete|depend|undepend|parent|unparent> ...")
 		os.Exit(1)
 	}
 
@@ -83,6 +83,10 @@ func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.
 		return ticketDepend(issues, cfg.TicketPrefix, args[1:])
 	case "undepend":
 		return ticketUndepend(issues, cfg.TicketPrefix, args[1:])
+	case "parent":
+		return ticketParent(issues, cfg.TicketPrefix, args[1:])
+	case "unparent":
+		return ticketUnparent(issues, cfg.TicketPrefix, args[1:])
 	case "describe":
 		return ticketDescribe(issues, args[1:])
 	case "prioritize", "priority":
@@ -624,5 +628,60 @@ func ticketUndepend(issues *repo.IssueRepo, prefix string, args []string) error 
 	}
 
 	fmt.Printf("%s-%d no longer depends on %s-%d\n", prefix, id, prefix, dependsOnID)
+	return nil
+}
+
+func ticketParent(issues *repo.IssueRepo, prefix string, args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: gt ticket parent <id> <parent-id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	parentID, err := parseTicketID(args[1])
+	if err != nil {
+		return err
+	}
+
+	if _, err := issues.Get(id); err != nil {
+		return fmt.Errorf("ticket %d: %w", id, err)
+	}
+	if _, err := issues.Get(parentID); err != nil {
+		return fmt.Errorf("ticket %d: %w", parentID, err)
+	}
+	if id == parentID {
+		return fmt.Errorf("ticket %d cannot be its own parent", id)
+	}
+
+	if err := issues.SetParent(id, parentID); err != nil {
+		return err
+	}
+
+	fmt.Printf("%s-%d parent → %s-%d\n", prefix, id, prefix, parentID)
+	return nil
+}
+
+func ticketUnparent(issues *repo.IssueRepo, prefix string, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket unparent <id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	if _, err := issues.Get(id); err != nil {
+		return fmt.Errorf("ticket %d: %w", id, err)
+	}
+
+	if err := issues.ClearParent(id); err != nil {
+		return err
+	}
+
+	fmt.Printf("%s-%d parent cleared\n", prefix, id)
 	return nil
 }

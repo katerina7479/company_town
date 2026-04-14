@@ -906,3 +906,108 @@ func TestTicketUndepend_prefixedIDs(t *testing.T) {
 		t.Errorf("expected no deps, got %v", deps)
 	}
 }
+
+func TestTicketParent_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	parent, _ := issues.Create("Epic", "epic", nil, nil, nil)
+	child, _ := issues.Create("Task", "task", nil, nil, nil)
+
+	if err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", child), fmt.Sprintf("%d", parent),
+	}); err != nil {
+		t.Fatalf("ticketParent: %v", err)
+	}
+
+	got, _ := issues.Get(child)
+	if !got.ParentID.Valid || int(got.ParentID.Int64) != parent {
+		t.Errorf("ParentID = %v, want %d", got.ParentID, parent)
+	}
+}
+
+func TestTicketParent_selfParent(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Task", "task", nil, nil, nil)
+	err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", id), fmt.Sprintf("%d", id),
+	})
+	if err == nil {
+		t.Error("expected error for self-parent")
+	}
+}
+
+func TestTicketParent_nonexistentTicket(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Task", "task", nil, nil, nil)
+	err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", id), "9999",
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent parent")
+	}
+	if !strings.Contains(err.Error(), "9999") {
+		t.Errorf("error should mention missing id, got: %v", err)
+	}
+}
+
+func TestTicketParent_prefixedIDs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	parent, _ := issues.Create("Epic", "epic", nil, nil, nil)
+	child, _ := issues.Create("Task", "task", nil, nil, nil)
+
+	if err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("nc-%d", child), fmt.Sprintf("nc-%d", parent),
+	}); err != nil {
+		t.Fatalf("ticketParent with prefix: %v", err)
+	}
+
+	got, _ := issues.Get(child)
+	if !got.ParentID.Valid || int(got.ParentID.Int64) != parent {
+		t.Errorf("ParentID = %v, want %d", got.ParentID, parent)
+	}
+}
+
+func TestTicketUnparent_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	parent, _ := issues.Create("Epic", "epic", nil, nil, nil)
+	child, _ := issues.Create("Task", "task", &parent, nil, nil)
+
+	if err := ticketUnparent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", child),
+	}); err != nil {
+		t.Fatalf("ticketUnparent: %v", err)
+	}
+
+	got, _ := issues.Get(child)
+	if got.ParentID.Valid {
+		t.Errorf("expected ParentID NULL after unparent, got %d", got.ParentID.Int64)
+	}
+}
+
+func TestTicketUnparent_nonexistentTicket(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	err := ticketUnparent(issues, cfg.TicketPrefix, []string{"9999"})
+	if err == nil {
+		t.Error("expected error for nonexistent ticket")
+	}
+}
+
+func TestTicketUnparent_invalidArgs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketUnparent(issues, cfg.TicketPrefix, []string{}); err == nil {
+		t.Error("expected error for empty args")
+	}
+}
