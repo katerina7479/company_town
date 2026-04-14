@@ -631,6 +631,28 @@ func ticketUndepend(issues *repo.IssueRepo, prefix string, args []string) error 
 	return nil
 }
 
+// walkParents traverses the parent chain starting at startID and returns the
+// set of all ancestor IDs. Returns an error if the chain contains a cycle.
+func walkParents(issues *repo.IssueRepo, startID int) (map[int]bool, error) {
+	seen := make(map[int]bool)
+	cur := startID
+	for cur > 0 {
+		if seen[cur] {
+			return seen, fmt.Errorf("parent chain contains a cycle at %d", cur)
+		}
+		seen[cur] = true
+		issue, err := issues.Get(cur)
+		if err != nil {
+			return seen, err
+		}
+		if !issue.ParentID.Valid {
+			break
+		}
+		cur = int(issue.ParentID.Int64)
+	}
+	return seen, nil
+}
+
 func ticketParent(issues *repo.IssueRepo, prefix string, args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: gt ticket parent <id> <parent-id>")
@@ -654,6 +676,15 @@ func ticketParent(issues *repo.IssueRepo, prefix string, args []string) error {
 	}
 	if id == parentID {
 		return fmt.Errorf("ticket %d cannot be its own parent", id)
+	}
+
+	ancestors, err := walkParents(issues, parentID)
+	if err != nil {
+		return err
+	}
+	if ancestors[id] {
+		return fmt.Errorf("refusing to set parent: %s-%d is already an ancestor of %s-%d",
+			prefix, id, prefix, parentID)
 	}
 
 	if err := issues.SetParent(id, parentID); err != nil {

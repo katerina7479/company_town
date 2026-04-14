@@ -1011,3 +1011,84 @@ func TestTicketUnparent_invalidArgs(t *testing.T) {
 		t.Error("expected error for empty args")
 	}
 }
+
+func TestTicketParent_rejectsCycleDirect(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	a, _ := issues.Create("A", "task", nil, nil, nil)
+	b, _ := issues.Create("B", "task", nil, nil, nil)
+
+	// B parents A
+	if err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", b), fmt.Sprintf("%d", a),
+	}); err != nil {
+		t.Fatalf("first parent: %v", err)
+	}
+
+	// Try to make A parent B — would create a cycle
+	err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", a), fmt.Sprintf("%d", b),
+	})
+	if err == nil {
+		t.Fatal("expected error for direct cycle (A→B, B→A), got nil")
+	}
+}
+
+func TestTicketParent_rejectsCycleIndirect(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	a, _ := issues.Create("A", "task", nil, nil, nil)
+	b, _ := issues.Create("B", "task", nil, nil, nil)
+	c, _ := issues.Create("C", "task", nil, nil, nil)
+
+	// Build chain: C→B→A (C parents B, B parents A)
+	if err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", c), fmt.Sprintf("%d", b),
+	}); err != nil {
+		t.Fatalf("C→B: %v", err)
+	}
+	if err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", b), fmt.Sprintf("%d", a),
+	}); err != nil {
+		t.Fatalf("B→A: %v", err)
+	}
+
+	// Try to make A parent C — A is an ancestor of C, so this would cycle
+	err := ticketParent(issues, cfg.TicketPrefix, []string{
+		fmt.Sprintf("%d", a), fmt.Sprintf("%d", c),
+	})
+	if err == nil {
+		t.Fatal("expected error for indirect cycle (C→B→A, then A→C), got nil")
+	}
+}
+
+func TestTicketParent_idempotent(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	parent, _ := issues.Create("Parent", "epic", nil, nil, nil)
+	child, _ := issues.Create("Child", "task", nil, nil, nil)
+
+	args := []string{fmt.Sprintf("%d", child), fmt.Sprintf("%d", parent)}
+	if err := ticketParent(issues, cfg.TicketPrefix, args); err != nil {
+		t.Fatalf("first ticketParent: %v", err)
+	}
+	// Second call with the same parent should succeed (idempotent)
+	if err := ticketParent(issues, cfg.TicketPrefix, args); err != nil {
+		t.Errorf("second ticketParent (same parent) should succeed, got: %v", err)
+	}
+}
+
+func TestTicketUnparent_idempotentWhenNoParent(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Root", "task", nil, nil, nil)
+
+	// Unparent a ticket that has no parent — should succeed silently
+	if err := ticketUnparent(issues, cfg.TicketPrefix, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Errorf("unparent on ticket with no parent should succeed, got: %v", err)
+	}
+}
