@@ -242,6 +242,52 @@ func TestSparkline_dispatchesPassfail(t *testing.T) {
 	}
 }
 
+// ── trendArrow direction tests ────────────────────────────────────────────────
+
+func TestTrendArrow_lowerDirection_ascendingIsBad(t *testing.T) {
+	// todo_count climbing (22→18→14 newest-first means ascending over time)
+	// is a regression for a lower-is-better metric, so arrow is red even though glyph is ↑.
+	hist := []*repo.QualityMetric{
+		metricPoint(22, "fail"),
+		metricPoint(18, "warn"),
+		metricPoint(14, "pass"),
+	}
+	out := trendArrow(hist, "lower")
+	if !strings.Contains(out, "↑") {
+		t.Errorf("expected ↑ glyph for ascending history, got %q", stripANSI(out))
+	}
+	// Style must be red (bad direction), not green.
+	if out != qDownStyle.Render("↑") {
+		t.Errorf("expected red (qDownStyle) styling for ascending lower-is-better metric, got %q", out)
+	}
+}
+
+func TestTrendArrow_lowerDirection_descendingIsGood(t *testing.T) {
+	// todo_count falling (14→18→22 newest-first) is an improvement; arrow should be green.
+	hist := []*repo.QualityMetric{
+		metricPoint(14, "pass"),
+		metricPoint(18, "warn"),
+		metricPoint(22, "fail"),
+	}
+	out := trendArrow(hist, "lower")
+	if out != qUpStyle.Render("↓") {
+		t.Errorf("expected green (qUpStyle) ↓ for descending lower-is-better metric, got %q", out)
+	}
+}
+
+func TestTrendArrow_higherDirection_ascendingIsGood(t *testing.T) {
+	// Coverage rising (53→65→72 newest-first) is an improvement; arrow should be green ↑.
+	hist := []*repo.QualityMetric{
+		metricPoint(72, "pass"),
+		metricPoint(65, "warn"),
+		metricPoint(53, "fail"),
+	}
+	out := trendArrow(hist, "")
+	if out != qUpStyle.Render("↑") {
+		t.Errorf("expected green (qUpStyle) ↑ for ascending higher-is-better metric, got %q", out)
+	}
+}
+
 // ── stripANSI helper ──────────────────────────────────────────────────────────
 
 // stripANSI removes ANSI escape sequences from s so tests can check plain text.

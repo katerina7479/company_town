@@ -219,7 +219,7 @@ func (m qualityModel) viewList() string {
 	var sb strings.Builder
 
 	header := fmt.Sprintf("%-28s  %-6s  %-12s  %-10s  %-10s  %-3s  %s",
-		"CHECK", "STATUS", "VALUE", "TARGET", "WARN", "DIR", "TREND",
+		"CHECK", "STATUS", "VALUE", "TARGET", "WARN", "TRD", "SPARKLINE",
 	)
 	sb.WriteString(qHeaderStyle.Render(header))
 	sb.WriteString("\n")
@@ -288,6 +288,9 @@ func (m qualityModel) viewDetail() string {
 		}
 	}
 
+	// detailHistory is a snapshot captured at enter-press time and does not
+	// refresh on the 30s tick. This is intentional — the user is inspecting a
+	// static slice while the background ticker keeps the list view current.
 	hist := m.detailHistory
 	if hist == nil {
 		hist = row.history
@@ -361,7 +364,7 @@ func renderQualityRow(row qualityRow) string {
 		}
 	}
 
-	arrow := trendArrow(row.history)
+	arrow := trendArrow(row.history, row.cfg.Direction)
 	spark := sparkline(row)
 
 	return fmt.Sprintf("%-28s  %s  %-12s  %-10s  %-10s  %-3s  %s",
@@ -422,8 +425,11 @@ func padVisible(s string, width int) string {
 }
 
 // trendArrow returns a colored ↑/↓/→ comparing the latest vs oldest value in
-// newest-first history. Assumes higher-is-better (no direction field in config).
-func trendArrow(hist []*repo.QualityMetric) string {
+// newest-first history. direction is "lower" for lower-is-better metrics
+// (e.g. todo_count, lint_warning_count); empty or "higher" for the default.
+// The arrow glyph reflects the direction of change; the color reflects whether
+// that change is good (green) or bad (red) given the metric's direction.
+func trendArrow(hist []*repo.QualityMetric, direction string) string {
 	var vals []float64
 	for _, r := range hist {
 		if r.Value.Valid {
@@ -440,14 +446,22 @@ func trendArrow(hist []*repo.QualityMetric) string {
 	}
 	delta := (cur - old) / math.Abs(old)
 	const threshold = 0.05
+	var arrow string
+	var good bool
 	switch {
 	case delta > threshold:
-		return qUpStyle.Render("↑")
+		arrow = "↑"
+		good = direction != "lower" // rising is good unless lower-is-better
 	case delta < -threshold:
-		return qDownStyle.Render("↓")
+		arrow = "↓"
+		good = direction == "lower" // falling is good only if lower-is-better
 	default:
 		return qFlatStyle.Render("→")
 	}
+	if good {
+		return qUpStyle.Render(arrow) // green
+	}
+	return qDownStyle.Render(arrow) // red
 }
 
 // sparkline dispatches to metric or pass/fail sparkline.
