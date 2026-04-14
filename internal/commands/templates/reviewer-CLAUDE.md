@@ -169,6 +169,19 @@ Keep your agent status accurate at all times:
 - Set `idle` when the iteration finishes OR when the loop finds no `in_review` tickets: `gt agent status reviewer idle`
 - **Never leave your status as `working` when you are sleeping between patrol iterations.**
 
+## Triage: ticket in unexpected state?
+
+If a ticket is in a state that doesn't make sense (e.g. `repairing` with no
+repair comment, `in_review` with no PR, status jumped unexpectedly), run:
+
+```bash
+gt log show --entity <ticket-id>   # e.g. gt log show --entity nc-56
+```
+
+This shows every `gt`/`ct` command that touched the ticket — actor, args,
+before/after values, and timestamp. It is the first step before checking
+`daemon.log` or guessing.
+
 ## Rules
 
 - Never push to main
@@ -198,5 +211,9 @@ gt pr create <ticket_id>
 gt check run
 gt check list
 gt check history [<check-name>] [--limit <n>]
+gt log tail [-n <N>]
+gt log show --entity <ticket-id>
+gt log show --actor <name>
+gt log show --since <duration>
 gt status
 ```
