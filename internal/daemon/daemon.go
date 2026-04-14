@@ -45,6 +45,7 @@ type tickObservations struct {
 	prEventsCIFail           int  // ci_running PRs moved to repairing (CI failure)
 	epics                    int  // completable epics found
 	qualitySkip              bool // quality baseline was interval-guarded
+	repairCycleEscalations   int  // tickets moved to on_hold for exceeding repair cycle threshold
 }
 
 // Daemon polls for state changes and routes work to agents.
@@ -94,6 +95,9 @@ type Daemon struct {
 	lastRestartedAt   map[string]time.Time
 	restartCooldown   time.Duration
 	restartDeadAgents bool
+
+	// Repair-cycle escalation
+	repairCycleThreshold int
 
 	// Review comment fetching (injectable for tests)
 	getReviewCommentsFn func(prNum int) ([]prComment, error)
@@ -158,11 +162,12 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 			return lookupPRForBranch(branch, cfg.ProjectRoot)
 		},
 		prBackfillInterval: time.Duration(cfg.PRBackfillIntervalSeconds) * time.Second,
-		restartDeadAgents:  cfg.RestartDeadAgents,
-		restartCooldown:    time.Duration(cfg.RestartCooldownSeconds) * time.Second,
-		lastRestartedAt:    make(map[string]time.Time),
-		restartAgent:       makeRestartFn(cfg, agentRepo, logger),
-		tickFile:           filepath.Join(ctDir, "run", "daemon-tick"),
+		restartDeadAgents:    cfg.RestartDeadAgents,
+		restartCooldown:      time.Duration(cfg.RestartCooldownSeconds) * time.Second,
+		lastRestartedAt:      make(map[string]time.Time),
+		restartAgent:         makeRestartFn(cfg, agentRepo, logger),
+		repairCycleThreshold: cfg.RepairCycleThreshold,
+		tickFile:             filepath.Join(ctDir, "run", "daemon-tick"),
 	}, nil
 }
 
@@ -386,6 +391,7 @@ func (d *Daemon) poll() {
 	d.handleIdleAssignedProles()
 	d.handleInReviewTickets()
 	d.handlePREvents()
+	d.handleRepairCycleEscalation()
 	d.handleEpicAutoClose()
 	d.handleQualityBaseline()
 
@@ -427,7 +433,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //
 // Format:
 //
-//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N/N/N/N/N epics=N quality=skip|ran
+//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N/N/N/N/N repairEsc=N epics=N quality=skip|ran
 //
 // Fields:
 //
@@ -438,6 +444,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //	assign       — selectable tickets / available slots / actually assigned
 //	inReview     — in_review tickets with a PR number
 //	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved / ci-pass / ci-fail
+//	repairEsc    — tickets moved to on_hold for exceeding repair-cycle threshold
 //	epics        — completable epics found
 //	quality      — "ran" when baseline executed, "skip" when interval-guarded
 func logTickSummary(logger *log.Logger, obs tickObservations) {
@@ -449,7 +456,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 	if obs.qualitySkip {
 		quality = "skip"
 	}
-	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d/%d/%d/%d/%d epics=%d quality=%s",
+	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d/%d/%d/%d/%d repairEsc=%d epics=%d quality=%s",
 		obs.dead,
 		worktrees,
 		obs.prBackfillFound, obs.prBackfillDone,
@@ -458,6 +465,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 		obs.inReview,
 		obs.prEventsTotal, obs.prEventsMerged, obs.prEventsRepairing, obs.prEventsClosed,
 		obs.prEventsConflict, obs.prEventsConflictResolved, obs.prEventsCIPass, obs.prEventsCIFail,
+		obs.repairCycleEscalations,
 		obs.epics,
 		quality,
 	)
@@ -777,6 +785,62 @@ func (d *Daemon) handleStuckAgents() {
 			d.logger.Printf("error escalating stuck agent %s to Mayor: %v", agent.Name, err)
 		} else {
 			d.recordNudge(nudgeKey, "")
+		}
+	}
+}
+
+// handleRepairCycleEscalation detects tickets that have bounced between
+// in_review and repairing more than repairCycleThreshold times. When the
+// threshold is exceeded the ticket is moved to on_hold so a human can
+// intervene instead of the system spinning indefinitely. The Mayor is
+// notified with a brief summary.
+func (d *Daemon) handleRepairCycleEscalation() {
+	if d.repairCycleThreshold <= 0 {
+		return // disabled
+	}
+
+	mayorSession := session.SessionName("mayor")
+	if !d.sessionExists(mayorSession) {
+		return // Mayor not running, nowhere to escalate
+	}
+
+	repairing, err := d.issues.List("repairing")
+	if err != nil {
+		d.logger.Printf("error listing repairing tickets: %v", err)
+		return
+	}
+
+	for _, issue := range repairing {
+		if issue.RepairCycleCount < d.repairCycleThreshold {
+			continue
+		}
+
+		nudgeKey := fmt.Sprintf("repair_cycle:%d", issue.ID)
+		if !d.shouldNudge(nudgeKey) {
+			continue
+		}
+
+		d.logger.Printf("ticket %s-%d has bounced %d times (threshold %d) — moving to on_hold",
+			d.cfg.TicketPrefix, issue.ID, issue.RepairCycleCount, d.repairCycleThreshold)
+
+		if err := d.issues.UpdateStatus(issue.ID, "on_hold"); err != nil {
+			d.logger.Printf("error moving ticket %d to on_hold: %v", issue.ID, err)
+			continue
+		}
+
+		msg := fmt.Sprintf(
+			"ESCALATION: %s-%d (%s) has been sent back for repairs %d times and is now on_hold. "+
+				"Please review the PR and decide whether to close, reassign, or unblock it manually.",
+			d.cfg.TicketPrefix, issue.ID, issue.Title, issue.RepairCycleCount,
+		)
+		if err := d.sendKeys(mayorSession, msg); err != nil {
+			d.logger.Printf("error notifying Mayor of repair-cycle escalation for ticket %d: %v", issue.ID, err)
+		} else {
+			d.recordNudge(nudgeKey, "")
+		}
+
+		if d.obs != nil {
+			d.obs.repairCycleEscalations++
 		}
 	}
 }

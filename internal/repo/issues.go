@@ -10,20 +10,21 @@ import (
 )
 
 type Issue struct {
-	ID          int
-	IssueType   string
-	Status      string
-	Title       string
-	Description sql.NullString
-	Specialty   sql.NullString
-	Branch      sql.NullString
-	PRNumber    sql.NullInt64
-	Assignee    sql.NullString
-	ParentID    sql.NullInt64
-	Priority    sql.NullString
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	ClosedAt    sql.NullTime
+	ID               int
+	IssueType        string
+	Status           string
+	Title            string
+	Description      sql.NullString
+	Specialty        sql.NullString
+	Branch           sql.NullString
+	PRNumber         sql.NullInt64
+	Assignee         sql.NullString
+	ParentID         sql.NullInt64
+	Priority         sql.NullString
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ClosedAt         sql.NullTime
+	RepairCycleCount int
 }
 
 // Valid priority values.
@@ -91,7 +92,7 @@ func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *st
 func (r *IssueRepo) Get(id int) (*Issue, error) {
 	row := r.db.QueryRow(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at, repair_cycle_count
 		 FROM issues WHERE id = ?`, id,
 	)
 	return scanIssue(row)
@@ -105,13 +106,13 @@ func (r *IssueRepo) List(status string) ([]*Issue, error) {
 	if status != "" {
 		rows, err = r.db.Query(
 			`SELECT id, issue_type, status, title, description, specialty, branch,
-			        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+			        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at, repair_cycle_count
 			 FROM issues WHERE status = ? ORDER BY id`, status,
 		)
 	} else {
 		rows, err = r.db.Query(
 			`SELECT id, issue_type, status, title, description, specialty, branch,
-			        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+			        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at, repair_cycle_count
 			 FROM issues ORDER BY id`,
 		)
 	}
@@ -131,7 +132,9 @@ func (r *IssueRepo) List(status string) ([]*Issue, error) {
 	return issues, rows.Err()
 }
 
-// UpdateStatus changes an issue's status.
+// UpdateStatus changes an issue's status. When transitioning to "repairing",
+// repair_cycle_count is incremented atomically so the daemon can detect
+// tickets that have bounced too many times and escalate them.
 func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	var oldStatus string
 	if r.events != nil {
@@ -143,10 +146,19 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 		closedAt = time.Now()
 	}
 
-	result, err := r.db.Exec(
-		`UPDATE issues SET status = ?, closed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		status, closedAt, id,
-	)
+	var result sql.Result
+	var err error
+	if status == "repairing" {
+		result, err = r.db.Exec(
+			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = repair_cycle_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			status, closedAt, id,
+		)
+	} else {
+		result, err = r.db.Exec(
+			`UPDATE issues SET status = ?, closed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			status, closedAt, id,
+		)
+	}
 	if err != nil {
 		return fmt.Errorf("updating issue status: %w", err)
 	}
@@ -312,7 +324,7 @@ func (r *IssueRepo) SetPR(id, prNumber int) error {
 func (r *IssueRepo) ListWithPRs() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at, repair_cycle_count
 		 FROM issues WHERE pr_number IS NOT NULL AND status != 'closed'
 		 ORDER BY id`,
 	)
@@ -336,7 +348,7 @@ func (r *IssueRepo) ListWithPRs() ([]*Issue, error) {
 func (r *IssueRepo) ListMissingPR() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at, repair_cycle_count
 		 FROM issues
 		 WHERE pr_number IS NULL AND branch IS NOT NULL AND status != 'closed'
 		 ORDER BY id`,
@@ -414,7 +426,7 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
 		        i.branch, i.pr_number, i.assignee, i.parent_id, i.priority,
-		        i.created_at, i.updated_at, i.closed_at
+		        i.created_at, i.updated_at, i.closed_at, i.repair_cycle_count
 		 FROM issues i
 		 WHERE i.status = 'open'
 		   AND i.issue_type != 'epic'
@@ -464,7 +476,7 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
 		        i.branch, i.pr_number, i.assignee, i.parent_id, i.priority,
-		        i.created_at, i.updated_at, i.closed_at
+		        i.created_at, i.updated_at, i.closed_at, i.repair_cycle_count
 		 FROM issues i
 		 WHERE i.issue_type != 'epic'
 		   AND (
@@ -526,7 +538,7 @@ func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error)
 
 	//nolint:gosec // G202: placeholders are parameterized ?s generated from len(statuses), not user input
 	query := `SELECT id, issue_type, status, title, description, specialty, branch,
-	                 pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+	                 pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at, repair_cycle_count
 	          FROM issues
 	          WHERE status IN (` + strings.Join(placeholders, ", ") + `)
 	            AND assignee IS NOT NULL AND assignee != ''
@@ -554,7 +566,7 @@ func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error)
 func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at
+		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at, repair_cycle_count
 		 FROM issues
 		 WHERE issue_type = 'epic'
 		   AND status != 'closed'
@@ -657,6 +669,7 @@ func scanIssue(row *sql.Row) (*Issue, error) {
 		&i.ID, &i.IssueType, &i.Status, &i.Title, &i.Description,
 		&i.Specialty, &i.Branch, &i.PRNumber, &i.Assignee, &i.ParentID,
 		&i.Priority, &i.CreatedAt, &i.UpdatedAt, &i.ClosedAt,
+		&i.RepairCycleCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("issue not found")
@@ -673,6 +686,7 @@ func scanIssueRow(rows *sql.Rows) (*Issue, error) {
 		&i.ID, &i.IssueType, &i.Status, &i.Title, &i.Description,
 		&i.Specialty, &i.Branch, &i.PRNumber, &i.Assignee, &i.ParentID,
 		&i.Priority, &i.CreatedAt, &i.UpdatedAt, &i.ClosedAt,
+		&i.RepairCycleCount,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scanning issue row: %w", err)
