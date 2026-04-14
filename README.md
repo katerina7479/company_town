@@ -308,5 +308,6 @@ gt check run
 ## Further reading
 
 - `CLAUDE.md` — build/test instructions for anyone (human or AI) hacking on Company Town itself.
+- `skills/` — repeatable procedures that don't fit the ticket lifecycle. Each subdirectory is a skill bundle invocable by Claude Code. Current skills: `cut-release` (tag, goreleaser, smoke-test) and `drift-cleanup` (diagnose and fix agent/ticket state inconsistencies).
 - `.company_town/ticket_specs/` — living design documents for in-progress work.
 - Agent templates at `internal/commands/templates/*-CLAUDE.md` — the exact instructions each agent role receives on spawn. These are the source of truth for agent behavior.
