@@ -23,7 +23,7 @@ func newReviewerTestDB(t *testing.T) (*sql.DB, *config.Config) {
 		ProjectRoot:  t.TempDir(),
 		TicketPrefix: "nc",
 		Agents: config.AgentsConfig{
-			Reviewer: config.AgentConfig{Model: "claude-sonnet-4-5"},
+			Reviewer: config.AgentConfig{Model: "claude-sonnet-4-6"},
 		},
 	}
 	return conn, cfg

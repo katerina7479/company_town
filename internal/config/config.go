@@ -207,11 +207,11 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		LogDir:    filepath.Join(DirName, "logs"),
 		MaxProles: 2,
 		Agents: AgentsConfig{
-			Mayor:     AgentConfig{Model: "claude-opus-4-5"},
-			Architect: AgentConfig{Model: "claude-opus-4-5"},
+			Mayor:     AgentConfig{Model: "claude-opus-4-6"},
+			Architect: AgentConfig{Model: "claude-opus-4-6"},
 			Artisan:   ArtisanConfig{}, // User-defined in config.json
 			Reviewer: AgentConfig{
-				Model: "claude-sonnet-4-5",
+				Model: "claude-sonnet-4-6",
 				Workflow: &WorkflowConfig{
 					Accept: &WorkflowAction{
 						TicketTransition: &TicketTransition{From: "in_review", To: "under_review"},
@@ -220,7 +220,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 				},
 			},
 			Prole: AgentConfig{
-				Model:    "claude-sonnet-4-5",
+				Model:    "claude-sonnet-4-6",
 				Workflow: &WorkflowConfig{
 					// Accept and Release are nil: prole acceptance is implicit in picking up
 					// the assignment; there is no automatic ticket side-effect.

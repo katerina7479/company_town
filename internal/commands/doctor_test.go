@@ -193,7 +193,7 @@ func TestCheckConfig(t *testing.T) {
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
 		GithubRepo:   "owner/repo",
-		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 
 	cases := []struct {
@@ -234,7 +234,7 @@ func TestCheckConfig_missingTicketPrefix(t *testing.T) {
 	cfg := &config.Config{
 		ProjectRoot: "/tmp/proj",
 		GithubRepo:  "owner/repo",
-		Agents:      config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+		Agents:      config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
 		findRoot:   func() (string, error) { return "/tmp/proj", nil },
@@ -253,7 +253,7 @@ func TestCheckConfig_missingGithubRepo(t *testing.T) {
 	cfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
-		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
 		findRoot:   func() (string, error) { return "/tmp/proj", nil },
@@ -319,7 +319,7 @@ func TestRunDoctor_allPass(t *testing.T) {
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
 		GithubRepo:   "owner/repo",
-		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
 		runCmd: func(name string, args ...string) (string, error) {
@@ -353,7 +353,7 @@ func TestRunDoctor_oneFail(t *testing.T) {
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
 		GithubRepo:   "owner/repo",
-		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-5"}},
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
 		runCmd: func(name string, args ...string) (string, error) {
