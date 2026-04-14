@@ -240,7 +240,7 @@ func TestEnsureRootGitignore_inlineCommentIsEquivalent(t *testing.T) {
 func TestDefaultConfigGithubRepoPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	ctDir := filepath.Join(dir, config.DirName)
-	if err := os.MkdirAll(ctDir, 0755); err != nil {
+	if err := os.MkdirAll(ctDir, 0750); err != nil {
 		t.Fatalf("creating ct dir: %v", err)
 	}
 
