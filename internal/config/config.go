@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -126,6 +127,28 @@ func Load(projectRoot string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// ValidateForStart checks that the config is safe to use for `ct start`.
+// It rejects placeholder or missing github_repo values that would cause
+// downstream failures (e.g. gt pr create against a non-existent repo).
+// This is intentionally NOT called from Load so that ct init can write and
+// reload its own freshly-generated placeholder config without error.
+func ValidateForStart(cfg *Config) error {
+	repo := cfg.GithubRepo
+	if repo == "" {
+		return fmt.Errorf("config: github_repo is unset — edit .company_town/config.json and set github_repo to \"owner/repo\" form (e.g., \"katerina7479/company_town\")")
+	}
+	if repo == "owner/repo" {
+		return fmt.Errorf("config: github_repo is still the placeholder \"owner/repo\" — edit .company_town/config.json and set it to your actual repository")
+	}
+	if strings.HasPrefix(repo, "http://") || strings.HasPrefix(repo, "https://") {
+		return fmt.Errorf("config: github_repo must be in \"owner/repo\" form, not a URL (got %q)", repo)
+	}
+	if !strings.Contains(repo, "/") {
+		return fmt.Errorf("config: github_repo must be in \"owner/repo\" form (got %q)", repo)
+	}
+	return nil
 }
 
 // validateAgentsWorkflow checks that every declared TicketTransition has

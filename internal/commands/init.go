@@ -85,7 +85,7 @@ func Init() error {
 	// 4. Write config.json if missing
 	cfgPath := config.ConfigPath(projectRoot)
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		cfg := config.DefaultConfig(projectRoot, "")
+		cfg := config.DefaultConfig(projectRoot, "owner/repo")
 		// Pick a free port starting from the default (3307) so two projects on
 		// the same machine don't collide on the hardcoded default.
 		port, err := pickFreePort(cfg.Dolt.Port)
