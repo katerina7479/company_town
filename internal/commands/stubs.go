@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/katerina7479/company_town/internal/agentworktree"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/eventlog"
@@ -40,10 +41,17 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	agentDir := filepath.Join(ctDir, "agents", agentType)
 
+	// Provision an isolated git worktree so this agent's branch checkouts
+	// cannot affect other agents' views of HEAD.
+	wtPath, err := agentworktree.Ensure(cfg, agentDir)
+	if err != nil {
+		return fmt.Errorf("setting up worktree for %s: %w", name, err)
+	}
+
 	fmt.Printf("Starting %s...\n", name)
-	err := session.CreateInteractive(session.AgentSessionConfig{
+	err = session.CreateInteractive(session.AgentSessionConfig{
 		Name:     sessionName,
-		WorkDir:  cfg.ProjectRoot,
+		WorkDir:  wtPath,
 		Model:    model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
@@ -211,10 +219,16 @@ func Artisan(specialty string) error {
 		return fmt.Errorf("recording tmux session for %s: %w", name, err)
 	}
 
+	// Provision an isolated git worktree for the artisan.
+	artisanWtPath, wtErr := agentworktree.Ensure(cfg, agentDir)
+	if wtErr != nil {
+		return fmt.Errorf("setting up worktree for %s: %w", name, wtErr)
+	}
+
 	fmt.Printf("Starting %s...\n", name)
 	err = session.CreateInteractive(session.AgentSessionConfig{
 		Name:     sessionName,
-		WorkDir:  cfg.ProjectRoot,
+		WorkDir:  artisanWtPath,
 		Model:    artisanCfg.Model,
 		AgentDir: agentDir,
 		Prompt:   prompt,

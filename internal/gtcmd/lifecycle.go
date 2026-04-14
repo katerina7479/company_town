@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/katerina7479/company_town/internal/agentworktree"
 	"github.com/katerina7479/company_town/internal/commands"
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
@@ -18,6 +19,7 @@ import (
 // Package-level vars for injection in tests.
 var createInteractiveFn func(session.AgentSessionConfig) error = session.CreateInteractive
 var tmuxExistsFn func(string) bool = tmuxExists
+var ensureAgentWorktreeFn func(cfg *config.Config, agentDir string) (string, error) = agentworktree.Ensure
 
 // Start launches a named agent in a tmux session.
 func Start(args []string) error {
@@ -141,9 +143,16 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		return fmt.Errorf("recording tmux session for %s: %w", name, err)
 	}
 
+	// Provision an isolated git worktree so this agent's branch checkouts
+	// cannot affect other agents' views of HEAD.
+	wtPath, err := ensureAgentWorktreeFn(cfg, agentDir)
+	if err != nil {
+		return fmt.Errorf("setting up worktree for %s: %w", name, err)
+	}
+
 	if err := createInteractiveFn(session.AgentSessionConfig{
 		Name:     sessionName,
-		WorkDir:  cfg.ProjectRoot,
+		WorkDir:  wtPath,
 		Model:    model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
