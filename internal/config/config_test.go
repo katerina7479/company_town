@@ -321,3 +321,54 @@ func TestWrite_createsValidJSON(t *testing.T) {
 		t.Errorf("written config is not loadable: %v", err)
 	}
 }
+
+func TestValidateForStart_emptyRepo(t *testing.T) {
+	cfg := &Config{GithubRepo: ""}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty github_repo, got nil")
+	}
+	if !strings.Contains(err.Error(), "github_repo") {
+		t.Errorf("error should mention github_repo: %v", err)
+	}
+}
+
+func TestValidateForStart_placeholder(t *testing.T) {
+	cfg := &Config{GithubRepo: "owner/repo"}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for placeholder github_repo, got nil")
+	}
+	if !strings.Contains(err.Error(), "edit") {
+		t.Errorf("error should mention 'edit': %v", err)
+	}
+}
+
+func TestValidateForStart_urlForm(t *testing.T) {
+	cfg := &Config{GithubRepo: "https://github.com/foo/bar"}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for URL-form github_repo, got nil")
+	}
+	if !strings.Contains(err.Error(), "owner/repo") {
+		t.Errorf("error should mention owner/repo form: %v", err)
+	}
+}
+
+func TestValidateForStart_valid(t *testing.T) {
+	cfg := &Config{GithubRepo: "foo/bar"}
+	if err := ValidateForStart(cfg); err != nil {
+		t.Errorf("expected no error for valid github_repo %q, got: %v", cfg.GithubRepo, err)
+	}
+}
+
+func TestValidateForStart_noSlash(t *testing.T) {
+	cfg := &Config{GithubRepo: "justrepo"}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for github_repo with no slash, got nil")
+	}
+	if !strings.Contains(err.Error(), "owner/repo") {
+		t.Errorf("error should mention owner/repo form: %v", err)
+	}
+}
