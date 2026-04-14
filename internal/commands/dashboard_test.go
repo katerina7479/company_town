@@ -227,7 +227,7 @@ func TestKillAgentCmd_success(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	agent := &repo.Agent{Name: "obsidian"}
+	agent := &repo.Agent{Name: "obsidian", TmuxSession: sql.NullString{String: "ct-obsidian", Valid: true}}
 	cmd := m.killAgentCmd(agent)
 	msg := cmd().(actionResultMsg)
 
@@ -259,7 +259,7 @@ func TestKillAgentCmd_killSessionFails(t *testing.T) {
 	)
 	agents.Register("quartz", "prole", nil)
 
-	agent := &repo.Agent{Name: "quartz"}
+	agent := &repo.Agent{Name: "quartz", TmuxSession: sql.NullString{String: "ct-quartz", Valid: true}}
 	cmd := m.killAgentCmd(agent)
 	msg := cmd().(actionResultMsg)
 
@@ -280,7 +280,7 @@ func TestKillAgentCmd_partialFailureMessage(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 	// Do NOT register the agent — UpdateStatus will fail.
-	agent := &repo.Agent{Name: "ghost"}
+	agent := &repo.Agent{Name: "ghost", TmuxSession: sql.NullString{String: "ct-ghost", Valid: true}}
 	cmd := m.killAgentCmd(agent)
 	msg := cmd().(actionResultMsg)
 
@@ -305,7 +305,7 @@ func TestStopAgentCmd_success(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "reviewer"}
+	agent := &repo.Agent{Name: "reviewer", TmuxSession: sql.NullString{String: "ct-reviewer", Valid: true}}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
@@ -331,7 +331,7 @@ func TestStopAgentCmd_noSessionError(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "reviewer"}
+	agent := &repo.Agent{Name: "reviewer", TmuxSession: sql.NullString{String: "ct-reviewer", Valid: true}}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
@@ -351,7 +351,7 @@ func TestStopAgentCmd_sendKeysFails(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	agent := &repo.Agent{Name: "reviewer"}
+	agent := &repo.Agent{Name: "reviewer", TmuxSession: sql.NullString{String: "ct-reviewer", Valid: true}}
 	cmd := m.stopAgentCmd(agent)
 	result := cmd().(actionResultMsg)
 
@@ -390,7 +390,7 @@ func TestRestartAgentCmd_success(t *testing.T) {
 	)
 
 	agents.Register("copper", "prole", nil)
-	agent := &repo.Agent{Name: "copper", Type: "prole"}
+	agent := &repo.Agent{Name: "copper", Type: "prole", TmuxSession: sql.NullString{String: "ct-copper", Valid: true}}
 	cmd := m.restartAgentCmd(agent)
 	// restartAgentCmd returns dataMsg (a DB fetch) on success, not actionResultMsg.
 	msg := cmd().(dataMsg)
@@ -417,7 +417,7 @@ func TestRestartAgentCmd_killFails(t *testing.T) {
 		},
 	)
 
-	agent := &repo.Agent{Name: "copper", Type: "prole"}
+	agent := &repo.Agent{Name: "copper", Type: "prole", TmuxSession: sql.NullString{String: "ct-copper", Valid: true}}
 	cmd := m.restartAgentCmd(agent)
 	msg := cmd().(actionResultMsg)
 
@@ -434,7 +434,7 @@ func TestRestartAgentCmd_restartFails(t *testing.T) {
 		func(string, string) error { return fmt.Errorf("launch error") },
 	)
 
-	agent := &repo.Agent{Name: "copper", Type: "prole"}
+	agent := &repo.Agent{Name: "copper", Type: "prole", TmuxSession: sql.NullString{String: "ct-copper", Valid: true}}
 	cmd := m.restartAgentCmd(agent)
 	msg := cmd().(actionResultMsg)
 
@@ -1692,5 +1692,149 @@ func TestCleanStderr_stripsANSI(t *testing.T) {
 	}
 	if !strings.Contains(got, "red error text") {
 		t.Errorf("cleanStderr %q does not contain the plain text", got)
+	}
+}
+
+// --- NC-119: prole session name tests ---
+
+func TestDashboard_attachProle_usesTmuxSessionColumn(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(name string) bool { return name == "ct-prole-iron" },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.data.agents = []*repo.Agent{{
+		Name:        "iron",
+		Type:        "prole",
+		TmuxSession: sql.NullString{String: "ct-prole-iron", Valid: true},
+	}}
+	m.focusedPanel = 0
+
+	_, cmd := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("a")})
+	if cmd == nil {
+		t.Fatal("expected a tea.Cmd (spawnAttachCmd), got nil")
+	}
+	msg := cmd()
+	result, ok := msg.(spawnAttachResultMsg)
+	if !ok {
+		t.Fatalf("expected spawnAttachResultMsg, got %T", msg)
+	}
+	if result.sessionName != "ct-prole-iron" {
+		t.Errorf("expected sessionName='ct-prole-iron', got %q", result.sessionName)
+	}
+}
+
+func TestDashboard_killProle_usesTmuxSessionColumn(t *testing.T) {
+	killed := ""
+	m, agents := newTestModel(t,
+		func(name string) error { killed = name; return nil },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	agent := &repo.Agent{Name: "iron", TmuxSession: sql.NullString{String: "ct-prole-iron", Valid: true}}
+	cmd := m.killAgentCmd(agent)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err != nil {
+		t.Fatalf("expected no error, got %v", msg.err)
+	}
+	if killed != "ct-prole-iron" {
+		t.Errorf("expected killSession called with 'ct-prole-iron', got %q", killed)
+	}
+}
+
+func TestDashboard_stopProle_usesTmuxSessionColumn(t *testing.T) {
+	var sentTo string
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true },
+		func(name, _ string) error { sentTo = name; return nil },
+		func(string, string) error { return nil },
+	)
+
+	agent := &repo.Agent{Name: "iron", TmuxSession: sql.NullString{String: "ct-prole-iron", Valid: true}}
+	cmd := m.stopAgentCmd(agent)
+	result := cmd().(actionResultMsg)
+
+	if result.err != nil {
+		t.Fatalf("expected no error, got %v", result.err)
+	}
+	if sentTo != "ct-prole-iron" {
+		t.Errorf("expected sendKeys target 'ct-prole-iron', got %q", sentTo)
+	}
+}
+
+func TestDashboard_restartProle_usesTmuxSessionColumn(t *testing.T) {
+	killed := ""
+	m, agents := newTestModel(t,
+		func(name string) error { killed = name; return nil },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	agent := &repo.Agent{Name: "iron", Type: "prole", TmuxSession: sql.NullString{String: "ct-prole-iron", Valid: true}}
+	cmd := m.restartAgentCmd(agent)
+	cmd()
+
+	if killed != "ct-prole-iron" {
+		t.Errorf("expected killSession called with 'ct-prole-iron', got %q", killed)
+	}
+}
+
+func TestDashboard_killMayor_unchanged(t *testing.T) {
+	killed := ""
+	m, agents := newTestModel(t,
+		func(name string) error { killed = name; return nil },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	if err := agents.Register("mayor", "mayor", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	agent := &repo.Agent{Name: "mayor", TmuxSession: sql.NullString{String: "ct-mayor", Valid: true}}
+	cmd := m.killAgentCmd(agent)
+	msg := cmd().(actionResultMsg)
+
+	if msg.err != nil {
+		t.Fatalf("expected no error, got %v", msg.err)
+	}
+	if killed != "ct-mayor" {
+		t.Errorf("expected killSession('ct-mayor'), got %q", killed)
+	}
+}
+
+func TestDashboard_attachAgent_emptyTmuxSession_statusMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.data.agents = []*repo.Agent{{
+		Name: "ghost",
+		Type: "prole",
+	}}
+	m.focusedPanel = 0
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("a")})
+	dm := updated.(dashboardModel)
+
+	if cmd != nil {
+		t.Error("expected no cmd when TmuxSession is empty")
+	}
+	if !strings.Contains(dm.statusMsg, "no tmux session recorded") {
+		t.Errorf("expected statusMsg to contain 'no tmux session recorded', got %q", dm.statusMsg)
 	}
 }
