@@ -92,6 +92,53 @@ func isSafeWorktreePath(cfg *config.Config, path string) bool {
 	return true
 }
 
+// InstallPreCommitHook copies scripts/pre-commit from the project root into the
+// git hooks directory for the given worktree. This ensures the gofmt pre-commit
+// check fires in agent and prole worktrees, which do not inherit the main
+// checkout's hook installation.
+//
+// For git worktrees, .git is a file (not a directory) that points to the
+// worktree-specific gitdir inside the bare repo. The hook is installed at
+// <gitdir>/hooks/pre-commit. Failures are non-fatal — the hook is a
+// quality-of-life guard, not required for correctness.
+func InstallPreCommitHook(projectRoot, wtPath string) {
+	hookSrc := filepath.Join(projectRoot, "scripts", "pre-commit")
+	if _, err := os.Stat(hookSrc); err != nil {
+		return // hook script not present; skip silently
+	}
+
+	// git rev-parse --git-dir from inside a worktree returns the worktree-specific
+	// gitdir (e.g. <bare>/worktrees/<name>/).
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not find gitdir for worktree at %s: %v\n", wtPath, err)
+		return
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(wtPath, gitDir)
+	}
+
+	hooksDir := filepath.Join(gitDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0750); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not create hooks dir %s: %v\n", hooksDir, err)
+		return
+	}
+
+	data, err := os.ReadFile(hookSrc)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not read pre-commit hook: %v\n", err)
+		return
+	}
+
+	hookDst := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(hookDst, data, 0750); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not install pre-commit hook at %s: %v\n", hookDst, err)
+	}
+}
+
 // EnsureBareRepo creates the bare clone if it doesn't exist, or fetches if it does.
 func EnsureBareRepo(cfg *config.Config) error {
 	barePath := BareRepoPath(cfg)
@@ -171,6 +218,9 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		if err := addWorktreeForProle(BareRepoPath(cfg), branch, wtPath); err != nil {
 			return fmt.Errorf("creating worktree: %w", err)
 		}
+
+		// Install the pre-commit hook so gofmt checks fire in prole worktrees.
+		InstallPreCommitHook(cfg.ProjectRoot, wtPath)
 
 		// Set push remote to origin so proles push to GitHub
 		pushCmd := exec.Command("git", "remote", "set-url", "--push", "origin",

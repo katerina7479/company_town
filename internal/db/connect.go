@@ -9,6 +9,13 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 )
 
+// Dolt shellout audit (nc-129): the only exec.Command("dolt", ...) calls in
+// this package are dolt init (one-time setup) and dolt sql-server (server
+// start). There are NO dolt sql -q / --query shellouts anywhere in internal/.
+// All application SQL runs through the database/sql TCP connection returned by
+// Connect. This means agents running in worktrees never accidentally read a
+// stale on-disk .dolt/ directory — they always talk to the running server.
+
 // OpenFromWorkingDir finds the project root (by looking for .company_town/),
 // loads config, and returns a DB connection.
 func OpenFromWorkingDir() (*sql.DB, *config.Config, error) {
