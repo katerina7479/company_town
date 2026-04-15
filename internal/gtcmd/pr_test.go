@@ -774,3 +774,178 @@ func TestPRUpdate_refusesDetachedHEAD(t *testing.T) {
 		t.Error("gitPushFn must not be called when HEAD is detached")
 	}
 }
+
+// --- additional prCreate coverage ---
+
+func TestPRCreate_missingArgs(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prCreate(issues, testCfg(), "/tmp", []string{})
+	if err == nil {
+		t.Fatal("expected usage error for 0 args, got nil")
+	}
+}
+
+func TestPRCreate_noBranchSet(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	// Create a ticket without calling Assign (so Branch.Valid == false).
+	id, _ := issues.Create("No branch task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+
+	err := prCreate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected ErrNoBranchSet, got nil")
+	}
+	if !errors.Is(err, ErrNoBranchSet) {
+		t.Errorf("expected ErrNoBranchSet, got: %v", err)
+	}
+}
+
+func TestPRCreate_commitCountError(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("Task", "task", nil, nil, nil)
+	issues.Assign(id, "iron", "prole/iron/1")
+	issues.UpdateStatus(id, "in_progress")
+
+	origCount := gitCommitCountFn
+	t.Cleanup(func() { gitCommitCountFn = origCount })
+	gitCommitCountFn = func(_ string) (int, error) {
+		return 0, fmt.Errorf("git error: not a repo")
+	}
+
+	err := prCreate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected error from gitCommitCountFn, got nil")
+	}
+	if !strings.Contains(err.Error(), "counting commits") {
+		t.Errorf("expected 'counting commits' in error, got: %v", err)
+	}
+}
+
+func TestPRCreate_pushError(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("Task", "task", nil, nil, nil)
+	issues.Assign(id, "iron", "prole/iron/1")
+	issues.UpdateStatus(id, "in_progress")
+
+	origCount := gitCommitCountFn
+	origPush := gitPushFn
+	t.Cleanup(func() {
+		gitCommitCountFn = origCount
+		gitPushFn = origPush
+	})
+	gitCommitCountFn = func(_ string) (int, error) { return 3, nil }
+	gitPushFn = func(_ string, _ ...string) error {
+		return fmt.Errorf("simulated push failure")
+	}
+	stubBranchFns(t, "prole/iron/1")
+
+	err := prCreate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected error from gitPushFn, got nil")
+	}
+	if !strings.Contains(err.Error(), "pushing branch") {
+		t.Errorf("expected 'pushing branch' in error, got: %v", err)
+	}
+}
+
+func TestPRCreate_ghCreateError(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("Task", "task", nil, nil, nil)
+	issues.Assign(id, "iron", "prole/iron/1")
+	issues.UpdateStatus(id, "in_progress")
+
+	origCount := gitCommitCountFn
+	origPush := gitPushFn
+	origGH := ghPRCreateFn
+	t.Cleanup(func() {
+		gitCommitCountFn = origCount
+		gitPushFn = origPush
+		ghPRCreateFn = origGH
+	})
+	gitCommitCountFn = func(_ string) (int, error) { return 2, nil }
+	gitPushFn = func(_ string, _ ...string) error { return nil }
+	ghPRCreateFn = func(_, _ string) (string, error) {
+		return "", fmt.Errorf("gh: rate limited")
+	}
+	stubBranchFns(t, "prole/iron/1")
+
+	err := prCreate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected error from ghPRCreateFn, got nil")
+	}
+	if !strings.Contains(err.Error(), "creating PR") {
+		t.Errorf("expected 'creating PR' in error, got: %v", err)
+	}
+}
+
+// TestPRShow_withChecks verifies that prShow renders the checks table including
+// the pass/fail/running summary line when statusCheckRollup is non-empty.
+func TestPRShow_withChecks(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("My task", "task", nil, nil, nil)
+	_ = issues.SetPR(id, 42)
+
+	metaJSON := `{
+		"number":42,"title":"[nc-1] My task","state":"OPEN",
+		"headRefName":"prole/iron/1","mergeable":"MERGEABLE",
+		"reviewDecision":"APPROVED",
+		"statusCheckRollup":[
+			{"name":"ci/test","status":"COMPLETED","conclusion":"SUCCESS"},
+			{"name":"ci/lint","status":"COMPLETED","conclusion":"FAILURE"},
+			{"name":"ci/build","status":"IN_PROGRESS","conclusion":""}
+		]
+	}`
+	reviewsJSON := `{"reviews":[]}`
+	commentsJSON := `{"comments":[]}`
+	stubPRShowFns(t, []byte(metaJSON), nil, []byte(reviewsJSON), nil, []byte(commentsJSON), nil)
+
+	outStr, _ := captureLogOutput(func() {
+		if err := prShow(issues, testCfg(), []string{"1"}); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	if !strings.Contains(outStr, "summary: 1 pass / 1 fail / 1 running") {
+		t.Errorf("expected check summary in output, got: %s", outStr)
+	}
+}
+
+// TestPRShow_fetchError verifies that prShow returns an error when ghPRViewFn fails.
+func TestPRShow_fetchError(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("My task", "task", nil, nil, nil)
+	_ = issues.SetPR(id, 42)
+
+	stubPRShowFns(t, nil, fmt.Errorf("gh api error"), nil, nil, nil, nil)
+
+	err := prShow(issues, testCfg(), []string{"1"})
+	if err == nil {
+		t.Fatal("expected error when gh pr view fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "fetching PR") {
+		t.Errorf("expected 'fetching PR' in error, got: %v", err)
+	}
+}
+
+// TestPRShow_invalidMetaJSON verifies that prShow returns an error when the
+// gh pr view response is not valid JSON.
+func TestPRShow_invalidMetaJSON(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("My task", "task", nil, nil, nil)
+	_ = issues.SetPR(id, 42)
+
+	stubPRShowFns(t, []byte("not-valid-json"), nil, nil, nil, nil, nil)
+
+	err := prShow(issues, testCfg(), []string{"1"})
+	if err == nil {
+		t.Fatal("expected error for invalid meta JSON, got nil")
+	}
+}
+
+// TestPRUpdate_badTicketID covers the parseTicketID error path in prUpdate.
+func TestPRUpdate_badTicketID(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prUpdate(issues, testCfg(), "/tmp", []string{"not-a-number"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID in prUpdate")
+	}
+}
