@@ -105,8 +105,12 @@ A direct `dolt sql` call from your worktree silently reads stale or empty data.
    and `current_issue=<id>`. This is the dashboard's truth about what you're
    doing. Run it FIRST, before touching any code. **This is required for
    every ticket — new work AND repairs.**
-3. **Get on the right branch** — see Startup Protocol below. For new work, create a fresh branch. For repair work, check out the existing branch.
-4. **Move the ticket** (new work only): `gt ticket status <id> in_progress`. For repair work, leave the ticket in `repairing`.
+3. **Move the ticket to in_progress** (new work only): `gt ticket status <id> in_progress`.
+   Run this **immediately after `gt agent accept`**, before any branch or file
+   operation. The daemon does not auto-transition prole tickets — you must call
+   this explicitly. For repair work (`repairing` status), skip this step and
+   leave the ticket in `repairing`.
+4. **Get on the right branch** — see Startup Protocol below. For new work, create a fresh branch. For repair work, check out the existing branch.
 5. **Implement the work** — commit and push after every change
 6. **Run quality gates** — tests, lint, vet (all must pass)
 7. **File a PR**: `gt pr create <ticket_id>` (for new work) or `gt pr update <ticket_id>` (for repairs)
@@ -129,7 +133,14 @@ A direct `dolt sql` call from your worktree silently reads stale or empty data.
    skip this step, the dashboard will keep showing you as idle while you
    work, and the architect will have to prompt you to fix it.
 
-3. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
+3. **Move the ticket to in_progress** (new work only — skip for `repairing`):
+   `gt ticket status <id> in_progress`. Run this **immediately after**
+   `gt agent accept`, before any branch operation. The daemon does not
+   auto-transition prole tickets. Leaving the ticket in `open` while working
+   is a drift condition — the daemon will correct it, but the clean path is
+   to do it explicitly here.
+
+4. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
 
    **If ticket status is `repairing`**: the branch already exists and has prior commits on `origin`. The daemon will have pre-switched your worktree to that branch at assignment time — verify you are already on it with `git branch --show-current`. If not (e.g. session was restarted), check it out manually:
 
@@ -148,13 +159,9 @@ A direct `dolt sql` call from your worktree silently reads stale or empty data.
    git checkout -b <branch> origin/main
    ```
 
-   Then move the ticket state: `gt ticket status <id> in_progress`. (Your
-   agent row was already flipped to `working` in step 2; this is just the
-   ticket side.)
+5. **Verify you are on the right branch** before touching any file: `git branch --show-current` should print the exact branch name from the ticket. If it does not, stop and fix it.
 
-4. **Verify you are on the right branch** before touching any file: `git branch --show-current` should print the exact branch name from the ticket. If it does not, stop and fix it.
-
-5. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
+6. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
 
 **Why this matters.** Repairing tickets already have real work on their branch — that's the whole point of sending a PR back instead of closing it. Creating a new branch with the same name (or working on the wrong branch) throws that work away. The reviewer's feedback refers to commits that exist on `origin/<branch>`; you must be on that branch to see them.
 
