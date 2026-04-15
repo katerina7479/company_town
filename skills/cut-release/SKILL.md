@@ -54,6 +54,11 @@ On the GitHub Releases page, confirm the new release (`vX.Y.Z`) has all of the f
 - `company_town_X.Y.Z_linux_amd64.tar.gz`
 - `checksums.txt`
 
+**Note:** goreleaser strips the `v` prefix from filenames — the archive is named
+`company_town_0.3.1_...`, not `company_town_v0.3.1_...`. The GitHub Release URL
+path still uses the full tag (`vX.Y.Z`); only the asset filename omits the `v`.
+Linux arm64 is intentionally excluded (see `.goreleaser.yaml`).
+
 If any asset is missing, the goreleaser run was partial. Check the workflow logs before proceeding.
 
 ## Step 6 — Smoke test
