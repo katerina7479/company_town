@@ -575,6 +575,75 @@ func TestNukeCore_targetedAgent_removesWorktreeButNotBareClone(t *testing.T) {
 	}
 }
 
+// --- nukeCore return-value tests ---
+
+func TestNukeCore_returnsCountOfKilled(t *testing.T) {
+	killFn := func(s string) error { return nil }
+	updateStatus := func(name, status string) error { return nil }
+	removeAll := func(string) error { return nil }
+	worktreePrune := func(string) error { return nil }
+
+	sessions := []string{"ct-daemon", "ct-mayor", "ct-prole-copper"}
+	got := nukeCore(sessions, t.TempDir(), "", killFn, updateStatus, removeAll, worktreePrune)
+	if got != 3 {
+		t.Errorf("expected killedCount=3, got %d", got)
+	}
+}
+
+func TestNukeCore_unknownTarget_returnsZero(t *testing.T) {
+	killCalled := false
+	killFn := func(s string) error { killCalled = true; return nil }
+	updateStatus := func(name, status string) error { return nil }
+	removeAll := func(string) error { return nil }
+	worktreePrune := func(string) error { return nil }
+
+	// Capture stdout to verify the "no running session" line is printed.
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+
+	got := nukeCore([]string{"ct-prole-copper"}, t.TempDir(), "prole-nonexistent", killFn, updateStatus, removeAll, worktreePrune)
+
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	if got != 0 {
+		t.Errorf("expected killedCount=0 for unknown target, got %d", got)
+	}
+	if killCalled {
+		t.Errorf("killFn must not be called when target does not match any session")
+	}
+	if !strings.Contains(string(out), `no running session for target "prole-nonexistent"`) {
+		t.Errorf("expected 'no running session' message, got: %q", string(out))
+	}
+}
+
+func TestNukeCore_killFailureDoesNotCount(t *testing.T) {
+	killFn := func(s string) error { return fmt.Errorf("tmux error") }
+	updateStatus := func(name, status string) error { return nil }
+	removeAll := func(string) error { return nil }
+	worktreePrune := func(string) error { return nil }
+
+	// Capture stdout to verify the error line is printed.
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+
+	got := nukeCore([]string{"ct-prole-copper"}, t.TempDir(), "", killFn, updateStatus, removeAll, worktreePrune)
+
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	if got != 0 {
+		t.Errorf("expected killedCount=0 when kill fails, got %d", got)
+	}
+	if !strings.Contains(string(out), "error killing") {
+		t.Errorf("expected 'error killing' message, got: %q", string(out))
+	}
+}
+
 // --- filterSessions tests ---
 
 func TestFilterSessions_exactMatch(t *testing.T) {
