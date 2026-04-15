@@ -1,3 +1,4 @@
+// Package repo provides database access for issues, agents, and dependencies.
 package repo
 
 // Status constants for issue statuses. Use these instead of raw string
