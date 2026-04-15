@@ -195,6 +195,41 @@ func TestStart_SetsAgentNameEnvVar(t *testing.T) {
 	}
 }
 
+// TestStart_Daemon_DBError verifies that if agents.Get returns a non-not-found
+// error (e.g. a transient DB failure), startAgentWithDeps surfaces that error
+// rather than silently attempting re-registration.
+func TestStart_Daemon_DBError(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	// Close the connection before passing to startAgentWithDeps so all DB
+	// operations return a real driver error (not repo.ErrNotFound).
+	conn.Close()
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot: tmpDir,
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	tmuxExistsFn = func(_ string) bool { return false }
+
+	oldStartDaemon := startDaemonFn
+	defer func() { startDaemonFn = oldStartDaemon }()
+	startDaemonFn = func(_ *config.Config) error {
+		t.Error("startDaemonFn must not be called when DB returns a real error")
+		return nil
+	}
+
+	err = startAgentWithDeps(cfg, agents, "daemon")
+	if err == nil {
+		t.Fatal("expected error when DB is closed, got nil")
+	}
+}
+
 // TestStart_WorkDirIsWorktree verifies that the session is created with the
 // worktree path as WorkDir, not cfg.ProjectRoot.
 func TestStart_WorkDirIsWorktree(t *testing.T) {

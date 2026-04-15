@@ -1,6 +1,7 @@
 package gtcmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -115,6 +116,9 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		}
 
 		if _, err := agents.Get(name); err != nil {
+			if !errors.Is(err, repo.ErrNotFound) {
+				return fmt.Errorf("checking artisan agent %s: %w", name, err)
+			}
 			spec := specialty
 			if regErr := agents.Register(name, agentType, &spec); regErr != nil {
 				return fmt.Errorf("registering %s: %w", name, regErr)
@@ -131,6 +135,9 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 
 		// Register or upsert the daemon agent row.
 		if _, err := agents.Get("daemon"); err != nil {
+			if !errors.Is(err, repo.ErrNotFound) {
+				return fmt.Errorf("checking daemon agent: %w", err)
+			}
 			if regErr := agents.Register("daemon", "daemon", nil); regErr != nil {
 				return fmt.Errorf("registering daemon: %w", regErr)
 			}
@@ -175,6 +182,9 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 
 	if !strings.HasPrefix(name, "artisan-") {
 		if _, err := agents.Get(name); err != nil {
+			if !errors.Is(err, repo.ErrNotFound) {
+				return fmt.Errorf("checking agent %s: %w", name, err)
+			}
 			if regErr := agents.Register(name, agentType, nil); regErr != nil {
 				return fmt.Errorf("registering %s: %w", name, regErr)
 			}
