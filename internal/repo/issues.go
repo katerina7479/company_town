@@ -33,10 +33,10 @@ var ValidPriorities = []string{"P0", "P1", "P2", "P3", "P4", "P5"}
 
 // Valid issue statuses.
 var ValidStatuses = []string{
-	"draft", "open", "in_progress",
-	"ci_running",
-	"in_review", "under_review", "pr_open",
-	"reviewed", "repairing", "on_hold", "merge_conflict", "closed",
+	StatusDraft, StatusOpen, StatusInProgress,
+	StatusCIRunning,
+	StatusInReview, StatusUnderReview, StatusPROpen,
+	StatusReviewed, StatusRepairing, StatusOnHold, StatusMergeConflict, StatusClosed,
 }
 
 // Valid issue types.
@@ -150,26 +150,26 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	}
 
 	var closedAt interface{}
-	if status == "closed" {
+	if status == StatusClosed {
 		closedAt = time.Now()
 	}
 
 	var result sql.Result
 	var err error
 	switch status {
-	case "repairing":
+	case StatusRepairing:
 		result, err = r.db.Exec(
 			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = repair_cycle_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			status, closedAt, id,
 		)
-	case "open":
+	case StatusOpen:
 		// Human unblock: reset repair_cycle_count so the ticket gets a fresh
 		// slate. Also clear repair_reason in case it was on_hold.
 		result, err = r.db.Exec(
 			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = 0, repair_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			status, closedAt, id,
 		)
-	case "draft", "in_progress", "ci_running", "in_review", "under_review", "pr_open", "closed", "on_hold":
+	case StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusUnderReview, StatusPROpen, StatusClosed, StatusOnHold:
 		// Transitioning out of a repair-ish state — clear stale repair_reason.
 		// "draft" is included because a human may manually reopen a ticket from
 		// on_hold or repairing back to draft, and the old reason must not leak.
@@ -397,7 +397,7 @@ func (r *IssueRepo) ListMissingPR() ([]*Issue, error) {
 
 // Close closes an issue.
 func (r *IssueRepo) Close(id int) error {
-	return r.UpdateStatus(id, "closed")
+	return r.UpdateStatus(id, StatusClosed)
 }
 
 // AddDependency records that issueID depends on dependsOnID.

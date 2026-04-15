@@ -396,7 +396,7 @@ func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 	// (b) the assignee's agent row is updated atomically (status=working,
 	//     current_issue=id) before the ticket status changes, so a partial
 	//     failure surfaces to the caller rather than leaving both half-applied.
-	if status == "in_progress" {
+	if status == repo.StatusInProgress {
 		issue, err := issues.Get(id)
 		if err != nil {
 			return err
@@ -441,16 +441,16 @@ func ticketReview(issues *repo.IssueRepo, args []string) error {
 	if err != nil {
 		return err
 	}
-	if issue.Status != "under_review" {
+	if issue.Status != repo.StatusUnderReview {
 		return fmt.Errorf("ticket %d is in %q, not under_review — cannot submit review verdict", id, issue.Status)
 	}
 
 	var newStatus string
 	switch verdict {
 	case "approve":
-		newStatus = "pr_open"
+		newStatus = repo.StatusPROpen
 	case "request-changes":
-		newStatus = "repairing"
+		newStatus = repo.StatusRepairing
 	default:
 		return fmt.Errorf("unknown verdict %q (expected: approve | request-changes)", verdict)
 	}
@@ -481,7 +481,7 @@ func ticketClose(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) 
 		return err
 	}
 
-	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), issue.Status, "closed")
+	cmdlog.Annotate(fmt.Sprintf("ticket=%d", id), issue.Status, repo.StatusClosed)
 
 	if issue.Assignee.Valid && issue.Assignee.String != "" {
 		if err := agents.ClearCurrentIssue(issue.Assignee.String); err != nil {
