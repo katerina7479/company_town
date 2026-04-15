@@ -2,11 +2,15 @@ package repo
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/katerina7479/company_town/internal/eventlog"
 )
+
+// ErrNotFound is returned when a requested agent does not exist.
+var ErrNotFound = errors.New("not found")
 
 type Agent struct {
 	ID              int
@@ -65,7 +69,7 @@ func (r *AgentRepo) Get(name string) (*Agent, error) {
 		&a.TmuxSession, &a.WorktreePath, &a.TimeCreated, &a.TimeEnded, &a.StatusChangedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("agent %s not found", name)
+		return nil, fmt.Errorf("agent %s: %w", name, ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting agent: %w", err)

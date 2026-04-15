@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/db"
@@ -162,11 +163,14 @@ func TestAgentRepo_FindIdle(t *testing.T) {
 }
 
 func TestAgentRepo_Get_notFound(t *testing.T) {
-	repo := setupAgentRepo(t)
+	r := setupAgentRepo(t)
 
-	_, err := repo.Get("nonexistent")
+	_, err := r.Get("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for non-existent agent, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
