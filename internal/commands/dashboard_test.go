@@ -1250,7 +1250,8 @@ func TestFetch_lastDaemonTickNilWhenTickFileDisabled(t *testing.T) {
 
 // --- renderDaemonLine state tests (NC-57 reviewer deviations 1+3) ---
 
-func TestRenderDaemonLine_freshShowsCheck(t *testing.T) {
+func TestRenderDaemonLine_freshShowsCountdown(t *testing.T) {
+	// Tick was 3s ago, interval is 10s → countdown = 7s → should show "next tick in"
 	m := dashboardModel{
 		pollingInterval: 10 * time.Second,
 		data: dashboardData{
@@ -1267,24 +1268,28 @@ func TestRenderDaemonLine_freshShowsCheck(t *testing.T) {
 	if !strings.Contains(out, "daemon:") {
 		t.Errorf("expected 'daemon:' label, got %q", out)
 	}
+	if !strings.Contains(out, "next tick in") {
+		t.Errorf("fresh daemon should show countdown, got %q", out)
+	}
 }
 
-func TestRenderDaemonLine_staleShowsWarning(t *testing.T) {
+func TestRenderDaemonLine_overdueShowsWarning(t *testing.T) {
+	// Tick was 2 minutes ago, interval is 10s → well overdue
 	m := dashboardModel{
-		pollingInterval: 10 * time.Second, // stale threshold = 30s floor
+		pollingInterval: 10 * time.Second,
 		data: dashboardData{
 			lastDaemonTick: ptrTime(time.Now().Add(-2 * time.Minute)),
 		},
 	}
 	out := m.renderDaemonLine()
 	if !strings.Contains(out, "⚠") {
-		t.Errorf("stale daemon should render with ⚠, got %q", out)
+		t.Errorf("overdue daemon should render with ⚠, got %q", out)
 	}
 	if strings.Contains(out, "✓") {
-		t.Errorf("stale daemon should not render ✓, got %q", out)
+		t.Errorf("overdue daemon should not render ✓, got %q", out)
 	}
-	if !strings.Contains(out, "expected every") {
-		t.Errorf("stale daemon should include the interval hint, got %q", out)
+	if !strings.Contains(out, "overdue") {
+		t.Errorf("overdue daemon should include 'overdue' text, got %q", out)
 	}
 }
 
@@ -1299,17 +1304,17 @@ func TestRenderDaemonLine_missingShowsCross(t *testing.T) {
 	if !strings.Contains(out, "✗") {
 		t.Errorf("missing daemon should render with ✗, got %q", out)
 	}
-	if !strings.Contains(out, "not running") {
-		t.Errorf("missing daemon should say 'not running', got %q", out)
+	if !strings.Contains(out, "down") {
+		t.Errorf("missing daemon should say 'down', got %q", out)
 	}
 	if strings.Contains(out, "✓") || strings.Contains(out, "⚠") {
 		t.Errorf("missing daemon should not render fresh/stale markers, got %q", out)
 	}
 }
 
-// Stale threshold floor: a 1-second polling interval still yields a 30s
-// threshold, so a 20s-old heartbeat should render fresh (not stale).
-func TestRenderDaemonLine_staleFloorIs30Seconds(t *testing.T) {
+// With a 1-second interval and a tick that is already 20s old, the countdown
+// expired long ago → should show overdue, not a fresh countdown.
+func TestRenderDaemonLine_smallIntervalOldTickShowsOverdue(t *testing.T) {
 	m := dashboardModel{
 		pollingInterval: 1 * time.Second,
 		data: dashboardData{
@@ -1317,8 +1322,11 @@ func TestRenderDaemonLine_staleFloorIs30Seconds(t *testing.T) {
 		},
 	}
 	out := m.renderDaemonLine()
-	if !strings.Contains(out, "✓") {
-		t.Errorf("age 20s with 1s interval should be fresh (30s floor), got %q", out)
+	if !strings.Contains(out, "overdue") {
+		t.Errorf("20s-old tick with 1s interval should be overdue, got %q", out)
+	}
+	if strings.Contains(out, "✓") {
+		t.Errorf("overdue state should not render ✓, got %q", out)
 	}
 }
 
