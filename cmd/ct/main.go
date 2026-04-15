@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/katerina7479/company_town/internal/cmdlog"
@@ -29,7 +30,7 @@ func main() {
 
 	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "init", "start", "stop", "nuke", "architect", "artisan", "attach", "dashboard", "metrics", "daemon", "doctor", "quality":
+	case "init", "start", "stop", "nuke", "architect", "artisan", "attach", "dashboard", "metrics", "daemon", "doctor", "quality", "reviewer":
 		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
@@ -90,6 +91,23 @@ func main() {
 			return commands.Doctor()
 		case "quality":
 			return commands.Quality()
+		case "reviewer":
+			if len(args) < 1 || args[0] != "inspect" {
+				fmt.Fprintln(os.Stderr, "usage: ct reviewer inspect <pr> | ct reviewer inspect --clean")
+				os.Exit(1)
+			}
+			subArgs := args[1:]
+			if len(subArgs) == 1 && subArgs[0] == "--clean" {
+				return commands.ReviewerInspectClean()
+			}
+			if len(subArgs) != 1 {
+				return fmt.Errorf("usage: ct reviewer inspect <pr> | ct reviewer inspect --clean")
+			}
+			pr, convErr := strconv.Atoi(subArgs[0])
+			if convErr != nil {
+				return fmt.Errorf("invalid pr number: %s", subArgs[0])
+			}
+			return commands.ReviewerInspect(pr)
 		}
 		return nil
 	})
@@ -155,5 +173,10 @@ Commands:
   metrics [--since N] Show system performance metrics (default: last 7 days)
   daemon              Run the daemon (internal — started by ct start)
   doctor              Check system dependencies and project setup
-  quality             Live quality metrics TUI dashboard`)
+  quality             Live quality metrics TUI dashboard
+  reviewer inspect <pr>
+                      Set up PR inspection worktree at .company_town/agents/reviewer/pr-worktree/
+                      and print its path. Prints path to stdout.
+  reviewer inspect --clean
+                      Remove the PR inspection worktree (idempotent).`)
 }

@@ -51,22 +51,26 @@ gh pr view <pr_number> --json files --jq '.files[].path'
 
 Cross-reference against the ticket spec's "Affected Files" section (if present). Files in the diff but not in the spec, or in the spec but not in the diff, are worth calling out.
 
-## Step 5 — Run the tests
+## Step 5 — Run the tests in the PR inspection worktree
+
+First fetch the PR branch so the local ref is up to date:
 
 ```bash
-git fetch origin <headRefOid>
-git checkout --detach <headRefOid>
+git fetch origin <headRefName>
+```
+
+Then set up a dedicated inspection worktree and cd into it:
+
+```bash
+worktree_path=$(ct reviewer inspect <pr_number>)
+cd "$worktree_path"
 go test ./...
 go vet ./...
 ```
 
 If any tests fail, note them now. Do not skip this step — discovering test failures during PR review is the nc-129 failure mode.
 
-When done reviewing, return to your working branch:
-
-```bash
-git checkout -
-```
+The inspection worktree is cleaned up automatically in Step 5 of `/verdict`. Do NOT run `ct reviewer inspect --clean` here — leave it for the verdict step so the worktree stays available while you write your review.
 
 ## Step 6 — Report
 

@@ -12,13 +12,23 @@ You are the Reviewer — the code review agent.
 ## Your Worktree
 
 You run in an isolated git worktree at `.company_town/agents/reviewer/worktree/`.
-This is a regular git checkout — you can read files, inspect branches, and run
-test commands. `.company_town/` itself lives at the project root, not here.
+This worktree is pinned to your stable branch and **NEVER moves**. Do not run
+`git checkout` in it to inspect a PR — that mutates HEAD under your running
+session and has wedged reviewer sessions in the past.
 
-`gt` and `ct` commands use `FindProjectRoot()` and work correctly from your
-worktree without any special `cd`. For reviewing a PR branch, you can
-`git fetch origin <branch> && git checkout --detach origin/<branch>` to inspect
-code; just `git checkout -` to return to your working ref afterward.
+For PR inspection, use a dedicated inspection worktree:
+
+    ct reviewer inspect <pr_number>
+
+This prints the path to a clean worktree at
+`.company_town/agents/reviewer/pr-worktree/`, checked out to the PR's head ref
+from the shared bare clone. `cd` there, run your diff/tests, and when you are
+done (as part of `/verdict`), clean up:
+
+    ct reviewer inspect --clean
+
+`gt` and `ct` commands use `FindProjectRoot()` and work correctly from either
+worktree — your stable one or the PR inspection one.
 
 **Never use `dolt sql -q` or `dolt sql --query` directly.** Those shellouts read
 from a `.dolt/` directory relative to CWD, which does not exist in your worktree.
