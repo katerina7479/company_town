@@ -712,3 +712,344 @@ func TestPruneDeadWorktrees_skipsUnsafeWorktreePath(t *testing.T) {
 		t.Errorf("expected warning log mentioning agent name, got: %q", buf.String())
 	}
 }
+
+// --- List tests ---
+
+func TestList_returnsOnlyProles(t *testing.T) {
+	agents := setupAgentRepo(t)
+	agents.Register("prole-a", "prole", nil)
+	agents.Register("prole-b", "prole", nil)
+	agents.Register("mayor", "mayor", nil)
+	agents.Register("reviewer", "reviewer", nil)
+
+	cfg := &config.Config{ProjectRoot: t.TempDir()}
+	proles, err := List(agents, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(proles) != 2 {
+		t.Errorf("expected 2 proles, got %d", len(proles))
+	}
+	for _, p := range proles {
+		if p.Type != "prole" {
+			t.Errorf("expected type=prole, got %q", p.Type)
+		}
+	}
+}
+
+func TestList_emptyWhenNoProles(t *testing.T) {
+	agents := setupAgentRepo(t)
+	agents.Register("mayor", "mayor", nil)
+
+	cfg := &config.Config{ProjectRoot: t.TempDir()}
+	proles, err := List(agents, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(proles) != 0 {
+		t.Errorf("expected 0 proles, got %d", len(proles))
+	}
+}
+
+// --- deployProleCLAUDEMD tests ---
+
+func TestDeployProleCLAUDEMD_substitutesVars(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ProjectRoot: root, TicketPrefix: "nc"}
+	ctDir := config.CompanyTownDir(root)
+
+	templateDir := filepath.Join(ctDir, "agents", "prole")
+	if err := os.MkdirAll(templateDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	template := "Prole {{NAME}} worktree={{WORKTREE_PATH}} prefix={{TICKET_PREFIX}}"
+	if err := os.WriteFile(filepath.Join(templateDir, "CLAUDE.md"), []byte(template), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wtPath := "/tmp/worktrees/iron"
+	if err := deployProleCLAUDEMD("iron", wtPath, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dstPath := filepath.Join(ctDir, "proles", "iron", "CLAUDE.md")
+	data, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("reading deployed CLAUDE.md: %v", err)
+	}
+	got := string(data)
+	if strings.Contains(got, "{{NAME}}") || strings.Contains(got, "{{WORKTREE_PATH}}") || strings.Contains(got, "{{TICKET_PREFIX}}") {
+		t.Errorf("expected all placeholders substituted, got: %q", got)
+	}
+	if !strings.Contains(got, "iron") || !strings.Contains(got, wtPath) || !strings.Contains(got, "nc") {
+		t.Errorf("expected substituted values in output, got: %q", got)
+	}
+}
+
+func TestDeployProleCLAUDEMD_errorWhenTemplateMissing(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ProjectRoot: root, TicketPrefix: "nc"}
+	// No template file created — expect error
+	err := deployProleCLAUDEMD("iron", "/tmp/wt", cfg)
+	if err == nil {
+		t.Error("expected error when template is missing, got nil")
+	}
+}
+
+// --- mustGetOriginURL tests ---
+
+func TestMustGetOriginURL_fallsBackToGithubRepo(t *testing.T) {
+	// t.TempDir() is not a git repo, so getOriginURL will fail.
+	cfg := &config.Config{
+		ProjectRoot: t.TempDir(),
+		GithubRepo:  "git@github.com:org/repo.git",
+	}
+	got := mustGetOriginURL(cfg)
+	if got != "git@github.com:org/repo.git" {
+		t.Errorf("expected GithubRepo fallback, got %q", got)
+	}
+}
+
+// --- currentBranch tests ---
+
+func TestCurrentBranch_returnsActiveBranch(t *testing.T) {
+	_, _, _, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("branchtest")
+
+	branch, err := currentBranch(wtPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if branch != "prole/branchtest/standby" {
+		t.Errorf("expected prole/branchtest/standby, got %q", branch)
+	}
+}
+
+func TestCurrentBranch_errorForNonRepo(t *testing.T) {
+	dir := t.TempDir() // not a git repo
+	_, err := currentBranch(dir)
+	if err == nil {
+		t.Error("expected error for non-repo directory")
+	}
+}
+
+// --- isWorktreeDirty tests ---
+
+func TestIsWorktreeDirty_cleanWorktree(t *testing.T) {
+	_, _, _, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("cleancheck")
+
+	dirty, err := isWorktreeDirty(wtPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dirty {
+		t.Error("expected clean worktree to not be dirty")
+	}
+}
+
+func TestIsWorktreeDirty_dirtyWorktree(t *testing.T) {
+	_, _, _, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("dirtycheck")
+
+	if err := os.WriteFile(filepath.Join(wtPath, "new.txt"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dirty, err := isWorktreeDirty(wtPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !dirty {
+		t.Error("expected worktree with uncommitted file to be dirty")
+	}
+}
+
+// --- SwitchToBranch tests ---
+
+func TestSwitchToBranch_checksOutExistingBranch(t *testing.T) {
+	_, _, bareDir, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("switchtest")
+
+	// Create a feature branch in the bare repo from origin/main.
+	runGit(t, bareDir, "branch", "prole/switchtest/feature-1", "origin/main")
+
+	if err := SwitchToBranch(wtPath, bareDir, "prole/switchtest/feature-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	branch, err := currentBranch(wtPath)
+	if err != nil {
+		t.Fatalf("reading branch after switch: %v", err)
+	}
+	if branch != "prole/switchtest/feature-1" {
+		t.Errorf("expected prole/switchtest/feature-1, got %q", branch)
+	}
+}
+
+func TestSwitchToBranch_errorForNonExistentBranch(t *testing.T) {
+	_, _, bareDir, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("switchfail")
+
+	err := SwitchToBranch(wtPath, bareDir, "prole/nonexistent/branch-xyz")
+	if err == nil {
+		t.Error("expected error for non-existent branch")
+	}
+}
+
+// --- Reset tests ---
+
+func TestReset_resetsIdleProle(t *testing.T) {
+	cfg, agents, bareDir, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("resetme")
+	agents.Register("resetme", "prole", nil)
+
+	// Switch the worktree to a feature branch to confirm Reset brings it back.
+	runGit(t, bareDir, "branch", "prole/resetme/nc-99", "origin/main")
+	runGit(t, wtPath, "checkout", "prole/resetme/nc-99")
+
+	if err := Reset("resetme", cfg, agents); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	branch, err := currentBranch(wtPath)
+	if err != nil {
+		t.Fatalf("reading branch after reset: %v", err)
+	}
+	if branch != "prole/resetme/standby" {
+		t.Errorf("expected standby branch after reset, got %q", branch)
+	}
+}
+
+func TestReset_failsForNonIdleProle(t *testing.T) {
+	cfg, agents, _, _ := setupPruneEnv(t)
+	agents.Register("busy", "prole", nil)
+	agents.UpdateStatus("busy", "working")
+
+	err := Reset("busy", cfg, agents)
+	if err == nil {
+		t.Error("expected error for non-idle prole, got nil")
+	}
+}
+
+func TestReset_failsForUnknownProle(t *testing.T) {
+	cfg, agents, _, _ := setupPruneEnv(t)
+	err := Reset("nonexistent", cfg, agents)
+	if err == nil {
+		t.Error("expected error for unknown prole, got nil")
+	}
+}
+
+// --- ResetIdleWorktrees tests ---
+
+func TestResetIdleWorktrees_resetsWorktreeOnFeatureBranch(t *testing.T) {
+	cfg, agents, bareDir, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("idle-feature")
+	agents.Register("idle-feature", "prole", nil)
+	agents.SetWorktree("idle-feature", wtPath)
+
+	// Put worktree on a feature branch.
+	runGit(t, bareDir, "branch", "prole/idle-feature/nc-100", "origin/main")
+	runGit(t, wtPath, "checkout", "prole/idle-feature/nc-100")
+
+	if err := ResetIdleWorktrees(cfg, agents, silentLogger()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	branch, err := currentBranch(wtPath)
+	if err != nil {
+		t.Fatalf("reading branch after ResetIdleWorktrees: %v", err)
+	}
+	if branch != "prole/idle-feature/standby" {
+		t.Errorf("expected standby branch after idle reset, got %q", branch)
+	}
+}
+
+func TestResetIdleWorktrees_skipsCleanStandbyWorktree(t *testing.T) {
+	cfg, agents, _, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("idle-clean")
+	agents.Register("idle-clean", "prole", nil)
+	agents.SetWorktree("idle-clean", wtPath)
+	// Worktree is already on standby and clean — nothing to do.
+
+	if err := ResetIdleWorktrees(cfg, agents, silentLogger()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Branch should still be standby (no reset happened).
+	branch, _ := currentBranch(wtPath)
+	if branch != "prole/idle-clean/standby" {
+		t.Errorf("expected standby branch unchanged, got %q", branch)
+	}
+}
+
+func TestResetIdleWorktrees_logsWarningForUnsafePath(t *testing.T) {
+	cfg, agents, _, _ := setupPruneEnv(t)
+
+	// Register an idle prole with a worktree path outside proles/.
+	unsafeDir := t.TempDir()
+	agents.Register("unsafe-idle", "prole", nil)
+	agents.SetWorktree("unsafe-idle", unsafeDir)
+
+	logger, buf := capturingLogger()
+	if err := ResetIdleWorktrees(cfg, agents, logger); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "unsafe-idle") {
+		t.Errorf("expected warning log mentioning agent name, got: %q", buf.String())
+	}
+}
+
+// --- InstallPreCommitHook tests ---
+
+func TestInstallPreCommitHook_installsHook(t *testing.T) {
+	cfg, _, _, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("hooktest")
+
+	// Create scripts/pre-commit in the project root.
+	scriptsDir := filepath.Join(cfg.ProjectRoot, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptsDir, "pre-commit"), []byte("#!/bin/sh\n"), 0750); err != nil {
+		t.Fatal(err)
+	}
+
+	InstallPreCommitHook(cfg.ProjectRoot, wtPath)
+
+	// Verify the hook was installed in the worktree's gitdir.
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse --git-dir: %v", err)
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(wtPath, gitDir)
+	}
+	hookDst := filepath.Join(gitDir, "hooks", "pre-commit")
+	if _, err := os.Stat(hookDst); os.IsNotExist(err) {
+		t.Errorf("expected pre-commit hook at %s, not found", hookDst)
+	}
+}
+
+func TestInstallPreCommitHook_silentWhenSourceAbsent(t *testing.T) {
+	_, _, _, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("nohooktest")
+	root := t.TempDir() // no scripts/pre-commit here
+
+	// Must return silently without panicking.
+	InstallPreCommitHook(root, wtPath)
+}
+
+// --- EnsureBareRepo tests ---
+
+func TestEnsureBareRepo_fetchesWhenBareRepoExists(t *testing.T) {
+	cfg, _, _, _ := setupPruneEnv(t)
+	// The bare repo already exists (created by setupPruneEnv).
+	// EnsureBareRepo should run git fetch origin without error.
+	if err := EnsureBareRepo(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
