@@ -76,7 +76,7 @@ git push --force-with-lease origin HEAD
 gt pr update <ticket-id>
 ```
 
-This pushes and moves the ticket back to `in_review`. Do **not** file a new PR — update the existing one.
+This pushes and moves the ticket back to `ci_running`. Do **not** file a new PR — update the existing one.
 
 ## Step 8 — Verify
 
@@ -84,7 +84,7 @@ This pushes and moves the ticket back to `in_review`. Do **not** file a new PR �
 gt ticket show <id>
 ```
 
-Header must show `[in_review]`. Then:
+Header must show `[ci_running]`. Then:
 
 ```bash
 gh pr view
