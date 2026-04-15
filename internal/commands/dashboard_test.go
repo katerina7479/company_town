@@ -16,6 +16,15 @@ import (
 	"github.com/katerina7479/company_town/internal/repo"
 )
 
+// blankModel returns a dashboardModel with only the theme initialised, suitable
+// for calling render methods that need no database or session state.
+func blankModel() dashboardModel {
+	return dashboardModel{
+		theme:    DefaultTheme(),
+		expanded: make(map[int]bool),
+	}
+}
+
 // makeNode builds an IssueNode with the given status and optional ClosedAt.
 func makeNode(status string, closedAt *time.Time, children ...*repo.IssueNode) *repo.IssueNode {
 	issue := &repo.Issue{Status: status}
@@ -1045,7 +1054,7 @@ func makeDetailNode(description, assignee, branch string, prNumber int64) *repo.
 
 func TestRenderTicketDetails_descriptionShown(t *testing.T) {
 	node := makeDetailNode("Some description text", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "Some description text") {
 		t.Errorf("expected description in output, got:\n%s", out)
 	}
@@ -1053,7 +1062,7 @@ func TestRenderTicketDetails_descriptionShown(t *testing.T) {
 
 func TestRenderTicketDetails_noDescriptionOmitted(t *testing.T) {
 	node := makeDetailNode("", "alice", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	// There should be an assignee line but no empty description line.
 	if !containsAll(out, "assignee:") {
 		t.Errorf("expected assignee line in output, got:\n%s", out)
@@ -1062,7 +1071,7 @@ func TestRenderTicketDetails_noDescriptionOmitted(t *testing.T) {
 
 func TestRenderTicketDetails_assigneeShown(t *testing.T) {
 	node := makeDetailNode("", "copper", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "assignee:", "copper") {
 		t.Errorf("expected assignee in output, got:\n%s", out)
 	}
@@ -1070,7 +1079,7 @@ func TestRenderTicketDetails_assigneeShown(t *testing.T) {
 
 func TestRenderTicketDetails_noAssigneeOmitted(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if containsAll(out, "assignee:") {
 		t.Errorf("expected no assignee line when assignee is null, got:\n%s", out)
 	}
@@ -1078,7 +1087,7 @@ func TestRenderTicketDetails_noAssigneeOmitted(t *testing.T) {
 
 func TestRenderTicketDetails_prNumberShown(t *testing.T) {
 	node := makeDetailNode("", "", "", 42)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "PR:", "#42") {
 		t.Errorf("expected PR number in output, got:\n%s", out)
 	}
@@ -1086,7 +1095,7 @@ func TestRenderTicketDetails_prNumberShown(t *testing.T) {
 
 func TestRenderTicketDetails_noPROmitted(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if containsAll(out, "PR:") {
 		t.Errorf("expected no PR line when PR is null, got:\n%s", out)
 	}
@@ -1094,7 +1103,7 @@ func TestRenderTicketDetails_noPROmitted(t *testing.T) {
 
 func TestRenderTicketDetails_branchShown(t *testing.T) {
 	node := makeDetailNode("", "", "prole/fig/10", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "branch:", "prole/fig/10") {
 		t.Errorf("expected branch in output, got:\n%s", out)
 	}
@@ -1102,7 +1111,7 @@ func TestRenderTicketDetails_branchShown(t *testing.T) {
 
 func TestRenderTicketDetails_timestampsAlwaysPresent(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "created:", "updated:") {
 		t.Errorf("expected timestamps in output, got:\n%s", out)
 	}
@@ -1110,8 +1119,8 @@ func TestRenderTicketDetails_timestampsAlwaysPresent(t *testing.T) {
 
 func TestRenderTicketDetails_depthAffectsIndentation(t *testing.T) {
 	node := makeDetailNode("", "alice", "", 0)
-	depth0 := renderTicketDetails(node, 0, 80)
-	depth1 := renderTicketDetails(node, 1, 80)
+	depth0 := blankModel().renderTicketDetails(node, 0, 80)
+	depth1 := blankModel().renderTicketDetails(node, 1, 80)
 	// Depth 1 should have more leading spaces than depth 0.
 	if len(depth1) <= len(depth0) {
 		t.Errorf("expected deeper indent at depth=1 to produce longer output")
@@ -1354,7 +1363,7 @@ func TestRenderIssueRow_fitsContentWidth(t *testing.T) {
 
 	for _, status := range statuses {
 		node := makeFullNode(status, longTitle)
-		row := renderIssueRow(node, 0, contentWidth)
+		row := blankModel().renderIssueRow(node, 0, contentWidth)
 		// lipgloss.Width strips ANSI codes and returns the visual cell width.
 		got := lipgloss.Width(row)
 		if got > contentWidth {
@@ -1365,13 +1374,13 @@ func TestRenderIssueRow_fitsContentWidth(t *testing.T) {
 }
 
 func TestRenderIssueRow_selectedRowDoesNotWrap(t *testing.T) {
-	// Regression test for NC-45: selectedStyle.Width(innerWidth) must not cause
+	// Regression test for NC-45: blankModel().theme.Selected.Width(innerWidth) must not cause
 	// the selected row to wrap to a second line inside the panel content area.
 	contentWidth := 100
 	node := makeFullNode("open", strings.Repeat("B", 200))
 
-	row := renderIssueRow(node, 0, contentWidth)
-	rendered := selectedStyle.Width(contentWidth).Render(row)
+	row := blankModel().renderIssueRow(node, 0, contentWidth)
+	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
 
 	// If wrapping occurs, lipgloss.Height > 1.
 	if h := lipgloss.Height(rendered); h != 1 {
@@ -1386,8 +1395,8 @@ func TestRenderIssueRow_selectedRowDoesNotWrapShortStatus(t *testing.T) {
 	contentWidth := 80
 	node := makeFullNode("open", strings.Repeat("C", 200))
 
-	row := renderIssueRow(node, 0, contentWidth)
-	rendered := selectedStyle.Width(contentWidth).Render(row)
+	row := blankModel().renderIssueRow(node, 0, contentWidth)
+	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
 
 	if h := lipgloss.Height(rendered); h != 1 {
 		t.Errorf("selected 'open' row wrapped to %d lines (expected 1); content width=%d",
@@ -1398,46 +1407,46 @@ func TestRenderIssueRow_selectedRowDoesNotWrapShortStatus(t *testing.T) {
 // --- NC-47: ticket type indicator ---
 
 func TestTypeCell_taskIsBlank(t *testing.T) {
-	cell := typeCell("task")
+	cell := blankModel().theme.TypeCell("task")
 	if cell != " " {
-		t.Errorf("typeCell('task') should return a single space, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('task') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_unknownEmptyIsBlank(t *testing.T) {
-	cell := typeCell("")
+	cell := blankModel().theme.TypeCell("")
 	if cell != " " {
-		t.Errorf("typeCell('') should return a single space, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_unknownStringIsBlank(t *testing.T) {
 	// Future/unknown types must silently return blank — not panic, not print garbage.
-	cell := typeCell("research")
+	cell := blankModel().theme.TypeCell("research")
 	if cell != " " {
-		t.Errorf("typeCell('research') should return a single space, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('research') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_epicIsE(t *testing.T) {
-	cell := typeCell("epic")
+	cell := blankModel().theme.TypeCell("epic")
 	// Strip ANSI codes — the visible content should end with a space and contain "E".
 	if !strings.Contains(cell, "E") {
-		t.Errorf("typeCell('epic') should contain 'E', got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('epic') should contain 'E', got %q", cell)
 	}
 }
 
 func TestTypeCell_bugIsB(t *testing.T) {
-	cell := typeCell("bug")
+	cell := blankModel().theme.TypeCell("bug")
 	if !strings.Contains(cell, "B") {
-		t.Errorf("typeCell('bug') should contain 'B', got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('bug') should contain 'B', got %q", cell)
 	}
 }
 
 func TestTypeCell_refactorIsR(t *testing.T) {
-	cell := typeCell("refactor")
+	cell := blankModel().theme.TypeCell("refactor")
 	if !strings.Contains(cell, "R") {
-		t.Errorf("typeCell('refactor') should contain 'R', got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('refactor') should contain 'R', got %q", cell)
 	}
 }
 
@@ -1451,7 +1460,7 @@ func TestRenderIssueRow_typeIndicatorPresent(t *testing.T) {
 			Title:     "Something broken",
 		},
 	}
-	row := renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, 120)
 	if !strings.Contains(row, "B") {
 		t.Errorf("renderIssueRow for bug ticket should contain 'B' type indicator, got: %q", row)
 	}
@@ -1461,9 +1470,9 @@ func TestRenderIssueRow_taskTypeIndicatorAbsent(t *testing.T) {
 	// A task ticket row must NOT contain a type letter (type cell is blank).
 	// We verify by checking the row contains the title but no stray type letter
 	// adjacent to the id/status region. We do this by checking typeCell directly.
-	cell := typeCell("task")
+	cell := blankModel().theme.TypeCell("task")
 	if strings.ContainsAny(cell, "EBRTS") {
-		t.Errorf("typeCell('task') should not contain a type letter, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('task') should not contain a type letter, got %q", cell)
 	}
 }
 
@@ -1478,7 +1487,7 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 			Title:     "Child epic",
 		},
 	}
-	row := renderIssueRow(node, 1, 120)
+	row := blankModel().renderIssueRow(node, 1, 120)
 	if !strings.Contains(row, "◦") {
 		t.Errorf("renderIssueRow for depth=1 should contain child bullet ◦, got: %q", row)
 	}
@@ -1490,7 +1499,7 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 // --- priorityCell tests ---
 
 func TestPriorityCell_nullIsSpaces(t *testing.T) {
-	got := priorityCell(sql.NullString{})
+	got := blankModel().theme.PriorityCell(sql.NullString{})
 	if got != "     " {
 		t.Errorf("expected 5 spaces for NULL priority, got %q", got)
 	}
@@ -1501,20 +1510,20 @@ func TestPriorityCell_nullIsSpaces(t *testing.T) {
 
 func TestPriorityCell_width5(t *testing.T) {
 	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
-		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true})
 		// In test mode lipgloss renders plain text (no TTY), so len == visible width.
 		if len(cell) != 5 {
-			t.Errorf("priorityCell(%q): expected len 5, got %d (%q)", p, len(cell), cell)
+			t.Errorf("blankModel().theme.PriorityCell(%q): expected len 5, got %d (%q)", p, len(cell), cell)
 		}
 	}
 }
 
 func TestPriorityCell_containsLabel(t *testing.T) {
 	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
-		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true})
 		want := fmt.Sprintf("[%s]", p)
 		if !strings.Contains(cell, want) {
-			t.Errorf("priorityCell(%q): expected cell to contain %q, got %q", p, want, cell)
+			t.Errorf("blankModel().theme.PriorityCell(%q): expected cell to contain %q, got %q", p, want, cell)
 		}
 	}
 }
@@ -1524,10 +1533,10 @@ func TestPriorityCell_p3NotStyled(t *testing.T) {
 	// Without a style entry it renders via the fallthrough fmt.Sprintf branch,
 	// which produces no ANSI escape sequences (the load-bearing assertion for
 	// the symmetric-around-neutral design).
-	if _, ok := priorityStyles["P3"]; ok {
-		t.Error("P3 must not be in priorityStyles — it should render with default terminal foreground")
+	if _, ok := blankModel().theme.Priority["P3"]; ok {
+		t.Error("P3 must not be in theme.Priority — it should render with default terminal foreground")
 	}
-	cell := priorityCell(sql.NullString{String: "P3", Valid: true})
+	cell := blankModel().theme.PriorityCell(sql.NullString{String: "P3", Valid: true})
 	if strings.Contains(cell, "\x1b[") || strings.Contains(cell, "[") {
 		t.Errorf("P3 cell must have no ANSI escape codes, got %q", cell)
 	}
@@ -1544,7 +1553,7 @@ func TestRenderIssueRow_assigneeShownWhenSet(t *testing.T) {
 			Assignee: sql.NullString{String: "copper", Valid: true},
 		},
 	}
-	row := renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, 120)
 	if !strings.Contains(row, "copper") {
 		t.Errorf("renderIssueRow for assigned ticket should contain assignee name, got: %q", row)
 	}
@@ -1568,8 +1577,8 @@ func TestRenderIssueRow_assigneeBlankWhenUnset(t *testing.T) {
 			Title:  "Same title here",
 		},
 	}
-	rowA := renderIssueRow(assigned, 0, 120)
-	rowU := renderIssueRow(unassigned, 0, 120)
+	rowA := blankModel().renderIssueRow(assigned, 0, 120)
+	rowU := blankModel().renderIssueRow(unassigned, 0, 120)
 
 	// Unassigned row must not contain a stray agent name.
 	if strings.Contains(rowU, "iron") {
@@ -1594,7 +1603,7 @@ func TestRenderIssueRow_assigneeTruncatedAt8Chars(t *testing.T) {
 			Assignee: sql.NullString{String: "verylongname", Valid: true},
 		},
 	}
-	row := renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, 120)
 	// Must contain the first 8 chars of the name.
 	if !strings.Contains(row, "verylong") {
 		t.Errorf("renderIssueRow should contain truncated assignee 'verylong', got: %q", row)
@@ -1609,18 +1618,18 @@ func TestColorStatus_mergeConflict(t *testing.T) {
 	// merge_conflict must render as a non-empty styled string distinct from
 	// the repairing style, so the dashboard operator can visually distinguish
 	// "needs conflict resolution" from "prole is fixing reviewer feedback".
-	mc := colorStatus("merge_conflict")
+	mc := blankModel().theme.ColorStatus("merge_conflict")
 	if mc == "" {
-		t.Fatal("colorStatus(merge_conflict) returned empty string")
+		t.Fatal("blankModel().theme.ColorStatus(merge_conflict) returned empty string")
 	}
 	// The rendered output must contain the status text.
 	if !strings.Contains(mc, "merge_conflict") {
-		t.Errorf("colorStatus(merge_conflict) output %q does not contain status text", mc)
+		t.Errorf("blankModel().theme.ColorStatus(merge_conflict) output %q does not contain status text", mc)
 	}
 	// It must differ from the repairing style.
-	rep := colorStatus("repairing")
+	rep := blankModel().theme.ColorStatus("repairing")
 	if mc == rep {
-		t.Errorf("colorStatus(merge_conflict) == colorStatus(repairing): expected distinct styles")
+		t.Errorf("blankModel().theme.ColorStatus(merge_conflict) == blankModel().theme.ColorStatus(repairing): expected distinct styles")
 	}
 }
 
@@ -1852,7 +1861,7 @@ func TestDashboard_attachAgent_emptyTmuxSession_statusMsg(t *testing.T) {
 func TestRenderTicketDetails_repairReasonShownWhenSet(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
 	node.RepairReason = sql.NullString{String: "CI: lint, test", Valid: true}
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !strings.Contains(out, "repair:") || !strings.Contains(out, "CI: lint, test") {
 		t.Errorf("expected repair_reason in output, got:\n%s", out)
 	}
@@ -1860,7 +1869,7 @@ func TestRenderTicketDetails_repairReasonShownWhenSet(t *testing.T) {
 
 func TestRenderTicketDetails_repairReasonOmittedWhenNull(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if strings.Contains(out, "repair:") {
 		t.Errorf("expected no repair line when repair_reason is null, got:\n%s", out)
 	}
