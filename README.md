@@ -102,10 +102,8 @@ Agents talk to the system through the internal `gt` CLI. Users talk to the Mayor
 
 ```
 draft ─► open ─► in_progress ─► in_review ─► under_review ─► pr_open ─► closed
-  │       │                                      │             │
-  │       └──────── repairing ◄──────────────────┴─────────────┘
-  │                    │
-  │                    └──► in_review
+  │                                │              │             │
+  │                           repairing ◄───-─────┴─────────────┘ 
   └──► on_hold
 ```
 
