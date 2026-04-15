@@ -136,11 +136,11 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 			i++
 			issueType = args[i]
 			if !isValidType(issueType) {
-				return fmt.Errorf("invalid type %q: must be one of %v", issueType, repo.ValidTypes)
+				return fmt.Errorf("%w %q: must be one of %v", ErrInvalidType, issueType, repo.ValidTypes)
 			}
 		case "--description":
 			if i+1 >= len(args) {
-				return fmt.Errorf("--description requires a value")
+				return ErrDescriptionRequired
 			}
 			i++
 			description = args[i]
@@ -156,17 +156,17 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 			priority = &p
 		default:
 			if strings.HasPrefix(args[i], "--") {
-				return fmt.Errorf("unknown flag: %s", args[i])
+				return fmt.Errorf("%w: %s", ErrUnknownFlag, args[i])
 			}
 			positional = append(positional, args[i])
 		}
 	}
 
 	if len(positional) == 0 {
-		return fmt.Errorf("gt ticket create: title is required")
+		return fmt.Errorf("gt ticket create: %w", ErrTitleRequired)
 	}
 	if len(positional) > 1 {
-		return fmt.Errorf("gt ticket create: expected one title, got %d positional args (quote the title if it contains spaces): %v", len(positional), positional)
+		return fmt.Errorf("gt ticket create: %w, got %d positional args (quote the title if it contains spaces): %v", ErrExpectedOneTitle, len(positional), positional)
 	}
 	title := positional[0]
 
@@ -402,7 +402,7 @@ func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 			return err
 		}
 		if !issue.Assignee.Valid || issue.Assignee.String == "" {
-			return fmt.Errorf("cannot move ticket %d to in_progress: no assignee — run `gt ticket assign %d <agent>` first", id, id)
+			return fmt.Errorf("cannot move ticket %d to in_progress: %w — run `gt ticket assign %d <agent>` first", id, ErrNoAssignee, id)
 		}
 		if agents != nil {
 			if err := agents.SetCurrentIssue(issue.Assignee.String, &id); err != nil {
@@ -442,7 +442,7 @@ func ticketReview(issues *repo.IssueRepo, args []string) error {
 		return err
 	}
 	if issue.Status != "under_review" {
-		return fmt.Errorf("ticket %d is in %q, not under_review — cannot submit review verdict", id, issue.Status)
+		return fmt.Errorf("ticket %d is in %q, %w — cannot submit review verdict", id, issue.Status, ErrNotUnderReview)
 	}
 
 	var newStatus string
@@ -452,7 +452,7 @@ func ticketReview(issues *repo.IssueRepo, args []string) error {
 	case "request-changes":
 		newStatus = "repairing"
 	default:
-		return fmt.Errorf("unknown verdict %q (expected: approve | request-changes)", verdict)
+		return fmt.Errorf("%w %q (expected: approve | request-changes)", ErrUnknownVerdict, verdict)
 	}
 
 	if err := issues.UpdateStatus(id, newStatus); err != nil {
