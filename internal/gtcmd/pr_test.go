@@ -741,14 +741,9 @@ func TestPRCreate_allowsEmptyTicketBranch(t *testing.T) {
 	t.Cleanup(func() { gitCommitCountFn = origCount })
 	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
 
-	// Ticket has no branch — prCreate should return early with "no branch set" error
-	// which happens *before* assertBranchReadyForPR. This test verifies the
-	// "empty ticketBranch skips mismatch check" path via assertBranchReadyForPR directly.
-	err := assertBranchReadyForPR("/tmp", "")
-	// Should fail only on the git call (dir /tmp is not a git repo) or succeed if
-	// we stub the fns. Test the logic with stubs:
+	// Verify that the mismatch check is skipped when ticketBranch is empty.
 	stubBranchFns(t, "feature/x", "main")
-	err = assertBranchReadyForPR("/tmp", "")
+	err := assertBranchReadyForPR("/tmp", "")
 	if err != nil {
 		t.Errorf("expected no error when ticketBranch is empty and branch is not default/detached, got: %v", err)
 	}
