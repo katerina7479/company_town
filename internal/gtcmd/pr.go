@@ -139,6 +139,29 @@ var (
 		cmd.Dir = projectRoot
 		return cmd.Output()
 	}
+
+	// gitCurrentBranchFn returns the name of the currently checked-out branch,
+	// or the literal string "HEAD" if HEAD is detached. Matches the behavior of
+	// `git rev-parse --abbrev-ref HEAD`.
+	gitCurrentBranchFn = func(dir string) (string, error) {
+		out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+
+	// gitDefaultBranchFn returns the name of the repository's default branch
+	// (typically "main") by consulting origin/HEAD. Falls back to "main" if
+	// origin/HEAD is not set — cheap and safe for fresh worktrees.
+	gitDefaultBranchFn = func(dir string) (string, error) {
+		out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").Output()
+		if err != nil {
+			return "main", nil
+		}
+		s := strings.TrimSpace(string(out))
+		return strings.TrimPrefix(s, "origin/"), nil
+	}
 )
 
 // prCheckResult is a single CI check from statusCheckRollup.
@@ -286,6 +309,31 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	return data, nil
 }
 
+// assertBranchReadyForPR verifies that the current worktree is on a branch
+// that can legally be the head of a PR against the repo's default branch.
+// Returns an error with an actionable message if not. Always runs before any
+// push or gh invocation so no remote state is mutated on failure.
+func assertBranchReadyForPR(dir, ticketBranch string) error {
+	current, err := gitCurrentBranchFn(dir)
+	if err != nil {
+		return fmt.Errorf("determining current branch: %w", err)
+	}
+	if current == "HEAD" {
+		return fmt.Errorf("HEAD is detached in %s; check out the ticket branch %q before running gt pr create", dir, ticketBranch)
+	}
+	defaultBranch, err := gitDefaultBranchFn(dir)
+	if err != nil {
+		return fmt.Errorf("determining default branch: %w", err)
+	}
+	if current == defaultBranch {
+		return fmt.Errorf("current branch %q is the repository default branch; nothing to PR", current)
+	}
+	if ticketBranch != "" && current != ticketBranch {
+		return fmt.Errorf("current branch %q does not match the ticket's recorded branch %q; check out the correct branch before running gt pr create", current, ticketBranch)
+	}
+	return nil
+}
+
 func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt pr create <ticket_id>")
@@ -313,6 +361,10 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 	if commitCount == 0 {
 		return fmt.Errorf("ticket %s-%d branch %s has no commits yet — make at least one commit before running `gt pr create`",
 			cfg.TicketPrefix, id, issue.Branch.String)
+	}
+
+	if err := assertBranchReadyForPR(workDir, issue.Branch.String); err != nil {
+		return err
 	}
 
 	// Push the branch
@@ -464,6 +516,10 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 
 	if !issue.Branch.Valid || issue.Branch.String == "" {
 		return fmt.Errorf("ticket %d has no branch set", id)
+	}
+
+	if err := assertBranchReadyForPR(workDir, issue.Branch.String); err != nil {
+		return err
 	}
 
 	// Push latest changes

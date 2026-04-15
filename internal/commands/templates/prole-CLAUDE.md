@@ -195,6 +195,9 @@ When your work is done — step 4 is REQUIRED:
 [ ] 3. Commit and PUSH: git commit -m "msg (TICKET-ID)" && git push origin HEAD
 [ ] 4. File PR: gt pr create <ticket_id>
        Ticket moves to `ci_running` — CI must pass before the reviewer sees it.
+       `gt pr create` must be run from the ticket's feature branch, not from a
+       detached HEAD or from `main`. If you see a branch error, run
+       `git checkout <ticket-branch>` first.
 [ ] 5. Update status: gt agent status {{NAME}} idle
 ```
 
