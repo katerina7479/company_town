@@ -6,73 +6,75 @@ You talk to the **Mayor** in a tmux pane. The Mayor and its daemon run the rest:
 
 ## Requirements
 
-- Go 1.22+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - tmux
 - `gh` (GitHub CLI), authenticated against the repo you want agents to push to
 - `claude` CLI (Claude Code), authenticated
 
-## Install
+## Getting Started
 
-### Pre-built binaries (recommended)
+### 1. Download and install
 
-Download the latest release from [GitHub Releases](https://github.com/katerina7479/company_town/releases):
+Go to the [latest release](https://github.com/katerina7479/company_town/releases/latest) and grab the archive for your platform:
+
+| Platform | Archive |
+|---|---|
+| macOS Apple Silicon | `company_town_X.Y.Z_darwin_arm64.tar.gz` |
+| macOS Intel | `company_town_X.Y.Z_darwin_amd64.tar.gz` |
+| Linux amd64 | `company_town_X.Y.Z_linux_amd64.tar.gz` |
+
+Extract and put the binaries on your PATH:
 
 ```bash
-# macOS arm64 (Apple Silicon)
-curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_darwin_arm64.tar.gz | tar xz
-sudo mv ct gt /usr/local/bin/
-
-# macOS amd64 (Intel)
-curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_darwin_amd64.tar.gz | tar xz
-sudo mv ct gt /usr/local/bin/
-
-# Linux amd64
-curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_linux_amd64.tar.gz | tar xz
+# example for macOS arm64 — adjust filename for your platform and version
+tar xz -f company_town_X.Y.Z_darwin_arm64.tar.gz
 sudo mv ct gt /usr/local/bin/
 ```
 
-Verify checksums with `checksums.txt` included in each release.
+Each release includes a `checksums.txt` you can use to verify the download.
 
-### From source (requires Go 1.22+)
-
-```bash
-git clone https://github.com/katerina7479/company_town.git
-cd company_town
-make install        # builds and installs ct + gt to $GOPATH/bin
-```
-
-`make build` alone drops the binaries at `./bin/ct` and `./bin/gt`.
-
-### Version
+### 2. Verify the install
 
 ```bash
 ct --version
 gt --version
 ```
 
-## Releasing a new version
+Both should print the version string (e.g. `ct version 0.1.0`).
 
-Tag and push — GitHub Actions runs goreleaser automatically:
+### 3. Initialize a project
 
-```bash
-git tag v0.1.0
-git push --tags
-```
-
-This produces a GitHub Release with `.tar.gz` archives for macOS (arm64, amd64) and Linux (amd64), plus a `checksums.txt`.
-
-## Quick start for a new project
+From the root of the project you want agents to work on:
 
 ```bash
 cd ~/my-project
 ct init             # creates .company_town/, starts Dolt, runs migrations
-$EDITOR .company_town/config.json
-                    # set ticket_prefix, github_repo, max_proles, models
-ct start            # starts the daemon and attaches you to the Mayor's tmux
 ```
 
-From inside the Mayor pane, ask the Mayor to bring up the rest of the system ("start the architect," "start an artisan backend," etc). The daemon picks up from there — see *Daily loop* below.
+### 4. Configure
+
+Open the generated config file and fill in the required fields:
+
+```bash
+$EDITOR .company_town/config.json
+```
+
+Key fields to set:
+
+| Field | Example | Notes |
+|---|---|---|
+| `ticket_prefix` | `"nc"` | Short prefix used in branch names and PR titles. |
+| `github_repo` | `"git@github.com:you/my-project.git"` | Where proles push branches. |
+| `agents.mayor.model` | `"claude-opus-4-5"` | Model for the Mayor and Architect. |
+| `agents.prole.model` | `"claude-sonnet-4-5"` | Model for Proles and the Reviewer. |
+
+### 5. Start
+
+```bash
+ct start            # starts the daemon and attaches you to the Mayor's tmux pane
+```
+
+From inside the Mayor pane, describe what you want built. The Mayor files a draft ticket; the Architect specs it; the daemon assigns it to a prole; the prole implements and files a PR; the Reviewer checks it; you merge on GitHub.
 
 To tear down:
 
@@ -82,6 +84,18 @@ ct nuke             # immediate: kills every tmux session, no handoff
 ```
 
 Neither command drops the database. Re-running `ct start` picks up where you left off.
+
+## Install from source
+
+For contributors building from the repository:
+
+```bash
+git clone https://github.com/katerina7479/company_town.git
+cd company_town
+make install        # builds and installs ct + gt to $GOPATH/bin
+```
+
+Requires Go 1.22+. `make build` alone drops the binaries at `./bin/ct` and `./bin/gt`.
 
 ## How it works
 
@@ -270,6 +284,17 @@ Migrations are embedded in `internal/db/migrations/` and run automatically on `c
 - `ct start` — boots the daemon, brings up the Mayor, attaches you. Safe to re-run; idempotent for already-running components.
 - `ct stop` — tells every long-lived agent to write a handoff file and exit. Proles finish their current push first.
 - `ct nuke` — kills every tmux session immediately. Use when things are wedged.
+
+### Releasing a new version
+
+Tag and push — GitHub Actions runs goreleaser automatically:
+
+```bash
+git tag v0.1.0
+git push --tags
+```
+
+This produces a GitHub Release with `.tar.gz` archives for macOS (arm64, amd64) and Linux (amd64), plus a `checksums.txt`.
 
 ### Dashboard
 
