@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/commands"
@@ -43,13 +44,11 @@ func main() {
 		case "start":
 			return commands.Start()
 		case "stop":
-			clean := false
-			for _, a := range args {
-				if a == "--clean" {
-					clean = true
-				}
+			target, clean, parseErr := parseStopArgs(args)
+			if parseErr != nil {
+				return parseErr
 			}
-			return commands.Stop(clean)
+			return commands.Stop(target, clean)
 		case "nuke":
 			return commands.Nuke()
 		case "architect":
@@ -97,15 +96,38 @@ func main() {
 	}
 }
 
+// parseStopArgs parses the argument list for `ct stop`. Returns the optional
+// target agent name, the --clean flag, and any parse error. Order of target
+// and --clean is independent. At most one positional argument is accepted.
+func parseStopArgs(args []string) (target string, clean bool, err error) {
+	for _, a := range args {
+		switch {
+		case a == "--clean":
+			clean = true
+		case strings.HasPrefix(a, "--"):
+			return "", false, fmt.Errorf("unknown flag: %s", a)
+		default:
+			if target != "" {
+				return "", false, fmt.Errorf("ct stop takes at most one target (got %q and %q)", target, a)
+			}
+			target = a
+		}
+	}
+	return target, clean, nil
+}
+
 func printUsage() {
 	fmt.Println(`Usage: ct <command>
 
 Commands:
   init                Set up .company_town/ in project root
   start               Start the Mayor and attach to tmux session
-  stop [--clean]      Graceful shutdown with handoffs (--clean removes prole
-                      worktrees immediately after signalling — does NOT wait
-                      for agents to exit, so in-flight commits may be lost)
+  stop [target] [--clean]
+                      Graceful shutdown. Without target, stops every session.
+                      With target (daemon, architect, reviewer, artisan-<s>,
+                      prole-<name>), stops only that session. --clean removes
+                      prole worktrees immediately after signaling (applies only
+                      to prole targets; ignored otherwise).
   nuke                Immediate shutdown, no handoffs
   architect           Start the Architect agent
   architect stop      Signal Architect to write handoff and exit
