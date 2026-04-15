@@ -177,7 +177,7 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 
 	setSQL, setArgs := b.build()
 	result, err := r.db.Exec(
-		"UPDATE issues SET "+setSQL+" WHERE id = ?",
+		"UPDATE issues SET "+setSQL+" WHERE id = ?", //nolint:gosec // G202: setSQL is built from string literals only, never user input
 		append(setArgs, id)...,
 	)
 	if err != nil {
