@@ -404,7 +404,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 	// Move ticket to ci_running. The prole stays assigned — if CI fails they
 	// are still responsible for fixing it. The daemon promotes to in_review
 	// (and clears the assignee) once all checks pass.
-	if err := issues.UpdateStatus(id, "ci_running"); err != nil {
+	if err := issues.UpdateStatus(id, repo.StatusCIRunning); err != nil {
 		return fmt.Errorf("updating ticket status: %w", err)
 	}
 
@@ -510,7 +510,7 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 		return err
 	}
 
-	if issue.Status != "repairing" {
+	if issue.Status != repo.StatusRepairing {
 		return fmt.Errorf("ticket %d: %w (current: %s)", id, ErrNotRepairingStatus, issue.Status)
 	}
 
@@ -530,7 +530,7 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 	// Move ticket back to ci_running. The prole stays assigned; the daemon
 	// will promote to in_review once CI passes or route back to repairing if
 	// CI fails again.
-	if err := issues.UpdateStatus(id, "ci_running"); err != nil {
+	if err := issues.UpdateStatus(id, repo.StatusCIRunning); err != nil {
 		return fmt.Errorf("updating ticket status: %w", err)
 	}
 
