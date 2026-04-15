@@ -1,9 +1,9 @@
 ---
 name: submit
-description: End-of-ticket: lint pre-flight, push, PR create, in_review only after push confirms, verify
+description: End-of-ticket: lint pre-flight, push, PR create, ci_running only after push confirms, verify
 ---
 
-End-of-ticket submission sequence. Follow the steps in order. Do not flip to `in_review` before the PR exists. Do not create the PR before the push lands.
+End-of-ticket submission sequence. Follow the steps in order. Do not flip to `ci_running` before the PR exists. Do not create the PR before the push lands.
 
 ## Step 1 — Pre-flight local checks
 
@@ -54,7 +54,7 @@ The output must show your most recent commit SHA and message. If it shows an old
 gt pr create <ticket-id>
 ```
 
-This creates the PR and moves the ticket to `in_review`. Note the PR number from the output.
+This creates the PR and moves the ticket to `ci_running`. Note the PR number from the output.
 
 ## Step 6 — Verify the PR
 
@@ -74,4 +74,4 @@ If anything looks wrong, investigate before proceeding.
 gt agent status <your-name> idle
 ```
 
-**Key ordering invariant:** Steps 1 → 2 → 3 → 4 → 5 → 6 → 7. Never flip to `in_review` before the PR exists. Never create the PR before the push is verified.
+**Key ordering invariant:** Steps 1 → 2 → 3 → 4 → 5 → 6 → 7. Never flip to `ci_running` before the PR exists. Never create the PR before the push is verified.
