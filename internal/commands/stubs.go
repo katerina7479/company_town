@@ -442,22 +442,31 @@ func Attach(name string) error {
 }
 
 // Nuke implements `ct nuke` — immediate shutdown, no handoffs.
-func Nuke() error {
-	sessions, err := session.ListCompanyTown()
-	if err != nil {
-		return err
-	}
-
-	if len(sessions) == 0 {
-		fmt.Println("No Company Town sessions running.")
-		return nil
-	}
-
+// target restricts the operation to a single component (see nukeCore).
+// An empty target performs the default full teardown.
+func Nuke(target string) error {
 	projectRoot, err := db.FindProjectRoot()
 	if err != nil {
 		return err
 	}
 	ctDir := config.CompanyTownDir(projectRoot)
+
+	// "bare" target removes only the bare clone — no sessions involved.
+	if target == "bare" {
+		nukeCore(nil, ctDir, target, session.Kill, nil, os.RemoveAll, gitWorktreePrune)
+		fmt.Println("\nBare clone removed.")
+		return nil
+	}
+
+	sessions, err := session.ListCompanyTown()
+	if err != nil {
+		return err
+	}
+
+	if len(sessions) == 0 && target == "" {
+		fmt.Println("No Company Town sessions running.")
+		return nil
+	}
 
 	conn, _, connErr := db.OpenFromWorkingDir()
 
@@ -469,18 +478,56 @@ func Nuke() error {
 		defer conn.Close()
 	}
 
-	nukeCore(sessions, ctDir, session.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
+	nukeCore(sessions, ctDir, target, session.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
 
-	fmt.Println("\nAll sessions killed.")
+	if target != "" {
+		fmt.Printf("\n%s killed.\n", target)
+	} else {
+		fmt.Println("\nAll sessions killed.")
+	}
 	return nil
 }
 
 // nukeCore is the testable kill logic used by Nuke.
 // updateStatus may be nil when the DB is unavailable.
-// Worktree directories for all killed sessions are removed (prole worktrees
-// under .company_town/proles/, agent worktrees under .company_town/agents/),
-// then git worktree prune is run and the bare clone is removed.
-func nukeCore(sessions []string, ctDir string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) {
+//
+// target controls scope:
+//   - "" (empty): full teardown — kill all sessions, remove all worktrees,
+//     prune bare worktrees, then remove the bare clone.
+//   - "bare": remove the bare clone only; sessions slice is ignored.
+//   - any other value (e.g. "prole-copper", "architect"): kill only the session
+//     whose name is ct-<target>, remove its worktree, and run git worktree prune.
+//     The bare clone is NOT removed in single-target mode (it is shared by all
+//     proles; removing it while other proles are running would break them).
+func nukeCore(sessions []string, ctDir string, target string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) {
+	// "bare" target: remove only the bare clone, no sessions to kill.
+	if target == "bare" {
+		repoGit := filepath.Join(ctDir, "repo.git")
+		if err := removeAll(repoGit); err != nil {
+			fmt.Printf("  error removing bare clone: %v\n", err)
+		} else {
+			fmt.Printf("  removed bare clone: %s\n", repoGit)
+		}
+		return
+	}
+
+	// Named target: restrict to the single matching session.
+	if target != "" {
+		sessionName := session.SessionPrefix + target
+		var filtered []string
+		for _, s := range sessions {
+			if s == sessionName {
+				filtered = append(filtered, s)
+			}
+		}
+		if len(filtered) == 0 {
+			fmt.Printf("  no running session for target %q\n", target)
+		}
+		sessions = filtered
+	}
+
+	fullTeardown := target == ""
+
 	var cleanedAny bool
 	for _, s := range sessions {
 		agentName := s[len(session.SessionPrefix):]
@@ -518,11 +565,14 @@ func nukeCore(sessions []string, ctDir string, killFn func(string) error, update
 		if err := worktreePrune(repoGit); err != nil {
 			fmt.Printf("  error pruning worktrees: %v\n", err)
 		}
-		// Remove the bare clone itself — nuke is a full teardown.
-		if err := removeAll(repoGit); err != nil {
-			fmt.Printf("  error removing bare clone: %v\n", err)
-		} else {
-			fmt.Printf("  removed bare clone: %s\n", repoGit)
+		// Remove the bare clone only on full teardown — targeted nukes leave it
+		// intact because other proles may still be using it.
+		if fullTeardown {
+			if err := removeAll(repoGit); err != nil {
+				fmt.Printf("  error removing bare clone: %v\n", err)
+			} else {
+				fmt.Printf("  removed bare clone: %s\n", repoGit)
+			}
 		}
 	}
 }
