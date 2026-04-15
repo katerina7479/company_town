@@ -4,10 +4,11 @@ import (
 	"testing"
 )
 
-// TestSendKeys_clearsInputBeforeSubmit verifies that SendKeys sends C-c to
+// TestSendKeys_clearsInputBeforeSubmit verifies that SendKeys sends C-u to
 // clear any accumulated input in the pane before injecting the nudge message.
-// This prevents detached panes from accumulating pending nudges in the input
-// box (nc-146).
+// C-u (kill-line) is used instead of C-c so that a running tool call is not
+// interrupted (nc-162). This prevents detached panes from accumulating
+// pending nudges in the input box (nc-146).
 func TestSendKeys_clearsInputBeforeSubmit(t *testing.T) {
 	// Override Exists so it reports the session as present.
 	origExists := existsFn
@@ -36,10 +37,11 @@ func TestSendKeys_clearsInputBeforeSubmit(t *testing.T) {
 		t.Fatalf("expected 3 send-keys calls, got %d: %v", len(calls), calls)
 	}
 
-	// First call must be the C-c clear.
+	// First call must be the C-u kill-line clear (not C-c, which would interrupt
+	// a running tool call).
 	clearArgs := calls[0]
-	if len(clearArgs) < 4 || clearArgs[0] != "send-keys" || clearArgs[1] != "-t" || clearArgs[2] != "ct-tin" || clearArgs[3] != "C-c" {
-		t.Errorf("first call should be 'send-keys -t ct-tin C-c', got %v", clearArgs)
+	if len(clearArgs) < 4 || clearArgs[0] != "send-keys" || clearArgs[1] != "-t" || clearArgs[2] != "ct-tin" || clearArgs[3] != "C-u" {
+		t.Errorf("first call should be 'send-keys -t ct-tin C-u', got %v", clearArgs)
 	}
 
 	// Second call must send the message text with -l (literal), no Enter.
