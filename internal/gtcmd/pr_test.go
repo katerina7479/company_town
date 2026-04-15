@@ -33,6 +33,21 @@ func testCfg() *config.Config {
 	return &config.Config{TicketPrefix: "nc", ProjectRoot: "/project"}
 }
 
+// stubBranchFns replaces the two git branch injection points for the duration
+// of the test. Use current="HEAD" to simulate detached HEAD, or current equal
+// to defaultBranch to simulate being on the default branch.
+func stubBranchFns(t *testing.T, current, defaultBranch string) {
+	t.Helper()
+	origCurrent := gitCurrentBranchFn
+	origDefault := gitDefaultBranchFn
+	gitCurrentBranchFn = func(string) (string, error) { return current, nil }
+	gitDefaultBranchFn = func(string) (string, error) { return defaultBranch, nil }
+	t.Cleanup(func() {
+		gitCurrentBranchFn = origCurrent
+		gitDefaultBranchFn = origDefault
+	})
+}
+
 // stubPRShowFns replaces the three gh injection points for the duration of the test.
 func stubPRShowFns(t *testing.T,
 	viewOut []byte, viewErr error,
@@ -191,6 +206,7 @@ func TestPRCreate_SetsCIRunning(t *testing.T) {
 	ghPRCreateFn = func(title, body string) (string, error) {
 		return "https://github.com/x/y/pull/42", nil
 	}
+	stubBranchFns(t, "prole/iron/1", "main")
 
 	if err := prCreate(issues, testCfg(), "/tmp", []string{"1"}); err != nil {
 		t.Fatalf("prCreate: %v", err)
@@ -226,6 +242,7 @@ func TestPRUpdate_SetsCIRunning(t *testing.T) {
 	origPush := gitPushFn
 	t.Cleanup(func() { gitPushFn = origPush })
 	gitPushFn = func(_ string, args ...string) error { return nil }
+	stubBranchFns(t, "prole/iron/1", "main")
 
 	if err := prUpdate(issues, testCfg(), "/tmp", []string{"1"}); err != nil {
 		t.Fatalf("prUpdate: %v", err)
@@ -464,6 +481,7 @@ func TestPRCreate_PushProceedsWhenCommitsExist(t *testing.T) {
 	ghPRCreateFn = func(title, body string) (string, error) {
 		return "https://github.com/x/y/pull/99", nil
 	}
+	stubBranchFns(t, "prole/iron/1", "main")
 
 	if err := prCreate(issues, testCfg(), "/tmp", []string{"1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -578,6 +596,7 @@ func TestPRCreate_WorkDirPassedToGitFns(t *testing.T) {
 	ghPRCreateFn = func(title, body string) (string, error) {
 		return "https://github.com/x/y/pull/7", nil
 	}
+	stubBranchFns(t, "prole/tin/1", "main")
 
 	if err := prCreate(issues, testCfg(), wantDir, []string{"1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -587,5 +606,175 @@ func TestPRCreate_WorkDirPassedToGitFns(t *testing.T) {
 	}
 	if gotPushDir != wantDir {
 		t.Errorf("gitPushFn received workDir=%q, want %q", gotPushDir, wantDir)
+	}
+}
+
+// --- assertBranchReadyForPR / pre-flight check tests ---
+
+// setupBranchTestIssue creates a ticket with a branch, stubs commit count to
+// non-zero, and returns the string ticket ID. Callers must still stub branch
+// and gh/push fns as needed.
+func setupBranchTestIssue(t *testing.T, issues *repo.IssueRepo, branch string) string {
+	t.Helper()
+	id, err := issues.Create("Branch test task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.Assign(id, "copper", branch); err != nil {
+		t.Fatalf("assigning: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+	origCount := gitCommitCountFn
+	t.Cleanup(func() { gitCommitCountFn = origCount })
+	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
+	return fmt.Sprintf("%d", id)
+}
+
+func TestPRCreate_refusesDetachedHEAD(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	ticketID := setupBranchTestIssue(t, issues, "prole/copper/nc-1")
+
+	stubBranchFns(t, "HEAD", "main")
+
+	pushCalled := false
+	ghCalled := false
+	origPush, origGH := gitPushFn, ghPRCreateFn
+	t.Cleanup(func() { gitPushFn = origPush; ghPRCreateFn = origGH })
+	gitPushFn = func(_ string, _ ...string) error { pushCalled = true; return nil }
+	ghPRCreateFn = func(_, _ string) (string, error) { ghCalled = true; return "", nil }
+
+	err := prCreate(issues, testCfg(), "/tmp", []string{ticketID})
+	if err == nil {
+		t.Fatal("expected error for detached HEAD, got nil")
+	}
+	if !strings.Contains(err.Error(), "HEAD is detached") {
+		t.Errorf("expected 'HEAD is detached' in error, got: %v", err)
+	}
+	if pushCalled {
+		t.Error("gitPushFn must not be called when HEAD is detached")
+	}
+	if ghCalled {
+		t.Error("ghPRCreateFn must not be called when HEAD is detached")
+	}
+}
+
+func TestPRCreate_refusesOnDefaultBranch(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	ticketID := setupBranchTestIssue(t, issues, "prole/copper/nc-2")
+
+	stubBranchFns(t, "main", "main")
+
+	pushCalled := false
+	origPush := gitPushFn
+	t.Cleanup(func() { gitPushFn = origPush })
+	gitPushFn = func(_ string, _ ...string) error { pushCalled = true; return nil }
+
+	err := prCreate(issues, testCfg(), "/tmp", []string{ticketID})
+	if err == nil {
+		t.Fatal("expected error when on default branch, got nil")
+	}
+	if !strings.Contains(err.Error(), "default branch") {
+		t.Errorf("expected 'default branch' in error, got: %v", err)
+	}
+	if pushCalled {
+		t.Error("gitPushFn must not be called when on the default branch")
+	}
+}
+
+func TestPRCreate_refusesBranchMismatch(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	ticketID := setupBranchTestIssue(t, issues, "prole/copper/right")
+
+	stubBranchFns(t, "prole/copper/wrong", "main")
+
+	pushCalled := false
+	origPush := gitPushFn
+	t.Cleanup(func() { gitPushFn = origPush })
+	gitPushFn = func(_ string, _ ...string) error { pushCalled = true; return nil }
+
+	err := prCreate(issues, testCfg(), "/tmp", []string{ticketID})
+	if err == nil {
+		t.Fatal("expected error for branch mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "prole/copper/wrong") || !strings.Contains(err.Error(), "prole/copper/right") {
+		t.Errorf("expected both branch names in error, got: %v", err)
+	}
+	if pushCalled {
+		t.Error("gitPushFn must not be called on branch mismatch")
+	}
+}
+
+func TestPRCreate_allowsMatchingBranch(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	ticketID := setupBranchTestIssue(t, issues, "prole/copper/nc-1")
+
+	stubBranchFns(t, "prole/copper/nc-1", "main")
+
+	ghCalled := false
+	origPush, origGH := gitPushFn, ghPRCreateFn
+	t.Cleanup(func() { gitPushFn = origPush; ghPRCreateFn = origGH })
+	gitPushFn = func(_ string, _ ...string) error { return nil }
+	ghPRCreateFn = func(_, _ string) (string, error) {
+		ghCalled = true
+		return "https://github.com/x/y/pull/10", nil
+	}
+
+	if err := prCreate(issues, testCfg(), "/tmp", []string{ticketID}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ghCalled {
+		t.Error("expected ghPRCreateFn to be reached on matching branch")
+	}
+}
+
+func TestPRCreate_allowsEmptyTicketBranch(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	// Create a ticket without a branch set via Assign — just set branch directly
+	// by assigning then using a ticket where branch is empty (no Assign call).
+	id, _ := issues.Create("No branch ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+
+	origCount := gitCommitCountFn
+	t.Cleanup(func() { gitCommitCountFn = origCount })
+	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
+
+	// Ticket has no branch — prCreate should return early with "no branch set" error
+	// which happens *before* assertBranchReadyForPR. This test verifies the
+	// "empty ticketBranch skips mismatch check" path via assertBranchReadyForPR directly.
+	err := assertBranchReadyForPR("/tmp", "")
+	// Should fail only on the git call (dir /tmp is not a git repo) or succeed if
+	// we stub the fns. Test the logic with stubs:
+	stubBranchFns(t, "feature/x", "main")
+	err = assertBranchReadyForPR("/tmp", "")
+	if err != nil {
+		t.Errorf("expected no error when ticketBranch is empty and branch is not default/detached, got: %v", err)
+	}
+}
+
+func TestPRUpdate_refusesDetachedHEAD(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, _ := issues.Create("Repair task", "task", nil, nil, nil)
+	issues.Assign(id, "copper", "prole/copper/nc-5")
+	issues.UpdateStatus(id, "repairing")
+
+	stubBranchFns(t, "HEAD", "main")
+
+	pushCalled := false
+	origPush := gitPushFn
+	t.Cleanup(func() { gitPushFn = origPush })
+	gitPushFn = func(_ string, _ ...string) error { pushCalled = true; return nil }
+
+	err := prUpdate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected error for detached HEAD in prUpdate, got nil")
+	}
+	if !strings.Contains(err.Error(), "HEAD is detached") {
+		t.Errorf("expected 'HEAD is detached' in error, got: %v", err)
+	}
+	if pushCalled {
+		t.Error("gitPushFn must not be called when HEAD is detached")
 	}
 }
