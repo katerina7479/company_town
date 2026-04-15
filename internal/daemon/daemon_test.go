@@ -2860,9 +2860,6 @@ func TestHandleRepairCycleEscalation_reEscalatesAfterCountIncrements(t *testing.
 	if len(*sent) != 1 {
 		t.Fatalf("first escalation: expected 1 message, got %d", len(*sent))
 	}
-	if d.obs != nil {
-		// obs is nil in this helper; skip obs assertion.
-	}
 
 	// Simulate unblock: set back to repairing with a higher count by updating
 	// status twice more (count becomes 5).
@@ -2881,7 +2878,7 @@ func TestHandleRepairCycleEscalation_reEscalatesAfterCountIncrements(t *testing.
 	}
 }
 
-func TestHandleRepairCycleEscalation_sameCountDoesNotReNudge(t *testing.T) {
+func TestHandleRepairCycleEscalation_matchingDigestSuppresses(t *testing.T) {
 	// If repair_cycle_count has not changed since the last nudge, the digest is
 	// identical and digestChanged returns false — no second notification.
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
