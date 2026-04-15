@@ -1207,6 +1207,10 @@ func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []str
 		d.logger.Printf("error moving ticket %d to repairing: %v", issue.ID, err)
 		return
 	}
+	reason := "CI: " + strings.Join(failedNames, ", ")
+	if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
+		d.logger.Printf("error setting repair reason on ticket %d: %v", issue.ID, err)
+	}
 	if d.obs != nil {
 		d.obs.prEventsCIFail++
 	}
@@ -1312,6 +1316,9 @@ func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 		d.logger.Printf("error moving ticket %d to merge_conflict: %v", issue.ID, err)
 		return
 	}
+	if err := d.issues.SetRepairReason(issue.ID, "merge conflict with main"); err != nil {
+		d.logger.Printf("error setting repair reason on ticket %d: %v", issue.ID, err)
+	}
 
 	if d.obs != nil {
 		d.obs.prEventsConflict++
@@ -1380,6 +1387,14 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		if err := d.issues.UpdateStatus(issue.ID, "repairing"); err != nil {
 			d.logger.Printf("error updating ticket %d to repairing: %v", issue.ID, err)
 			return
+		}
+		excerpt := c.Body
+		if len(excerpt) > 120 {
+			excerpt = excerpt[:120] + "…"
+		}
+		reason := fmt.Sprintf("review: %s: %s", c.Author, excerpt)
+		if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
+			d.logger.Printf("error setting repair reason on ticket %d: %v", issue.ID, err)
 		}
 
 		if d.obs != nil {
