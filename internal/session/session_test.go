@@ -1,6 +1,8 @@
 package session
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +98,77 @@ func TestSendKeys_EnterSentSeparately(t *testing.T) {
 		if arg != "Enter" {
 			t.Errorf("Enter call should only contain 'Enter' after target, got %v", enterCall)
 		}
+	}
+}
+
+// TestSendKeys_wrapsSendError verifies that when the literal-text send-keys
+// call fails, SendKeys returns an error that (a) wraps the underlying error so
+// callers can use errors.Is/As and (b) includes the session name for context.
+func TestSendKeys_wrapsSendError(t *testing.T) {
+	origExists := existsFn
+	existsFn = func(string) bool { return true }
+	defer func() { existsFn = origExists }()
+
+	origSleep := sendKeySleepFn
+	sendKeySleepFn = func() {}
+	defer func() { sendKeySleepFn = origSleep }()
+
+	sentinelErr := errors.New("exit status 1")
+	callCount := 0
+	orig := tmuxSendExec
+	tmuxSendExec = func(args ...string) error {
+		callCount++
+		if callCount == 2 { // second call is the -l literal text send
+			return sentinelErr
+		}
+		return nil
+	}
+	defer func() { tmuxSendExec = orig }()
+
+	err := SendKeys("ct-tin", "hello")
+	if err == nil {
+		t.Fatal("expected error from failed literal send")
+	}
+	if !errors.Is(err, sentinelErr) {
+		t.Errorf("error should wrap the underlying exec error; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ct-tin") {
+		t.Errorf("error should mention session name; got: %v", err)
+	}
+}
+
+// TestSendKeys_wrapsEnterError verifies that when the Enter send-keys call
+// fails, SendKeys returns a wrapped error that includes the session name.
+func TestSendKeys_wrapsEnterError(t *testing.T) {
+	origExists := existsFn
+	existsFn = func(string) bool { return true }
+	defer func() { existsFn = origExists }()
+
+	origSleep := sendKeySleepFn
+	sendKeySleepFn = func() {}
+	defer func() { sendKeySleepFn = origSleep }()
+
+	sentinelErr := errors.New("exit status 1")
+	callCount := 0
+	orig := tmuxSendExec
+	tmuxSendExec = func(args ...string) error {
+		callCount++
+		if callCount == 3 { // third call is the Enter send
+			return sentinelErr
+		}
+		return nil
+	}
+	defer func() { tmuxSendExec = orig }()
+
+	err := SendKeys("ct-mayor", "nudge")
+	if err == nil {
+		t.Fatal("expected error from failed Enter send")
+	}
+	if !errors.Is(err, sentinelErr) {
+		t.Errorf("error should wrap the underlying exec error; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ct-mayor") {
+		t.Errorf("error should mention session name; got: %v", err)
 	}
 }
 

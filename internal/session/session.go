@@ -101,7 +101,7 @@ func CreateInteractive(cfg AgentSessionConfig) error {
 func provisionClaudeSettings(agentDir string) error {
 	claudeDir := filepath.Join(agentDir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return err
+		return fmt.Errorf("creating .claude dir %s: %w", claudeDir, err)
 	}
 
 	settingsPath := filepath.Join(claudeDir, "settings.json")
@@ -123,10 +123,13 @@ func provisionClaudeSettings(agentDir string) error {
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshalling claude settings: %w", err)
 	}
 
-	return os.WriteFile(settingsPath, data, 0644)
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("writing claude settings to %s: %w", settingsPath, err)
+	}
+	return nil
 }
 
 // Attach attaches the current terminal to a tmux session.
@@ -213,7 +216,7 @@ func SendKeys(name, keys string) error {
 	// injected individually rather than interpreted as tmux key names or treated
 	// as a bracketed-paste sequence.
 	if err := tmuxSendExec("send-keys", "-t", name, "-l", keys); err != nil {
-		return err
+		return fmt.Errorf("sending keys to session %s: %w", name, err)
 	}
 
 	// Brief pause so the input handler can settle after receiving the text.
@@ -224,7 +227,10 @@ func SendKeys(name, keys string) error {
 
 	// Send Enter as its own call so Claude Code's input handler sees it as a
 	// distinct keystroke, not a continuation of the pasted text.
-	return tmuxSendExec("send-keys", "-t", name, "Enter")
+	if err := tmuxSendExec("send-keys", "-t", name, "Enter"); err != nil {
+		return fmt.Errorf("sending enter to session %s: %w", name, err)
+	}
+	return nil
 }
 
 func shellQuote(s string) string {
