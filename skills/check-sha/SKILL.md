@@ -16,7 +16,7 @@ Record this SHA.
 ## Step 2 — Search prior review comments for that SHA
 
 ```bash
-gh pr view <pr_number> --comments --json comments --jq '.comments[].body' | grep -i "ct-reviewer"
+gh pr view <pr_number> --json reviews --jq '.reviews[].body' | grep -i "ct-reviewer"
 ```
 
 Scan the output for any prior `[ct-reviewer]` comment that mentions the same SHA. The format used in LGTM comments is `LGTM at <sha>` and in rejection comments typically appears as `at <sha>` or explicitly in the body.
