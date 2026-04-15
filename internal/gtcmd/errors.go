@@ -27,7 +27,7 @@ var (
 
 	// ErrNotUnderReview is returned by ticket review when the ticket is not in
 	// under_review status.
-	ErrNotUnderReview = errors.New("ticket is not under_review")
+	ErrNotUnderReview = errors.New("not under_review")
 
 	// ErrUnknownVerdict is returned by ticket review when an unrecognised verdict
 	// string is given.
@@ -42,7 +42,7 @@ var (
 
 	// ErrDefaultBranch is returned by pr create when the current branch is the
 	// repository default branch.
-	ErrDefaultBranch = errors.New("current branch is the default branch")
+	ErrDefaultBranch = errors.New("default branch")
 
 	// ErrNoCommitsYet is returned by pr create when the ticket branch has no
 	// commits.
