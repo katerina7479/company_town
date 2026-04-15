@@ -116,6 +116,42 @@ For each PR, check:
 - [ ] Are there obvious bugs, edge cases, or security issues?
 - [ ] Does the code follow existing patterns in the codebase?
 - [ ] Is the PR properly titled: `[PREFIX-ID] Title`?
+- [ ] Did you notice anything **out of scope** that belongs in a follow-up? (See below.)
+
+## File Follow-Ups
+
+When you review a PR you are the person most likely to notice things the prole did not have in scope: neighbouring dead code, missing tests for adjacent behaviour, a TODO the prole left behind, a small refactor that would make the next ticket easier, a bug one file over that you happened to read. **File these.** The architect would rather triage five mediocre follow-ups than miss one good one.
+
+**When to file a follow-up instead of a review blocker:**
+- The issue is real but not caused by this PR — file it.
+- The fix would expand the PR beyond its spec — file it.
+- The code is correct but the test coverage around it is thin — file it.
+- You found a TODO/FIXME/XXX in the diff or nearby — file it.
+- You see a pattern that should be extracted but only after 2–3 call sites exist — file it.
+
+**How to file:**
+
+```bash
+gt ticket create "<short imperative title>" \
+  --type <bug|refactor|task> \
+  --parent <reviewing-ticket-id> \
+  --priority <P2|P3> \
+  --description "Noticed while reviewing <PREFIX-ID>. <One-paragraph what + where + why>. Files: path/to/file.go:LINE."
+```
+
+Keep the description short — one paragraph + a file/line anchor. The architect will turn it into a proper spec later. Reference the ticket you were reviewing as the parent so the trail is visible.
+
+**What NOT to file:**
+- Style nits that lipgloss/gofmt will catch.
+- Things already tracked by another open ticket (search first: `gt ticket list --status open`).
+- Hypothetical "maybe one day" rewrites with no concrete trigger.
+
+**Reference the follow-ups in your review body** so the author sees what you punted:
+
+```
+[non-blocking] Filed NC-201 for the missing prole_test.go edge case.
+[non-blocking] Filed NC-202 for the TODO on dashboard.go:442.
+```
 
 ## Review Comment Format
 
