@@ -858,32 +858,32 @@ func (m dashboardModel) renderTicketDetails(node *repo.IssueNode, depth int, wid
 	if node.Description.Valid && node.Description.String != "" {
 		wrapped := wordWrap(node.Description.String, width-len(detailIndent)-4)
 		for _, line := range strings.Split(wrapped, "\n") {
-			sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent, m.theme.Footer.Render(line)))
+			fmt.Fprintf(&sb, "%s  %s\n", detailIndent, m.theme.Footer.Render(line))
 		}
 	}
 
 	if node.Assignee.Valid {
-		sb.WriteString(fmt.Sprintf("%s  assignee: %s\n", detailIndent, m.theme.Footer.Render(node.Assignee.String)))
+		fmt.Fprintf(&sb, "%s  assignee: %s\n", detailIndent, m.theme.Footer.Render(node.Assignee.String))
 	}
 
 	if node.PRNumber.Valid {
-		sb.WriteString(fmt.Sprintf("%s  PR: %s\n", detailIndent, m.theme.Footer.Render(fmt.Sprintf("#%d", node.PRNumber.Int64))))
+		fmt.Fprintf(&sb, "%s  PR: %s\n", detailIndent, m.theme.Footer.Render(fmt.Sprintf("#%d", node.PRNumber.Int64)))
 	}
 
 	if node.Branch.Valid {
-		sb.WriteString(fmt.Sprintf("%s  branch: %s\n", detailIndent, m.theme.Footer.Render(node.Branch.String)))
+		fmt.Fprintf(&sb, "%s  branch: %s\n", detailIndent, m.theme.Footer.Render(node.Branch.String))
 	}
 
 	if node.RepairReason.Valid && node.RepairReason.String != "" {
 		fmt.Fprintf(&sb, "%s  repair: %s\n", detailIndent, m.theme.Footer.Render(node.RepairReason.String))
 	}
 
-	sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent,
+	fmt.Fprintf(&sb, "%s  %s\n", detailIndent,
 		m.theme.Footer.Render(fmt.Sprintf("created: %s  updated: %s",
 			node.CreatedAt.Format("2006-01-02 15:04"),
 			node.UpdatedAt.Format("2006-01-02 15:04"),
 		)),
-	))
+	)
 	sb.WriteString("\n")
 	return sb.String()
 }
