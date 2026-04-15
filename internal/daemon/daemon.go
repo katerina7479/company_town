@@ -1275,6 +1275,16 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 		return
 	}
 
+	// Dedup: a re-opened ticket may carry a stale pr_number indefinitely;
+	// the backfill reconciler can also re-attach a closed PR from the branch
+	// name. Without this guard the Mayor receives an identical ESCALATION on
+	// every poll tick until the ticket is manually resolved.
+	nudgeKey := fmt.Sprintf("pr_closed_escalation:%d", issue.ID)
+	digest := fmt.Sprintf("%d:closed", issue.PRNumber.Int64)
+	if !d.digestChanged(nudgeKey, digest) || !d.shouldNudge(nudgeKey) {
+		return
+	}
+
 	d.logger.Printf("PR #%d closed without merge for ticket %s-%d — escalating to Mayor",
 		issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID)
 
@@ -1290,6 +1300,7 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
 		d.sendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
 	}
+	d.recordNudge(nudgeKey, digest)
 }
 
 // handlePRConflict moves a pr_open ticket to merge_conflict and nudges the architect.
