@@ -759,7 +759,7 @@ func TestDeployProleCLAUDEMD_substitutesVars(t *testing.T) {
 	ctDir := config.CompanyTownDir(root)
 
 	templateDir := filepath.Join(ctDir, "agents", "prole")
-	if err := os.MkdirAll(templateDir, 0755); err != nil {
+	if err := os.MkdirAll(templateDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	template := "Prole {{NAME}} worktree={{WORKTREE_PATH}} prefix={{TICKET_PREFIX}}"
@@ -1008,7 +1008,7 @@ func TestInstallPreCommitHook_installsHook(t *testing.T) {
 
 	// Create scripts/pre-commit in the project root.
 	scriptsDir := filepath.Join(cfg.ProjectRoot, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+	if err := os.MkdirAll(scriptsDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(scriptsDir, "pre-commit"), []byte("#!/bin/sh\n"), 0750); err != nil {
