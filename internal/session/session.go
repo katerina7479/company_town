@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -179,10 +180,21 @@ var tmuxSendExec = func(args ...string) error {
 	return exec.Command("tmux", args...).Run()
 }
 
+// sendKeySleepFn is the sleep seam between the literal-text send and the Enter
+// keystroke. Tests swap this to a no-op to avoid the 150 ms delay.
+var sendKeySleepFn = func() { time.Sleep(150 * time.Millisecond) }
+
 // SendKeys sends keystrokes to a tmux session.
+//
 // It first sends C-c to clear any accumulated input in the pane — this prevents
 // nudge messages from piling up in the input box when the session is detached
 // and prior send-keys calls were never processed (nc-146).
+//
+// The message text and the Enter keystroke are sent as two separate invocations
+// with a brief pause in between. Sending them in a single call looks like a
+// paste to Claude Code's input handler, causing the trailing Enter to be
+// consumed as a literal newline rather than a submit keypress when the pane is
+// mid-response (nc-153).
 func SendKeys(name, keys string) error {
 	if !Exists(name) {
 		return fmt.Errorf("session %s does not exist", name)
@@ -192,7 +204,23 @@ func SendKeys(name, keys string) error {
 	// clean line. Non-fatal if this fails (e.g., the pane is in a state where
 	// C-c is ignored).
 	_ = tmuxSendExec("send-keys", "-t", name, "C-c")
-	return tmuxSendExec("send-keys", "-t", name, keys, "Enter")
+
+	// Send the message text using the -l (literal) flag so each character is
+	// injected individually rather than interpreted as tmux key names or treated
+	// as a bracketed-paste sequence.
+	if err := tmuxSendExec("send-keys", "-t", name, "-l", keys); err != nil {
+		return err
+	}
+
+	// Brief pause so the input handler can settle after receiving the text.
+	// Without this, the Enter arrives while the paste event is still being
+	// processed and is swallowed as a literal newline instead of triggering
+	// submit.
+	sendKeySleepFn()
+
+	// Send Enter as its own call so Claude Code's input handler sees it as a
+	// distinct keystroke, not a continuation of the pasted text.
+	return tmuxSendExec("send-keys", "-t", name, "Enter")
 }
 
 func shellQuote(s string) string {
