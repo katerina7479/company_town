@@ -3,7 +3,7 @@ name: submit
 description: End-of-ticket: lint pre-flight, push, PR create, ci_running only after push confirms, verify
 ---
 
-End-of-ticket submission sequence. Follow the steps in order. Do not flip to `in_review` before the PR exists. Do not create the PR before the push lands.
+End-of-ticket submission sequence. Follow the steps in order. Do not flip to `ci_running` before the PR exists. Do not create the PR before the push lands.
 
 ## Step 1 — Pre-flight local checks
 
