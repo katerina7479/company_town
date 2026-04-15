@@ -2,11 +2,29 @@ package commands
 
 import (
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/config"
 )
+
+// captureStdout redirects os.Stdout to a pipe, calls fn, then returns the
+// captured output. It restores os.Stdout even if fn panics.
+func captureStdout(fn func()) string {
+	r, w, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
 
 // --- parseVersion ---
 
@@ -365,5 +383,73 @@ func TestRunDoctor_oneFail(t *testing.T) {
 	_, anyFail := runDoctor(deps)
 	if !anyFail {
 		t.Error("expected a failure")
+	}
+}
+
+// --- printDoctorResults ---
+
+func TestPrintDoctorResults_empty(t *testing.T) {
+	out := captureStdout(func() { printDoctorResults(nil) })
+	if out != "" {
+		t.Errorf("expected empty output for nil results, got %q", out)
+	}
+}
+
+func TestPrintDoctorResults_okStatus(t *testing.T) {
+	results := []checkResult{{Name: "dolt", Status: "ok", Detail: "version 1.50.1"}}
+	out := captureStdout(func() { printDoctorResults(results) })
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "✓") {
+		t.Errorf("expected ✓ for ok status, got %q", plain)
+	}
+	if !strings.Contains(plain, "dolt") {
+		t.Errorf("expected name 'dolt' in output, got %q", plain)
+	}
+}
+
+func TestPrintDoctorResults_warnStatus(t *testing.T) {
+	results := []checkResult{{Name: "daemon", Status: "warn", Detail: "not running"}}
+	out := captureStdout(func() { printDoctorResults(results) })
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "!") {
+		t.Errorf("expected ! for warn status, got %q", plain)
+	}
+}
+
+func TestPrintDoctorResults_failStatus(t *testing.T) {
+	results := []checkResult{{Name: "tmux", Status: "fail", Detail: "not found"}}
+	out := captureStdout(func() { printDoctorResults(results) })
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "✗") {
+		t.Errorf("expected ✗ for fail status, got %q", plain)
+	}
+}
+
+func TestPrintDoctorResults_withFix(t *testing.T) {
+	results := []checkResult{
+		{Name: "dolt", Status: "fail", Detail: "not found", Fix: "brew install dolt"},
+	}
+	out := captureStdout(func() { printDoctorResults(results) })
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "brew install dolt") {
+		t.Errorf("expected fix command in output, got %q", plain)
+	}
+	if !strings.Contains(plain, "run") {
+		t.Errorf("expected 'run' keyword before fix command, got %q", plain)
+	}
+}
+
+func TestPrintDoctorResults_multipleResults(t *testing.T) {
+	results := []checkResult{
+		{Name: "dolt", Status: "ok", Detail: "1.50.1"},
+		{Name: "tmux", Status: "warn", Detail: "old version"},
+		{Name: "git", Status: "fail", Detail: "not found", Fix: "install git"},
+	}
+	out := captureStdout(func() { printDoctorResults(results) })
+	plain := stripANSI(out)
+	for _, name := range []string{"dolt", "tmux", "git"} {
+		if !strings.Contains(plain, name) {
+			t.Errorf("expected %q in output, got %q", name, plain)
+		}
 	}
 }

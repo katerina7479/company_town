@@ -2,11 +2,29 @@ package commands
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/katerina7479/company_town/internal/eventlog"
 )
+
+// captureOutput redirects os.Stdout, calls fn, and returns captured output.
+func captureOutput(fn func()) string {
+	r, w, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
 
 func TestAvgDuration(t *testing.T) {
 	cases := []struct {
@@ -119,4 +137,44 @@ func parseInt(s string) (int, error) {
 	var n int
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
+}
+
+func TestPrintMetricsHeader(t *testing.T) {
+	out := captureOutput(func() { printMetricsHeader(7) })
+	// strip ANSI for plain-text assertions
+	plain := stripMetricsANSI(out)
+	if !strings.Contains(plain, "7") {
+		t.Errorf("expected days '7' in header, got %q", plain)
+	}
+	if !strings.Contains(plain, "Metrics") {
+		t.Errorf("expected 'Metrics' in header, got %q", plain)
+	}
+}
+
+func TestPrintMetricsHeader_customDays(t *testing.T) {
+	out := captureOutput(func() { printMetricsHeader(30) })
+	plain := stripMetricsANSI(out)
+	if !strings.Contains(plain, "30") {
+		t.Errorf("expected days '30' in header output, got %q", plain)
+	}
+}
+
+// stripMetricsANSI removes ANSI escape sequences for plain-text assertion.
+func stripMetricsANSI(s string) string {
+	var out strings.Builder
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
