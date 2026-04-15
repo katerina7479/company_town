@@ -1180,7 +1180,7 @@ func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable, checks st
 	case mergeable == "CONFLICTING" && (issue.Status == repo.StatusPROpen || issue.Status == repo.StatusCIRunning):
 		d.handlePRConflict(issue, prNum)
 	case mergeable == "MERGEABLE" && issue.Status == repo.StatusMergeConflict:
-		d.handlePRConflictResolved(issue, prNum)
+		d.handlePRConflictResolved(issue, prNum, checks)
 	case (issue.Status == repo.StatusCIRunning || issue.Status == repo.StatusPROpen) && checks == "failing":
 		d.handleCIFailure(issue, prNum, failing)
 	case issue.Status == repo.StatusCIRunning && checks == "passing":
@@ -1351,13 +1351,22 @@ func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 	}
 }
 
-// handlePRConflictResolved moves a merge_conflict ticket back to pr_open when the conflict clears.
-func (d *Daemon) handlePRConflictResolved(issue *repo.Issue, prNum int) {
-	d.logger.Printf("PR #%d conflict resolved for ticket %s-%d — moving back to pr_open",
-		prNum, d.cfg.TicketPrefix, issue.ID)
+// handlePRConflictResolved moves a merge_conflict ticket forward when the conflict clears.
+// If CI checks are pending (the common case after a conflict-fix push that re-triggers CI)
+// the ticket advances to ci_running so the daemon can track the new run and promote to
+// in_review on pass. If checks are already passing (e.g. no CI configured) the ticket
+// moves back to pr_open.
+func (d *Daemon) handlePRConflictResolved(issue *repo.Issue, prNum int, checks string) {
+	nextStatus := repo.StatusPROpen
+	if checks == "pending" {
+		nextStatus = repo.StatusCIRunning
+	}
 
-	if err := d.issues.UpdateStatus(issue.ID, repo.StatusPROpen); err != nil {
-		d.logger.Printf("error moving ticket %d back to pr_open: %v", issue.ID, err)
+	d.logger.Printf("PR #%d conflict resolved for ticket %s-%d — moving to %s",
+		prNum, d.cfg.TicketPrefix, issue.ID, nextStatus)
+
+	if err := d.issues.UpdateStatus(issue.ID, nextStatus); err != nil {
+		d.logger.Printf("error moving ticket %d to %s: %v", issue.ID, nextStatus, err)
 		return
 	}
 
