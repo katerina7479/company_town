@@ -65,8 +65,10 @@ Key fields to set:
 |---|---|---|
 | `ticket_prefix` | `"nc"` | Short prefix used in branch names and PR titles. |
 | `github_repo` | `"git@github.com:you/my-project.git"` | Where proles push branches. |
-| `agents.mayor.model` | `"claude-opus-4-5"` | Model for the Mayor and Architect. |
-| `agents.prole.model` | `"claude-sonnet-4-5"` | Model for Proles and the Reviewer. |
+| `agents.mayor.model` | `"claude-opus-4-6"` | Model for the Mayor. |
+| `agents.architect.model` | `"claude-opus-4-6"` | Model for the Architect. |
+| `agents.reviewer.model` | `"claude-sonnet-4-6"` | Model for the Reviewer. |
+| `agents.prole.model` | `"claude-sonnet-4-6"` | Model for Proles. |
 
 ### 5. Start
 
