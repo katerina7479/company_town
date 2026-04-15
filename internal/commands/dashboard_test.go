@@ -1865,3 +1865,181 @@ func TestRenderTicketDetails_repairReasonOmittedWhenNull(t *testing.T) {
 		t.Errorf("expected no repair line when repair_reason is null, got:\n%s", out)
 	}
 }
+
+// --- nc-150: interactive edit of repair_reason ---
+
+// makeRepairingTicket creates a repairing ticket in the test DB and seeds the
+// dashboard model's data snapshot with it. Returns the ticket ID.
+func makeRepairingTicket(t *testing.T, m *dashboardModel, status string) int {
+	t.Helper()
+	id, err := m.issues.Create("Fix CI failure", "bug", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create ticket: %v", err)
+	}
+	if err := m.issues.UpdateStatus(id, status); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID:     id,
+		Status: status,
+		Title:  "Fix CI failure",
+	}}
+	m.data.roots = []*repo.IssueNode{node}
+	m.focusedPanel = 1
+	m.ticketCursor = 0
+	return id
+}
+
+func TestDashboard_EditRepairReason_entersInputMode(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	makeRepairingTicket(t, m, "repairing")
+
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("e")})
+	dm := upd.(dashboardModel)
+
+	if !dm.inputMode {
+		t.Fatal("expected inputMode=true after pressing e on a repairing ticket")
+	}
+	if dm.inputAction != "repair_reason" {
+		t.Errorf("expected inputAction=repair_reason, got %q", dm.inputAction)
+	}
+	if dm.inputBuffer != "" {
+		t.Errorf("expected empty inputBuffer for ticket with no existing reason, got %q", dm.inputBuffer)
+	}
+}
+
+func TestDashboard_EditRepairReason_seededWithExistingValue(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	id := makeRepairingTicket(t, m, "repairing")
+	// Pre-seed repair_reason in the DB and the data snapshot.
+	if err := m.issues.SetRepairReason(id, "existing note"); err != nil {
+		t.Fatalf("SetRepairReason: %v", err)
+	}
+	m.data.roots[0].RepairReason = sql.NullString{String: "existing note", Valid: true}
+
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("e")})
+	dm := upd.(dashboardModel)
+
+	if !dm.inputMode {
+		t.Fatal("expected inputMode=true")
+	}
+	if dm.inputBuffer != "existing note" {
+		t.Errorf("expected inputBuffer seeded with existing reason, got %q", dm.inputBuffer)
+	}
+}
+
+func TestDashboard_EditRepairReason_saveCallsSetRepairReason(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	id := makeRepairingTicket(t, m, "repairing")
+	m.ticketPrefix = "nc"
+
+	// Enter edit mode.
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("e")})
+	dm := upd.(dashboardModel)
+
+	// Type a reason.
+	for _, ch := range "prole stuck on env var" {
+		upd, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune{ch}})
+		dm = upd.(dashboardModel)
+	}
+
+	// Press Enter to commit.
+	upd, _ = dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+
+	// Verify the DB was updated.
+	got, err := m.issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.RepairReason.Valid || got.RepairReason.String != "prole stuck on env var" {
+		t.Errorf("expected repair_reason=%q, got valid=%v value=%q",
+			"prole stuck on env var", got.RepairReason.Valid, got.RepairReason.String)
+	}
+}
+
+func TestDashboard_EditRepairReason_noopOnUnsupportedStatus(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	// Create an in_progress ticket (not a repair-ish state).
+	id, err := m.issues.Create("active work", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m.data.roots = []*repo.IssueNode{{Issue: &repo.Issue{
+		ID:     id,
+		Status: "in_progress",
+	}}}
+	m.focusedPanel = 1
+	m.ticketCursor = 0
+
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("e")})
+	dm := upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false for in_progress ticket")
+	}
+	if dm.statusMsg == "" {
+		t.Error("expected a status hint explaining why e is a no-op")
+	}
+}
+
+func TestDashboard_EditRepairReason_enabledForMergeConflict(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	makeRepairingTicket(t, m, "merge_conflict")
+
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("e")})
+	dm := upd.(dashboardModel)
+
+	if !dm.inputMode {
+		t.Fatal("expected inputMode=true for merge_conflict ticket")
+	}
+	if dm.inputAction != "repair_reason" {
+		t.Errorf("expected inputAction=repair_reason, got %q", dm.inputAction)
+	}
+}
+
+func TestDashboard_EditRepairReason_enabledForOnHold(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	makeRepairingTicket(t, m, "on_hold")
+
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("e")})
+	dm := upd.(dashboardModel)
+
+	if !dm.inputMode {
+		t.Fatal("expected inputMode=true for on_hold ticket")
+	}
+}

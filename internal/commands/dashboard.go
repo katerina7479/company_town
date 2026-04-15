@@ -332,6 +332,12 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.statusMsg = "status update failed: " + err.Error()
 						}
 					}
+				case "repair_reason":
+					if id, err := strconv.Atoi(m.inputTarget); err != nil {
+						m.statusMsg = "internal error: bad ticket id"
+					} else if err := m.issues.SetRepairReason(id, m.inputBuffer); err != nil {
+						m.statusMsg = "set repair_reason failed: " + err.Error()
+					}
 				}
 				m.inputMode = false
 				m.inputBuffer = ""
@@ -464,6 +470,26 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.inputAction = "status"
 					m.inputTarget = strconv.Itoa(flat[m.ticketCursor].node.ID)
 					m.inputBuffer = ""
+				}
+			}
+
+		case "e":
+			if m.focusedPanel == 1 {
+				flat := m.flatTickets()
+				if len(flat) > 0 {
+					node := flat[m.ticketCursor].node
+					if node.Status != "repairing" && node.Status != "merge_conflict" && node.Status != "on_hold" {
+						m.statusMsg = fmt.Sprintf("repair_reason only valid for repairing/merge_conflict/on_hold (current: %s)", node.Status)
+					} else {
+						m.inputMode = true
+						m.inputAction = "repair_reason"
+						m.inputTarget = strconv.Itoa(node.ID)
+						if node.RepairReason.Valid {
+							m.inputBuffer = node.RepairReason.String
+						} else {
+							m.inputBuffer = ""
+						}
+					}
 				}
 			}
 
@@ -702,6 +728,8 @@ func (m dashboardModel) View() string {
 			label = "new ticket title"
 		case "status":
 			label = fmt.Sprintf("status %s-%s  [draft/open/in_progress/in_review/pr_open/repairing/closed]", m.ticketPrefix, m.inputTarget)
+		case "repair_reason":
+			label = fmt.Sprintf("repair_reason %s-%s", m.ticketPrefix, m.inputTarget)
 		}
 		footer = boldStyle.Render(fmt.Sprintf(" [%s] > %s█", label, m.inputBuffer))
 	} else {
@@ -713,7 +741,7 @@ func (m dashboardModel) View() string {
 			if m.showClosed {
 				filterFlag = "*"
 			}
-			hint += fmt.Sprintf("  enter expand  o open PR  c change status  C new ticket  f[%s]filter closed", filterFlag)
+			hint += fmt.Sprintf("  enter expand  o open PR  c change status  e edit reason  C new ticket  f[%s]filter closed", filterFlag)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
 		if m.statusMsg != "" {
