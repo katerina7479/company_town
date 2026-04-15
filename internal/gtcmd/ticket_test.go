@@ -517,6 +517,15 @@ func TestTicketReview_RejectsUnknownVerdict(t *testing.T) {
 	}
 }
 
+// TestTicketReview_badID covers the parseTicketID error path in ticketReview.
+func TestTicketReview_badID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	err := ticketReview(issues, []string{"not-a-valid-number", "approve"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID, got nil")
+	}
+}
+
 func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 

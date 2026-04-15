@@ -2,6 +2,8 @@ package gtcmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -560,14 +562,26 @@ func TestStart_nonDaemon_alreadyRunning(t *testing.T) {
 // TestStop_nonDaemon_running verifies that Stop signals a running non-daemon agent
 // and returns nil even when the database is unavailable (DB open failure is non-fatal
 // in Stop's non-daemon path).
+//
+// A fake .company_town/ directory is created under t.TempDir() and the test CWD
+// is moved there so db.FindProjectRoot() succeeds without a real project checkout.
 func TestStop_nonDaemon_running(t *testing.T) {
+	// Create a minimal fake project root so FindProjectRoot() succeeds in all
+	// environments (local and CI both run this test inside the gtcmd package dir).
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, config.DirName), 0750); err != nil {
+		t.Fatalf("creating .company_town: %v", err)
+	}
+	t.Chdir(projectRoot)
+
 	oldTmux := tmuxExistsFn
 	defer func() { tmuxExistsFn = oldTmux }()
 	// Agent has a live tmux session.
 	tmuxExistsFn = func(_ string) bool { return true }
 
 	// "copper" is a prole — not in agentRegistry, no signal file, not daemon.
-	// The DB open will fail (no running Dolt server in tests), which is non-fatal.
+	// db.OpenFromWorkingDir() fails (no config.json in the fake root) which is
+	// non-fatal in Stop's non-daemon path — it prints a warning and returns nil.
 	if err := Stop([]string{"copper"}); err != nil {
 		t.Fatalf("Stop(copper) with running session: %v", err)
 	}

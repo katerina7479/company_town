@@ -501,6 +501,19 @@ func TestAgentAccept_missingArgs(t *testing.T) {
 	}
 }
 
+// TestAgentAccept_badTicketID verifies that agentAccept returns an error when the
+// ticket ID argument cannot be parsed as an integer.
+func TestAgentAccept_badTicketID(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, proleCfg())
+	mustRegisterAgent(t, deps.agents, "iron", "prole")
+	setEnv(t, "CT_AGENT_NAME", "iron")
+
+	err := agentAccept(deps, []string{"not-a-valid-number"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID, got nil")
+	}
+}
+
 // TestAgentDo_missingArgs verifies that agentDo returns an error when fewer than
 // two arguments are provided (action + ticket-id are both required).
 func TestAgentDo_missingArgs(t *testing.T) {

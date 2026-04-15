@@ -230,7 +230,7 @@ func TestShouldEmitDriftWarning_malformedFile(t *testing.T) {
 	runDir := t.TempDir()
 	// Write a malformed (non-numeric) timestamp into the rate-limit file.
 	path := driftWarnPath(runDir, "iron", "some reason")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	if err := os.WriteFile(path, []byte("not-a-unix-timestamp"), 0644); err != nil {

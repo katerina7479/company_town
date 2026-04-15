@@ -235,3 +235,19 @@ func TestProleList_withProles(t *testing.T) {
 		t.Fatalf("proleList: %v", err)
 	}
 }
+
+// TestAgentStatus_badIssueID verifies that agentStatus returns an error when the
+// --issue flag is given a non-numeric value.
+func TestAgentStatus_badIssueID(t *testing.T) {
+	agents := newAgentRepo(t)
+	if err := agents.Register("tin", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	err := agentStatus(agents, []string{"tin", "working", "--issue", "not-valid-id"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric --issue value, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid issue ID") {
+		t.Errorf("expected 'invalid issue ID' in error, got: %v", err)
+	}
+}
