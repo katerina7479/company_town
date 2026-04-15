@@ -78,11 +78,17 @@ gt ticket show <ticket-id>
 
 Header must show `[pr_open]` (approve) or `[repairing]` (request-changes). If the status is still `under_review`, the transition failed — fix it before going idle.
 
-## Step 5 — Clean up the temp file
+## Step 5 — Clean up
+
+Remove the temp review file and the PR inspection worktree:
 
 ```bash
 rm -f /tmp/review-<pr_number>.md
+ct reviewer inspect --clean
 ```
+
+`ct reviewer inspect --clean` is idempotent — safe to run even if the worktree
+was already cleaned up or `/claim-review` exited early.
 
 ## Step 6 — Go idle
 
