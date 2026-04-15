@@ -258,7 +258,7 @@ func Stop(args []string) error {
 		if err != nil {
 			return fmt.Errorf("opening db to stop daemon: %w", err)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		stopEvents := eventlog.NewLogger(config.CompanyTownDir(stopCfg.ProjectRoot))
 		agents := repo.NewAgentRepo(conn, stopEvents)
 		return stopDaemonWithDeps(agents, sessionName)
