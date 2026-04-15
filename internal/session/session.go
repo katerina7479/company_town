@@ -19,10 +19,15 @@ func SessionName(agentName string) string {
 	return SessionPrefix + agentName
 }
 
+// existsFn is the exec seam for Exists. Tests swap this to control session
+// presence without requiring a real tmux process.
+var existsFn = func(name string) bool {
+	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
+}
+
 // Exists checks if a tmux session exists.
 func Exists(name string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", name)
-	return cmd.Run() == nil
+	return existsFn(name)
 }
 
 // AgentSessionConfig holds everything needed to launch an agent session.
@@ -168,14 +173,26 @@ func ListCompanyTown() ([]string, error) {
 	return sessions, nil
 }
 
+// tmuxSendExec is the exec seam for SendKeys. Tests swap this to capture
+// send-keys calls without spawning a real tmux process.
+var tmuxSendExec = func(args ...string) error {
+	return exec.Command("tmux", args...).Run()
+}
+
 // SendKeys sends keystrokes to a tmux session.
+// It first sends C-c to clear any accumulated input in the pane — this prevents
+// nudge messages from piling up in the input box when the session is detached
+// and prior send-keys calls were never processed (nc-146).
 func SendKeys(name, keys string) error {
 	if !Exists(name) {
 		return fmt.Errorf("session %s does not exist", name)
 	}
 
-	cmd := exec.Command("tmux", "send-keys", "-t", name, keys, "Enter")
-	return cmd.Run()
+	// Best-effort clear: interrupt any pending input so the message lands on a
+	// clean line. Non-fatal if this fails (e.g., the pane is in a state where
+	// C-c is ignored).
+	_ = tmuxSendExec("send-keys", "-t", name, "C-c")
+	return tmuxSendExec("send-keys", "-t", name, keys, "Enter")
 }
 
 func shellQuote(s string) string {
