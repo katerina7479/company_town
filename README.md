@@ -1,40 +1,84 @@
 # Company Town
 
-A local, self-hosted multi-agent development system. One instance per project, one Dolt database per project. Company Town manages a small team of AI agents with defined roles, a ticket lifecycle, git worktrees per worker, and a Dolt database for state. All runtime state lives under `.company_town/` in your project — nothing leaves the machine except the PRs your agents file on GitHub.
+A local, self-hosted multi-agent development system. One instance per project, one Dolt database per project. Company Town runs a small team of AI agents with defined roles, a ticket lifecycle, isolated git worktrees per worker, and a Dolt database for state. All runtime state lives under `.company_town/` in your project — nothing leaves your machine except the PRs the agents file on GitHub.
 
-You talk to the **Mayor** in a tmux pane. The Mayor and its daemon run the rest: the **Architect** specs tickets, the **daemon** assigns them directly, **Proles** implement them in isolated worktrees, and the **Reviewer** AI-reviews PRs before a human merges.
+Each agent runs in its own tmux session. You interact with one of them — the **Mayor** — through a tmux pane, and the Mayor coordinates the rest: the **Architect** specs tickets, a background **daemon** assigns them, **Proles** implement them in isolated worktrees, and the **Reviewer** AI-reviews PRs before a human merges.
 
 ## Requirements
 
-- Go 1.22+
+**To run Company Town** (any install path):
+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - tmux
 - `gh` (GitHub CLI), authenticated against the repo you want agents to push to
 - `claude` CLI (Claude Code), authenticated
 
-## Install
+**To build from source** (optional, contributors only):
 
-### Pre-built binaries (recommended)
+- Go 1.22+
 
-Download the latest release from [GitHub Releases](https://github.com/katerina7479/company_town/releases):
+## Getting Started
+
+### 1. Install the binaries
+
+Grab the latest release from [github.com/katerina7479/company_town/releases/latest](https://github.com/katerina7479/company_town/releases/latest). Pick the archive that matches your platform:
+
+- `company_town_<version>_darwin_arm64.tar.gz` — macOS, Apple Silicon
+- `company_town_<version>_darwin_amd64.tar.gz` — macOS, Intel
+- `company_town_<version>_linux_amd64.tar.gz` — Linux x86_64
+
+Download, extract, and move the binaries onto your `PATH`:
 
 ```bash
-# macOS arm64 (Apple Silicon)
 curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_darwin_arm64.tar.gz | tar xz
-sudo mv ct gt /usr/local/bin/
-
-# macOS amd64 (Intel)
-curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_darwin_amd64.tar.gz | tar xz
-sudo mv ct gt /usr/local/bin/
-
-# Linux amd64
-curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_linux_amd64.tar.gz | tar xz
 sudo mv ct gt /usr/local/bin/
 ```
 
-Verify checksums with `checksums.txt` included in each release.
+Swap the archive name for your platform. Each release page includes a `checksums.txt` you can verify against if you care.
 
-### From source (requires Go 1.22+)
+### 2. Verify
+
+```bash
+ct --version
+gt --version
+```
+
+Both should print a version string. If you get `command not found`, the binaries aren't on your `PATH` — add the directory you moved them into to `$PATH` and retry.
+
+### 3. Initialize a project
+
+```bash
+cd ~/your-project
+ct init
+$EDITOR .company_town/config.json
+```
+
+`ct init` creates `.company_town/`, starts the Dolt server, runs migrations, writes a `.gitignore` entry for `.company_town/` at the project root (so nothing Company Town tracks leaks into your repo), and drops a default `config.json`.
+
+At minimum, set these two fields:
+
+- `ticket_prefix` — two or three letters used in ticket IDs, branch names, and PR titles (e.g. `nc` → `nc-42`, `[nc-42] Title`, `prole/iron/nc-42`).
+- `github_repo` — SSH or HTTPS URL of the upstream repo. Proles push branches here.
+
+### 4. Start the daemon and attach to the Mayor
+
+```bash
+ct start
+```
+
+This boots the daemon, brings up the Mayor's tmux session, and attaches you to it. You'll land in a Claude Code pane talking to the Mayor.
+
+**What to type into the Mayor pane:** describe in plain English what you want built. For example:
+
+> "File a ticket to add a `--json` flag to `ct dashboard` that prints the same data as stdout instead of opening the TUI."
+
+The Mayor files a `draft` ticket, the Architect picks it up, writes a spec under `.company_town/ticket_specs/`, and moves it to `open`. The daemon assigns an idle prole (or spins a new one up to `max_proles`), the prole implements and pushes a PR, and the Reviewer diffs it against the spec. You review the final PR on GitHub and merge.
+
+To detach from tmux without killing anything: `Ctrl-b d`. To come back later: `ct attach mayor` (or rerun `ct start` — it's idempotent). To shut down: `ct stop` (graceful — agents write handoffs) or `ct nuke` (immediate — no handoffs). Neither command drops the database; rerun `ct start` to resume.
+
+## Install from source
+
+Contributors and anyone tracking `main` directly can build from the repo:
 
 ```bash
 git clone https://github.com/katerina7479/company_town.git
@@ -42,46 +86,25 @@ cd company_town
 make install        # builds and installs ct + gt to $GOPATH/bin
 ```
 
-`make build` alone drops the binaries at `./bin/ct` and `./bin/gt`.
+`make build` alone drops binaries at `./bin/ct` and `./bin/gt`. Requires Go 1.22+.
 
-### Version
+## Troubleshooting first run
 
-```bash
-ct --version
-gt --version
-```
-
-## Releasing a new version
-
-Tag and push — GitHub Actions runs goreleaser automatically:
+If something goes wrong on your first `ct start`, tail the daemon log — that's where the clearest error messages live:
 
 ```bash
-git tag v0.1.0
-git push --tags
+tail -f .company_town/logs/daemon.log
 ```
 
-This produces a GitHub Release with `.tar.gz` archives for macOS (arm64, amd64) and Linux (amd64), plus a `checksums.txt`.
+Common first-run failures:
 
-## Quick start for a new project
+- **`tmux: command not found`** — install tmux (`brew install tmux` / `apt install tmux`).
+- **`gh: not authenticated`** — run `gh auth login` against the repo in `github_repo`.
+- **`claude: command not found`** — install and authenticate the Claude Code CLI.
+- **Dolt port already in use** — another project's Dolt server is already bound. Either stop it or change `dolt.port` in `config.json`.
+- **`ct start` exits immediately with no visible error** — check `.company_town/logs/daemon.log`; a failed migration or config parse error shows up there.
 
-```bash
-cd ~/my-project
-ct init             # creates .company_town/, starts Dolt, runs migrations
-$EDITOR .company_town/config.json
-                    # set ticket_prefix, github_repo, max_proles, models
-ct start            # starts the daemon and attaches you to the Mayor's tmux
-```
-
-From inside the Mayor pane, ask the Mayor to bring up the rest of the system ("start the architect," "start an artisan backend," etc). The daemon picks up from there — see *Daily loop* below.
-
-To tear down:
-
-```bash
-ct stop             # graceful: agents write handoffs, exit cleanly
-ct nuke             # immediate: kills every tmux session, no handoff
-```
-
-Neither command drops the database. Re-running `ct start` picks up where you left off.
+If you hit something not on this list, `.company_town/logs/` has a flat file per agent — start with `daemon.log`, then the specific agent that seems wedged.
 
 ## How it works
 
@@ -91,10 +114,12 @@ Neither command drops the database. Re-running `ct start` picks up where you lef
 |---|---|---|---|
 | **Mayor** | opus | long-lived | Human interface. Starts/stops other agents, handles escalations, receives merge notifications. |
 | **Architect** | opus | long-lived | Picks up `draft` tickets, investigates the codebase, writes specs under `.company_town/ticket_specs/`, moves tickets to `open`. |
-| **Daemon** | — | background | Watches `open` + `repairing` tickets and assigns them to proles. Runs automatically with `ct start`. |
-| **Reviewer** | sonnet | long-lived | AI-reviews PRs when tickets hit `in_review`, posts GitHub review, moves ticket to `pr_open` or `repairing`. |
-| **Proles** | sonnet | ephemeral | Implementation workers. One ticket at a time, one git worktree each. Named after metals (`copper`, `iron`, `tin`…). |
-| **Artisans** | opus | long-lived | Long-running specialists (`backend`, `frontend`, `qa`). Pick up work their specialty matches. |
+| **Daemon** | — | background | Watches `open` and `repairing` tickets and assigns them to proles. Runs automatically with `ct start`. |
+| **Reviewer** | sonnet | long-lived | AI-reviews PRs when tickets hit `in_review`, posts a GitHub review, moves the ticket to `pr_open` or `repairing`. |
+| **Proles** | sonnet | ephemeral | Implementation workers. One ticket at a time, one git worktree each, named after metals (`copper`, `iron`, `tin`…). Die and respawn constantly. |
+| **Artisans** | opus | long-lived | Senior specialist coders (`backend`, `frontend`, `qa_coder`). Unlike proles, they keep context across tickets and handle the harder work in their specialty. |
+
+**Prole vs. Artisan.** Proles are the default. The daemon spins one up for any ticket that needs hands; when the ticket closes, the prole's worktree is reset and it picks up the next one. An artisan is a deliberate choice you make when a domain needs continuity — e.g. a frontend artisan that carries design-system context across a week of frontend tickets rather than starting fresh each time. You start artisans explicitly with `ct artisan <specialty>`; the daemon routes tickets whose `specialty` matches to them before falling back to a generic prole.
 
 Agents talk to the system through the internal `gt` CLI. Users talk to the Mayor, not to `gt`.
 
@@ -125,21 +150,21 @@ Epics are containers, never workable. Proles don't touch them.
 
 ### Selection order
 
-When the daemon has idle prole slots and selectable work, it picks tickets in this order (strict lexicographic):
+When the daemon has idle prole slots and selectable work, it picks tickets in strict lexicographic order:
 
 1. `repairing` before `open`
 2. bugs before tasks before anything else
 3. P0 → P1 → P2 → P3 → null
 4. lower id first
 
-This is deterministic — no LLM is involved in the pick.
+Deterministic. No LLM is involved in the pick.
 
 ### Daemon
 
 A background goroutine inside `ct start` that polls every 30 seconds (configurable via `polling_interval_seconds`). Each tick it:
 
 - Restarts dead architect/reviewer sessions when they have work to do
-- Nudges architect about `draft` tickets
+- Nudges the architect about `draft` tickets
 - Assigns idle proles to the top selectable tickets
 - Detects PR merges → closes tickets
 - Detects human PR review comments → moves tickets to `repairing`
@@ -153,10 +178,10 @@ Daemon output lives at `.company_town/logs/daemon.log`.
 **As the user** — you never type `gt` commands directly. You run `ct start` once a day (or once a week, or whenever), and from the Mayor pane you:
 
 1. Describe a new feature in English. The Mayor files a `draft` ticket.
-2. Wait ~a minute. The Architect picks it up, investigates the code, writes a spec file in `.company_town/ticket_specs/`, and moves it to `open`.
-3. The daemon assigns an idle prole (or spins up a new one up to `max_proles`). The prole builds on `prole/<name>/<id>`, pushes frequently, and files a PR.
+2. Wait a minute. The Architect picks it up, investigates the code, writes a spec file in `.company_town/ticket_specs/`, and moves it to `open`.
+3. The daemon assigns an idle prole (or spins a new one up to `max_proles`). The prole builds on `prole/<name>/<id>`, pushes frequently, and files a PR.
 4. The Reviewer sees the new PR, diffs it against the spec, and either approves it → `pr_open` or requests changes → `repairing`.
-5. You review on GitHub. If you merge, the daemon notices the merge and closes the ticket. If you leave a review comment, the daemon moves it to `repairing` and the prole fixes it.
+5. You review on GitHub. If you merge, the daemon notices and closes the ticket. If you leave a review comment, the daemon moves it to `repairing` and the prole fixes it.
 
 **As an operator of Company Town itself** — from any shell, not from tmux:
 
@@ -171,7 +196,7 @@ Daemon output lives at `.company_town/logs/daemon.log`.
 
 | Command | Action |
 |---|---|
-| `ct init` | Set up `.company_town/`, start Dolt, run migrations. Idempotent. Always refreshes CLAUDE.md templates from the embedded copies. |
+| `ct init` | Set up `.company_town/`, start Dolt, run migrations, write `.gitignore` entries. Idempotent. Always refreshes agent CLAUDE.md templates from the embedded copies — see the warning below. |
 | `ct start` | Start daemon + Mayor, attach to the Mayor's tmux session. |
 | `ct stop [--clean]` | Graceful shutdown. Agents write handoffs and exit. `--clean` also prunes prole worktrees. |
 | `ct nuke` | Kill every session immediately. No handoffs. |
@@ -179,7 +204,8 @@ Daemon output lives at `.company_town/logs/daemon.log`.
 | `ct artisan <specialty> [stop]` | Start or stop an Artisan of the given specialty. |
 | `ct attach <agent>` | Attach to a running agent's tmux session. |
 | `ct dashboard` | Open the live agents + tickets TUI. |
-| `ct daemon` | Run the daemon only. Normally invoked by `ct start`, not by hand. |
+
+> **Heads up: `ct init` overwrites agent CLAUDE.md files.** The templates under `.company_town/agents/*/CLAUDE.md` are rewritten from the embedded copies on every `ct init`. If you want to customize agent behavior, edit the source templates at `internal/commands/templates/*-CLAUDE.md` and rebuild, *not* the deployed copies — those will be clobbered on the next `ct init`.
 
 ### `gt` (agent-facing)
 
@@ -211,29 +237,28 @@ Agents use this directly. Users generally don't, but it's fine for debugging and
 
 ```
 <your-project>/
-├── .company_town/              # gitignored, all runtime state
-│   ├── config.json             # the only config file you edit
-│   ├── dolt-data/              # Dolt server data + config
-│   ├── logs/                   # flat-file logs per agent
-│   │   ├── daemon.log
-│   │   ├── mayor.log
-│   │   ├── architect.log
-│   │   └── prole-<name>.log
-│   ├── ticket_specs/           # architect writes specs here as markdown
-│   ├── agents/                 # per-agent CLAUDE.md and memory/
-│   │   ├── mayor/
-│   │   ├── architect/
-│   │   │   ├── CLAUDE.md
-│   │   │   └── memory/
-│   │   │       ├── handoff.md
-│   │   │       └── lessons_learned.md
-│   │   └── ... (reviewer, artisan/<specialty>)
-│   └── proles/                 # per-prole git worktrees
-│       ├── copper/
-│       └── iron/
+├── .gitignore                  # ct init adds .company_town/ here automatically
+└── .company_town/              # gitignored, all runtime state
+    ├── config.json             # the only config file you edit
+    ├── dolt-data/              # Dolt server data + config
+    ├── logs/                   # flat-file logs per agent
+    │   ├── daemon.log
+    │   ├── mayor.log
+    │   ├── architect.log
+    │   └── prole-<name>.log
+    ├── ticket_specs/           # architect writes specs here as markdown
+    ├── agents/                 # per-agent CLAUDE.md and memory/
+    │   ├── mayor/
+    │   ├── architect/
+    │   │   ├── CLAUDE.md       # overwritten by ct init — do not edit in place
+    │   │   └── memory/
+    │   │       ├── handoff.md
+    │   │       └── lessons_learned.md
+    │   └── ... (reviewer, artisan/<specialty>)
+    └── proles/                 # per-prole git worktrees
+        ├── copper/
+        └── iron/
 ```
-
-Everything under `.company_town/` is gitignored by convention. The CLAUDE.md templates shipped with the binary are written into `agents/` on every `ct init`, which always refreshes them from the embedded copies.
 
 ## Database
 
@@ -281,7 +306,7 @@ Split-pane TUI: agents on one side, tickets on the other. Keyboard nav, selectio
 
 ### Handoffs and memory
 
-Long-lived agents (mayor, architect, artisans) write a `handoff.md` to `.company_town/agents/<type>/memory/` when they hit `context_handoff_threshold` or are asked to stop gracefully. The next session of that agent reads the file on start and resumes. Agents also write their own `lessons_learned.md` in the same directory.
+Long-lived agents (mayor, architect, artisans) write a `handoff.md` to `.company_town/agents/<type>/memory/` when they hit `context_handoff_threshold` or are asked to stop gracefully. The next session of that agent reads the file on start and resumes. Agents also write their own `lessons_learned.md` in the same directory. These memory files are **not** overwritten by `ct init` — only the CLAUDE.md template is.
 
 ### Logs
 
@@ -304,6 +329,17 @@ gt check run
 - **Reviewer approval is not merge.** The reviewer's `pr_open` transition means *ready for human review*.
 - **Human PR comments are the only signal that triggers `repairing`.** Reviewer comments are filtered by a sentinel prefix so they don't loop.
 - **Dolt gives you history.** Use `dolt log issues` when state transitions look wrong.
+
+## Releasing a new version
+
+For maintainers cutting a release: tag and push — GitHub Actions runs goreleaser automatically.
+
+```bash
+git tag v0.1.0
+git push --tags
+```
+
+This produces a GitHub Release with `.tar.gz` archives for macOS (arm64, amd64) and Linux (amd64), plus a `checksums.txt`. See the `cut-release` skill for the full pre-flight checklist.
 
 ## Further reading
 
