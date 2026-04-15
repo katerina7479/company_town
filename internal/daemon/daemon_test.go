@@ -3228,6 +3228,61 @@ func TestClassifyChecks(t *testing.T) {
 	}
 }
 
+// TestHandleOpenPR_prOpenFailingCI verifies that a pr_open ticket with failing
+// CI checks is moved to repairing and the assigned prole is nudged. This is the
+// nc-147 regression path: stale gt binaries (pre-nc-130) file PRs that set the
+// ticket status to pr_open instead of ci_running, so the CI-failure guard must
+// cover both statuses.
+func TestHandleOpenPR_prOpenFailingCI_movesToRepairing(t *testing.T) {
+	proleSession := "ct-tin"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+
+	id, _ := issues.Create("Stale-binary ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 205)
+	issues.Assign(id, "tin", "prole/tin/nc-205")
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"lint", "test"})
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing for pr_open + failing CI, got %q", updated.Status)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge to prole, got %d", len(*sent))
+	}
+	if (*sent)[0].session != proleSession {
+		t.Errorf("expected nudge to %q, got %q", proleSession, (*sent)[0].session)
+	}
+	if !containsAll((*sent)[0].msg, "CI FAILURE", "PR #205", "NC-"+itoa(id), "lint", "test") {
+		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	}
+}
+
+// TestHandleOpenPR_prOpenPassingCI verifies that a pr_open ticket is NOT
+// auto-promoted to in_review when CI passes — only ci_running gets that
+// promotion. A pr_open ticket is already in the reviewer's hands; promoting
+// it would clobber reviewer state.
+func TestHandleOpenPR_prOpenPassingCI_isNoop(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Already-reviewed ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 206)
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "passing", nil)
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "pr_open" {
+		t.Errorf("pr_open + passing CI must not auto-promote; got status %q", updated.Status)
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge for pr_open + passing CI, got %d", len(*sent))
+	}
+}
+
 func TestHandleOpenPR_inReview_noCIReclassification(t *testing.T) {
 	// Once a ticket is in_review, the daemon must not reclassify it based on
 	// CI state. The reviewer owns the ticket; the daemon's handleOpenPR default

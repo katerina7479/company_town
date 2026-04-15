@@ -1152,8 +1152,11 @@ func (d *Daemon) handlePREvents() {
 // and current ticket status.
 //
 // Precedence: merge conflicts are detected first (a conflicting branch cannot
-// merge regardless of CI). CI state is evaluated next for ci_running tickets.
-// Human-comment detection runs last for pr_open tickets only.
+// merge regardless of CI). CI failure is evaluated next for ci_running and
+// pr_open tickets (pr_open is included as a defense against stale gt binaries
+// that skip the ci_running state — nc-147). CI pass promotion is keyed to
+// ci_running only so a pr_open ticket already in reviewer hands is not
+// auto-promoted. Human-comment detection runs last for pr_open tickets.
 //
 // UNKNOWN mergeability is a no-op: GitHub returns this transiently (~5s after a
 // push) while re-computing mergeability. We check for human comments but do not
@@ -1168,7 +1171,7 @@ func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable, checks st
 		d.handlePRConflict(issue, prNum)
 	case mergeable == "MERGEABLE" && issue.Status == "merge_conflict":
 		d.handlePRConflictResolved(issue, prNum)
-	case issue.Status == "ci_running" && checks == "failing":
+	case (issue.Status == "ci_running" || issue.Status == "pr_open") && checks == "failing":
 		d.handleCIFailure(issue, prNum, failing)
 	case issue.Status == "ci_running" && checks == "passing":
 		d.handleCIPass(issue, prNum)
