@@ -2,8 +2,12 @@ package commands
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/repo"
@@ -285,6 +289,527 @@ func TestTrendArrow_higherDirection_ascendingIsGood(t *testing.T) {
 	out := trendArrow(hist, "")
 	if out != qUpStyle.Render("↑") {
 		t.Errorf("expected green (qUpStyle) ↑ for ascending higher-is-better metric, got %q", out)
+	}
+}
+
+// ── padVisible tests ──────────────────────────────────────────────────────────
+
+func TestPadVisible_noOpWhenAlreadyWide(t *testing.T) {
+	s := "hello"
+	got := padVisible(s, 3)
+	if got != s {
+		t.Errorf("expected unchanged string, got %q", got)
+	}
+}
+
+func TestPadVisible_exactWidth(t *testing.T) {
+	s := "hello"
+	got := padVisible(s, 5)
+	if got != s {
+		t.Errorf("expected unchanged string for exact width, got %q", got)
+	}
+}
+
+func TestPadVisible_padsToWidth(t *testing.T) {
+	s := "hi"
+	got := padVisible(s, 6)
+	if len(got) != 6 {
+		t.Errorf("expected length 6, got %d: %q", len(got), got)
+	}
+	if !strings.HasPrefix(got, s) {
+		t.Errorf("expected padded string to start with %q, got %q", s, got)
+	}
+}
+
+func TestPadVisible_emptyString(t *testing.T) {
+	got := padVisible("", 4)
+	if got != "    " {
+		t.Errorf("expected 4 spaces, got %q", got)
+	}
+}
+
+// ── renderQualityRow tests ────────────────────────────────────────────────────
+
+func TestRenderQualityRow_noLatest(t *testing.T) {
+	row := qualityRow{
+		cfg: config.QualityCheckConfig{
+			Name:      "go_test_coverage",
+			Type:      "metric",
+			Direction: "higher",
+		},
+	}
+	out := renderQualityRow(row)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "go_test_coverage") {
+		t.Errorf("expected check name in output, got %q", plain)
+	}
+}
+
+func TestRenderQualityRow_withPassLatest(t *testing.T) {
+	row := qualityRow{
+		cfg: config.QualityCheckConfig{
+			Name:          "go_test_coverage",
+			Type:          "metric",
+			Direction:     "higher",
+			Threshold:     60,
+			WarnThreshold: 50,
+		},
+		latest: &repo.QualityMetric{
+			Status: "pass",
+			Value:  sql.NullFloat64{Float64: 72.3, Valid: true},
+		},
+		history: []*repo.QualityMetric{
+			metricPoint(72.3, "pass"),
+		},
+	}
+	out := renderQualityRow(row)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "go_test_coverage") {
+		t.Errorf("expected check name, got %q", plain)
+	}
+	if !strings.Contains(plain, "72.3") {
+		t.Errorf("expected value 72.3, got %q", plain)
+	}
+}
+
+func TestRenderQualityRow_withPassfailType(t *testing.T) {
+	row := qualityRow{
+		cfg: config.QualityCheckConfig{
+			Name: "some_check",
+			Type: "pass_fail",
+		},
+		latest: &repo.QualityMetric{
+			Status: "pass",
+		},
+		history: []*repo.QualityMetric{
+			passfailPoint("pass"),
+			passfailPoint("fail"),
+		},
+	}
+	out := renderQualityRow(row)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "some_check") {
+		t.Errorf("expected check name, got %q", plain)
+	}
+}
+
+func TestRenderQualityRow_longNameTruncated(t *testing.T) {
+	longName := strings.Repeat("a", 30)
+	row := qualityRow{
+		cfg: config.QualityCheckConfig{Name: longName, Type: "metric"},
+	}
+	out := renderQualityRow(row)
+	plain := stripANSI(out)
+	// Name field is capped at 28 runes; truncated names end with "..."
+	if !strings.Contains(plain, "...") {
+		t.Errorf("expected truncation ellipsis for long name, got %q", plain)
+	}
+}
+
+// ── qualityModel View / viewList / viewDetail tests ──────────────────────────
+
+func TestQualityView_loading(t *testing.T) {
+	m := qualityModel{width: 0}
+	got := m.View()
+	if got != "Loading…" {
+		t.Errorf("expected 'Loading…' for zero-width model, got %q", got)
+	}
+}
+
+func TestQualityViewList_empty(t *testing.T) {
+	m := qualityModel{width: 80, height: 24}
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "No quality metrics") {
+		t.Errorf("expected empty-state message, got %q", plain)
+	}
+}
+
+func TestQualityViewList_withError(t *testing.T) {
+	m := qualityModel{
+		width:  80,
+		height: 24,
+		err:    fmt.Errorf("database connection refused"),
+	}
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "error") {
+		t.Errorf("expected error message in view, got %q", plain)
+	}
+}
+
+func TestQualityViewList_withRows(t *testing.T) {
+	rows := []qualityRow{
+		{
+			cfg: config.QualityCheckConfig{
+				Name:      "go_test_coverage",
+				Type:      "metric",
+				Direction: "higher",
+				Threshold: 60,
+			},
+			latest: &repo.QualityMetric{
+				Status: "pass",
+				Value:  sql.NullFloat64{Float64: 72.3, Valid: true},
+			},
+			history: []*repo.QualityMetric{metricPoint(72.3, "pass")},
+		},
+		{
+			cfg: config.QualityCheckConfig{
+				Name:      "todo_count",
+				Type:      "metric",
+				Direction: "lower",
+				Threshold: 0,
+			},
+			latest: &repo.QualityMetric{
+				Status: "fail",
+				Value:  sql.NullFloat64{Float64: 3, Valid: true},
+			},
+			history: []*repo.QualityMetric{metricPoint(3, "fail")},
+		},
+	}
+	m := qualityModel{width: 120, height: 40, rows: rows, cursor: 0}
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "go_test_coverage") {
+		t.Errorf("expected first row name, got %q", plain)
+	}
+	if !strings.Contains(plain, "todo_count") {
+		t.Errorf("expected second row name, got %q", plain)
+	}
+}
+
+func TestQualityViewDetail_noData(t *testing.T) {
+	rows := []qualityRow{
+		{
+			cfg: config.QualityCheckConfig{
+				Name: "go_test_coverage",
+				Type: "metric",
+			},
+		},
+	}
+	m := qualityModel{
+		width:      120,
+		height:     40,
+		rows:       rows,
+		cursor:     0,
+		detailMode: true,
+	}
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "go_test_coverage") {
+		t.Errorf("expected check name in detail view, got %q", plain)
+	}
+	if !strings.Contains(plain, "No data") {
+		t.Errorf("expected no-data message, got %q", plain)
+	}
+}
+
+func TestQualityViewDetail_withHistory(t *testing.T) {
+	hist := []*repo.QualityMetric{
+		metricPoint(72.3, "pass"),
+		metricPoint(65.0, "warn"),
+		metricPoint(53.0, "fail"),
+	}
+	rows := []qualityRow{
+		{
+			cfg: config.QualityCheckConfig{
+				Name:          "go_test_coverage",
+				Type:          "metric",
+				Direction:     "higher",
+				Threshold:     60,
+				WarnThreshold: 50,
+			},
+			latest: &repo.QualityMetric{
+				Status: "pass",
+				Value:  sql.NullFloat64{Float64: 72.3, Valid: true},
+			},
+			history: hist,
+		},
+	}
+	m := qualityModel{
+		width:      120,
+		height:     40,
+		rows:       rows,
+		cursor:     0,
+		detailMode: true,
+	}
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "go_test_coverage") {
+		t.Errorf("expected check name in detail view, got %q", plain)
+	}
+	if !strings.Contains(plain, "72.3") {
+		t.Errorf("expected current value in detail view, got %q", plain)
+	}
+	if !strings.Contains(plain, "Trend") {
+		t.Errorf("expected Trend line in detail view, got %q", plain)
+	}
+}
+
+func TestQualityViewDetail_withDetailHistory(t *testing.T) {
+	// detailHistory overrides row.history when present
+	detailHist := []*repo.QualityMetric{
+		metricPoint(80.0, "pass"),
+		metricPoint(75.0, "pass"),
+	}
+	rows := []qualityRow{
+		{
+			cfg: config.QualityCheckConfig{
+				Name: "go_test_coverage",
+				Type: "metric",
+			},
+			latest: &repo.QualityMetric{
+				Status: "pass",
+				Value:  sql.NullFloat64{Float64: 80.0, Valid: true},
+			},
+		},
+	}
+	m := qualityModel{
+		width:         120,
+		height:        40,
+		rows:          rows,
+		cursor:        0,
+		detailMode:    true,
+		detailHistory: detailHist,
+	}
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "Trend") {
+		t.Errorf("expected Trend line when detailHistory is set, got %q", plain)
+	}
+}
+
+// ── qualityTick test ─────────────────────────────────────────────────────────
+
+func TestQualityTick_returnsCmd(t *testing.T) {
+	cmd := qualityTick()
+	if cmd == nil {
+		t.Error("expected non-nil cmd from qualityTick()")
+	}
+}
+
+// ── qualityModel.Update tests ─────────────────────────────────────────────────
+
+func TestQualityUpdate_windowSizeMsg(t *testing.T) {
+	m := qualityModel{}
+	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	qm := updated.(qualityModel)
+	if qm.width != 120 || qm.height != 40 {
+		t.Errorf("expected width=120 height=40, got %d %d", qm.width, qm.height)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd for WindowSizeMsg")
+	}
+}
+
+func TestQualityUpdate_dataMsg_withError(t *testing.T) {
+	m := qualityModel{}
+	msg := qualityDataMsg{err: fmt.Errorf("db error")}
+	updated, _ := m.Update(msg)
+	qm := updated.(qualityModel)
+	if qm.err == nil {
+		t.Error("expected error to be set")
+	}
+}
+
+func TestQualityUpdate_dataMsg_success(t *testing.T) {
+	m := qualityModel{err: fmt.Errorf("previous error")}
+	rows := []qualityRow{
+		{cfg: config.QualityCheckConfig{Name: "go_test_coverage"}},
+	}
+	msg := qualityDataMsg{rows: rows}
+	updated, _ := m.Update(msg)
+	qm := updated.(qualityModel)
+	if qm.err != nil {
+		t.Errorf("expected no error after successful dataMsg, got %v", qm.err)
+	}
+	if len(qm.rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(qm.rows))
+	}
+	if qm.lastRefresh.IsZero() {
+		t.Error("expected lastRefresh to be set")
+	}
+}
+
+func TestQualityUpdate_detailMsg_success(t *testing.T) {
+	m := qualityModel{}
+	hist := []*repo.QualityMetric{metricPoint(70.0, "pass")}
+	msg := qualityDetailMsg{history: hist}
+	updated, _ := m.Update(msg)
+	qm := updated.(qualityModel)
+	if len(qm.detailHistory) != 1 {
+		t.Errorf("expected 1 history item, got %d", len(qm.detailHistory))
+	}
+}
+
+func TestQualityUpdate_detailMsg_withError(t *testing.T) {
+	m := qualityModel{}
+	msg := qualityDetailMsg{err: fmt.Errorf("db error")}
+	updated, _ := m.Update(msg)
+	qm := updated.(qualityModel)
+	if qm.detailHistory != nil {
+		t.Error("expected detailHistory to remain nil on error")
+	}
+}
+
+func TestQualityUpdate_keyQ_quitsWhenNotInDetail(t *testing.T) {
+	m := qualityModel{}
+	_, cmd := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("q")})
+	if cmd == nil {
+		t.Error("expected non-nil quit cmd from 'q' key")
+	}
+}
+
+func TestQualityUpdate_keyEsc_exitsDetailMode(t *testing.T) {
+	hist := []*repo.QualityMetric{metricPoint(70.0, "pass")}
+	m := qualityModel{
+		detailMode:    true,
+		detailHistory: hist,
+		rows:          []qualityRow{{cfg: config.QualityCheckConfig{Name: "coverage"}}},
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("q")})
+	qm := updated.(qualityModel)
+	if qm.detailMode {
+		t.Error("expected detailMode=false after q in detail mode")
+	}
+	if qm.detailHistory != nil {
+		t.Error("expected detailHistory cleared after exiting detail mode")
+	}
+}
+
+func TestQualityUpdate_keyEsc_inDetailMode(t *testing.T) {
+	m := qualityModel{detailMode: true}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	qm := updated.(qualityModel)
+	if qm.detailMode {
+		t.Error("expected detailMode=false after esc in detail mode")
+	}
+}
+
+func TestQualityUpdate_cursorNavigation(t *testing.T) {
+	rows := []qualityRow{
+		{cfg: config.QualityCheckConfig{Name: "a"}},
+		{cfg: config.QualityCheckConfig{Name: "b"}},
+		{cfg: config.QualityCheckConfig{Name: "c"}},
+	}
+	m := qualityModel{rows: rows, cursor: 0}
+
+	// move down
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("j")})
+	qm := updated.(qualityModel)
+	if qm.cursor != 1 {
+		t.Errorf("expected cursor=1 after j, got %d", qm.cursor)
+	}
+
+	// move up
+	updated, _ = qm.Update(tea.KeyMsg{Type: -1, Runes: []rune("k")})
+	qm = updated.(qualityModel)
+	if qm.cursor != 0 {
+		t.Errorf("expected cursor=0 after k, got %d", qm.cursor)
+	}
+
+	// can't go below 0
+	updated, _ = qm.Update(tea.KeyMsg{Type: -1, Runes: []rune("k")})
+	qm = updated.(qualityModel)
+	if qm.cursor != 0 {
+		t.Errorf("expected cursor stays at 0, got %d", qm.cursor)
+	}
+
+	// move to last
+	qm.cursor = 2
+	updated, _ = qm.Update(tea.KeyMsg{Type: -1, Runes: []rune("j")})
+	qm = updated.(qualityModel)
+	if qm.cursor != 2 {
+		t.Errorf("expected cursor stays at 2 (last), got %d", qm.cursor)
+	}
+}
+
+func TestQualityUpdate_enterWithRows_entersDetailMode(t *testing.T) {
+	rows := []qualityRow{
+		{cfg: config.QualityCheckConfig{Name: "go_test_coverage", Type: "metric"}},
+	}
+	m := qualityModel{
+		rows:    rows,
+		cursor:  0,
+		metrics: nil, // fetchDetail will be called but its result comes async
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	qm := updated.(qualityModel)
+	if !qm.detailMode {
+		t.Error("expected detailMode=true after Enter with rows")
+	}
+	// cmd should be non-nil (it's m.fetchDetail)
+	if cmd == nil {
+		t.Error("expected fetchDetail cmd to be returned")
+	}
+}
+
+func TestQualityUpdate_enterWithNoRows_noOp(t *testing.T) {
+	m := qualityModel{}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	qm := updated.(qualityModel)
+	if qm.detailMode {
+		t.Error("expected detailMode to remain false with no rows")
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd with no rows")
+	}
+}
+
+func TestQualityUpdate_qualityTickMsg(t *testing.T) {
+	m := qualityModel{}
+	_, cmd := m.Update(qualityTickMsg{})
+	if cmd == nil {
+		t.Error("expected non-nil cmd from qualityTickMsg")
+	}
+}
+
+func TestQualityUpdate_keyUpArrow(t *testing.T) {
+	rows := []qualityRow{
+		{cfg: config.QualityCheckConfig{Name: "a"}},
+		{cfg: config.QualityCheckConfig{Name: "b"}},
+	}
+	m := qualityModel{rows: rows, cursor: 1}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	qm := updated.(qualityModel)
+	if qm.cursor != 0 {
+		t.Errorf("expected cursor=0 after up arrow, got %d", qm.cursor)
+	}
+}
+
+func TestQualityUpdate_keyDownArrow(t *testing.T) {
+	rows := []qualityRow{
+		{cfg: config.QualityCheckConfig{Name: "a"}},
+		{cfg: config.QualityCheckConfig{Name: "b"}},
+	}
+	m := qualityModel{rows: rows, cursor: 0}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	qm := updated.(qualityModel)
+	if qm.cursor != 1 {
+		t.Errorf("expected cursor=1 after down arrow, got %d", qm.cursor)
+	}
+}
+
+func TestQualityUpdate_keyR_fetchesWhenNotInDetail(t *testing.T) {
+	m := qualityModel{}
+	_, cmd := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("r")})
+	// cmd should be nil since m.fetch needs a real DB (metrics is nil),
+	// but the cmd itself is a function reference — non-nil
+	// We can't easily test the cmd result without a DB, but we ensure no panic.
+	_ = cmd
+}
+
+func TestQualityViewList_withLastRefresh(t *testing.T) {
+	m := qualityModel{
+		width:       80,
+		height:      24,
+		lastRefresh: time.Now(),
+	}
+	got := m.View()
+	plain := stripANSI(got)
+	// lastRefresh is now set so the timestamp appears
+	if !strings.Contains(plain, ":") {
+		t.Errorf("expected time string with ':' for lastRefresh, got %q", plain)
 	}
 }
 

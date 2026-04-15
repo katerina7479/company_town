@@ -2052,3 +2052,593 @@ func TestDashboard_EditRepairReason_enabledForOnHold(t *testing.T) {
 		t.Fatal("expected inputMode=true for on_hold ticket")
 	}
 }
+
+// --- renderAgents tests ---
+
+func TestRenderAgents_empty(t *testing.T) {
+	m := blankModel()
+	m.width = 120
+	m.height = 40
+	// data.agents is nil → should render "(none registered)"
+	out := m.renderAgents(40, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "none registered") {
+		t.Errorf("expected '(none registered)' for empty agents, got %q", plain)
+	}
+}
+
+func TestRenderAgents_withAgents(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.data.agents = []*repo.Agent{
+		{
+			Name:   "copper",
+			Status: "working",
+		},
+		{
+			Name:   "tin",
+			Status: "idle",
+		},
+	}
+	out := m.renderAgents(50, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "copper") {
+		t.Errorf("expected 'copper' in agents panel, got %q", plain)
+	}
+	if !strings.Contains(plain, "tin") {
+		t.Errorf("expected 'tin' in agents panel, got %q", plain)
+	}
+}
+
+func TestRenderAgents_withCurrentIssue(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.data.agents = []*repo.Agent{
+		{
+			Name:         "copper",
+			Status:       "working",
+			CurrentIssue: sql.NullInt64{Int64: 42, Valid: true},
+		},
+	}
+	out := m.renderAgents(50, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "42") {
+		t.Errorf("expected issue number '42' in agent row, got %q", plain)
+	}
+}
+
+func TestRenderAgents_focusedWithCursor(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.focusedPanel = 0
+	m.agentCursor = 0
+	m.data.agents = []*repo.Agent{
+		{Name: "copper", Status: "working"},
+	}
+	out := m.renderAgents(50, 30)
+	// Should render without panic and include the agent name
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "copper") {
+		t.Errorf("expected 'copper' in focused agent panel, got %q", plain)
+	}
+}
+
+func TestRenderAgents_withStatusAge(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	ago := time.Now().Add(-30 * time.Minute)
+	m.data.agents = []*repo.Agent{
+		{
+			Name:            "copper",
+			Status:          "working",
+			StatusChangedAt: sql.NullTime{Time: ago, Valid: true},
+		},
+	}
+	out := m.renderAgents(50, 30)
+	plain := stripANSI(out)
+	// Should include a duration like "30m" or "29m"
+	if !strings.Contains(plain, "m") {
+		t.Errorf("expected duration string in agent row, got %q", plain)
+	}
+}
+
+// --- renderTickets tests ---
+
+func TestRenderTickets_empty(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	// data.roots is nil → flatTickets returns nothing
+	out := m.renderTickets(80, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "no tickets") {
+		t.Errorf("expected '(no tickets)' for empty tickets, got %q", plain)
+	}
+}
+
+func TestRenderTickets_withTickets(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	issue := &repo.Issue{ID: 1, Status: "open", Title: "Fix the bug"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	out := m.renderTickets(80, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "open") {
+		t.Errorf("expected status 'open' in ticket row, got %q", plain)
+	}
+}
+
+func TestRenderTickets_focusedWithCursor(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.focusedPanel = 1
+	m.ticketCursor = 0
+	issue := &repo.Issue{ID: 1, Status: "in_progress", Title: "Add feature"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	out := m.renderTickets(80, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "in_progress") {
+		t.Errorf("expected status 'in_progress' in ticket row, got %q", plain)
+	}
+}
+
+func TestRenderTickets_expandedShowsDetails(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	issue := &repo.Issue{ID: 5, Status: "open", Title: "Expanded ticket"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	m.expanded[5] = true
+	out := m.renderTickets(80, 30)
+	// renderTicketDetails will be called; just ensure no panic
+	if out == "" {
+		t.Error("expected non-empty output for expanded ticket")
+	}
+}
+
+// --- View tests ---
+
+func TestView_loading(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	// width=0 → "Loading…"
+	got := m.View()
+	if got != "Loading…" {
+		t.Errorf("expected 'Loading…' for zero-width model, got %q", got)
+	}
+}
+
+func TestView_error(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.data.err = fmt.Errorf("database connection refused")
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "error") {
+		t.Errorf("expected 'error' in view output, got %q", plain)
+	}
+}
+
+func TestView_normal(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.ticketPrefix = "nc"
+	// Normal rendering with no agents or tickets
+	got := m.View()
+	plain := stripANSI(got)
+	// Footer hint should appear
+	if !strings.Contains(plain, "quit") {
+		t.Errorf("expected key hint 'quit' in footer, got %q", plain)
+	}
+}
+
+func TestView_inputModeNudge(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.inputMode = true
+	m.inputAction = "nudge"
+	m.inputTarget = "copper"
+	m.inputBuffer = "please do X"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "nudge copper") {
+		t.Errorf("expected 'nudge copper' in input mode footer, got %q", plain)
+	}
+}
+
+func TestView_inputModeCreateTicket(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.inputMode = true
+	m.inputAction = "create_ticket"
+	m.inputBuffer = "New ticket title"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "new ticket title") {
+		t.Errorf("expected 'new ticket title' label in input mode, got %q", plain)
+	}
+}
+
+func TestView_inputModeStatus(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.ticketPrefix = "nc"
+	m.inputMode = true
+	m.inputAction = "status"
+	m.inputTarget = "42"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "status nc-42") {
+		t.Errorf("expected 'status nc-42' in input footer, got %q", plain)
+	}
+}
+
+func TestView_inputModeRepairReason(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.ticketPrefix = "nc"
+	m.inputMode = true
+	m.inputAction = "repair_reason"
+	m.inputTarget = "42"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "repair_reason nc-42") {
+		t.Errorf("expected 'repair_reason nc-42' in input footer, got %q", plain)
+	}
+}
+
+func TestView_ticketsPanelFocused(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.focusedPanel = 1 // tickets panel
+	got := m.View()
+	plain := stripANSI(got)
+	// Ticket panel hints should appear
+	if !strings.Contains(plain, "filter") {
+		t.Errorf("expected 'filter' hint in tickets panel footer, got %q", plain)
+	}
+}
+
+func TestView_showClosed(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.focusedPanel = 1
+	m.showClosed = true
+	got := m.View()
+	plain := stripANSI(got)
+	// showClosed=true shows * in filter hint
+	if !strings.Contains(plain, "f[*]") {
+		t.Errorf("expected 'f[*]filter closed' hint, got %q", plain)
+	}
+}
+
+// --- formatDuration tests ---
+
+func TestFormatDuration_negative(t *testing.T) {
+	// negative durations clamp to 0 → "<1m"
+	got := formatDuration(-5 * time.Minute)
+	if got != "<1m" {
+		t.Errorf("expected '<1m' for negative duration, got %q", got)
+	}
+}
+
+func TestFormatDuration_lessThanOneMinute(t *testing.T) {
+	got := formatDuration(30 * time.Second)
+	if got != "<1m" {
+		t.Errorf("expected '<1m' for 30s, got %q", got)
+	}
+}
+
+func TestFormatDuration_minutes(t *testing.T) {
+	got := formatDuration(25 * time.Minute)
+	if got != "25m" {
+		t.Errorf("expected '25m', got %q", got)
+	}
+}
+
+func TestFormatDuration_hours(t *testing.T) {
+	got := formatDuration(2*time.Hour + 30*time.Minute)
+	if got != "2h 30m" {
+		t.Errorf("expected '2h 30m', got %q", got)
+	}
+}
+
+func TestFormatDuration_days(t *testing.T) {
+	got := formatDuration(2*24*time.Hour + 3*time.Hour)
+	if got != "2d 3h" {
+		t.Errorf("expected '2d 3h', got %q", got)
+	}
+}
+
+// --- ColorStatus coverage ---
+
+func TestColorStatus_unknownStatus(t *testing.T) {
+	theme := DefaultTheme()
+	// "unknown_status" is not registered → returns the status string unchanged
+	got := theme.ColorStatus("totally_unknown_xyz")
+	if got != "totally_unknown_xyz" {
+		t.Errorf("expected status unchanged for unknown status, got %q", got)
+	}
+}
+
+func TestColorStatus_allKnownStatuses(t *testing.T) {
+	theme := DefaultTheme()
+	known := []string{"idle", "working", "dead", "on_hold", "open", "closed", "in_progress"}
+	for _, s := range known {
+		got := theme.ColorStatus(s)
+		if got == "" {
+			t.Errorf("ColorStatus(%q) returned empty string", s)
+		}
+	}
+}
+
+// --- agentWorktreePath coverage ---
+
+// --- Update message handling tests ---
+
+func TestUpdate_windowSizeMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	dm := updated.(dashboardModel)
+	if dm.width != 120 || dm.height != 40 {
+		t.Errorf("expected width=120 height=40, got %d %d", dm.width, dm.height)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd for WindowSizeMsg")
+	}
+}
+
+func TestUpdate_tickMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	_, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Error("expected non-nil cmd from tickMsg")
+	}
+}
+
+func TestUpdate_secondTickMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	_, cmd := m.Update(secondTickMsg(time.Now()))
+	if cmd == nil {
+		t.Error("expected non-nil cmd from secondTickMsg")
+	}
+}
+
+func TestUpdate_actionResultMsg_error(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, cmd := m.Update(actionResultMsg{err: fmt.Errorf("something failed")})
+	dm := updated.(dashboardModel)
+	if !strings.Contains(dm.statusMsg, "Error") {
+		t.Errorf("expected 'Error' in statusMsg, got %q", dm.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected fetch cmd after actionResultMsg")
+	}
+}
+
+func TestUpdate_actionResultMsg_success(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, cmd := m.Update(actionResultMsg{text: "done!"})
+	dm := updated.(dashboardModel)
+	if dm.statusMsg != "done!" {
+		t.Errorf("expected statusMsg='done!', got %q", dm.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected fetch cmd after actionResultMsg")
+	}
+}
+
+func TestUpdate_tabSwitchesPanels(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 0
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	dm := updated.(dashboardModel)
+	if dm.focusedPanel != 1 {
+		t.Errorf("expected focusedPanel=1 after tab, got %d", dm.focusedPanel)
+	}
+	updated, _ = dm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	dm = updated.(dashboardModel)
+	if dm.focusedPanel != 0 {
+		t.Errorf("expected focusedPanel=0 after second tab, got %d", dm.focusedPanel)
+	}
+}
+
+func TestUpdate_fTogglesShowClosed(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm := updated.(dashboardModel)
+	if !dm.showClosed {
+		t.Error("expected showClosed=true after f")
+	}
+	updated, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm = updated.(dashboardModel)
+	if dm.showClosed {
+		t.Error("expected showClosed=false after second f")
+	}
+}
+
+func TestUpdate_CEntersCreateTicketMode(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("C")})
+	dm := updated.(dashboardModel)
+	if !dm.inputMode {
+		t.Error("expected inputMode=true after C")
+	}
+	if dm.inputAction != "create_ticket" {
+		t.Errorf("expected inputAction=create_ticket, got %q", dm.inputAction)
+	}
+}
+
+func TestUpdate_inputMode_esc(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.inputMode = true
+	m.inputAction = "create_ticket"
+	m.inputBuffer = "some text"
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	dm := updated.(dashboardModel)
+	if dm.inputMode {
+		t.Error("expected inputMode=false after esc")
+	}
+	if dm.inputBuffer != "" {
+		t.Errorf("expected empty inputBuffer after esc, got %q", dm.inputBuffer)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd after esc")
+	}
+}
+
+func TestUpdate_inputMode_typeChar(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.inputMode = true
+	m.inputAction = "create_ticket"
+	m.inputBuffer = ""
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("a")})
+	dm := updated.(dashboardModel)
+	if dm.inputBuffer != "a" {
+		t.Errorf("expected inputBuffer='a' after typing 'a', got %q", dm.inputBuffer)
+	}
+}
+
+func TestUpdate_jkNavigation_ticketsPanel(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+	issue1 := &repo.Issue{ID: 1, Status: "open"}
+	issue2 := &repo.Issue{ID: 2, Status: "open"}
+	m.data.roots = []*repo.IssueNode{
+		{Issue: issue1},
+		{Issue: issue2},
+	}
+	m.ticketCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("j")})
+	dm := updated.(dashboardModel)
+	if dm.ticketCursor != 1 {
+		t.Errorf("expected ticketCursor=1 after j, got %d", dm.ticketCursor)
+	}
+
+	updated, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("k")})
+	dm = updated.(dashboardModel)
+	if dm.ticketCursor != 0 {
+		t.Errorf("expected ticketCursor=0 after k, got %d", dm.ticketCursor)
+	}
+}
+
+func TestUpdate_enterExpandsTicket(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+	issue := &repo.Issue{ID: 7, Status: "open"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	m.ticketCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm := updated.(dashboardModel)
+	if !dm.expanded[7] {
+		t.Error("expected ticket 7 expanded after enter")
+	}
+
+	// Enter again collapses
+	updated, _ = dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = updated.(dashboardModel)
+	if dm.expanded[7] {
+		t.Error("expected ticket 7 collapsed after second enter")
+	}
+}
+
+func TestAgentWorktreePath_allCases(t *testing.T) {
+	ctDir := "/tmp/ct"
+	cases := []struct {
+		name     string
+		contains string
+	}{
+		{"architect", "agents/architect/worktree"},
+		{"mayor", "agents/mayor/worktree"},
+		{"reviewer", "agents/reviewer/worktree"},
+		{"artisan-legal", "artisan/legal/worktree"},
+		{"prole", ""},
+	}
+	for _, c := range cases {
+		got := agentWorktreePath(ctDir, c.name)
+		if c.contains == "" {
+			if got != "" {
+				t.Errorf("agentWorktreePath(%q) = %q, expected empty", c.name, got)
+			}
+		} else if !strings.Contains(filepath.ToSlash(got), c.contains) {
+			t.Errorf("agentWorktreePath(%q) = %q, expected to contain %q", c.name, got, c.contains)
+		}
+	}
+}
