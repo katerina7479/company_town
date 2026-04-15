@@ -110,15 +110,6 @@ type daemonBuilder struct {
 
 	repairCycleThreshold *int
 	nudgeCooldown        *time.Duration
-	nowFn                func() time.Time
-	killSessionFn        func(string) error
-	restartDeadAgents    *bool
-	qualityInterval      *time.Duration
-	qualityBaselineFn    func() error
-	worktreeInterval     *time.Duration
-	worktreeResetInterval *time.Duration
-	pruneWorktreesFn     func() (int, error)
-	prBackfillInterval   *time.Duration
 }
 
 func newDaemonBuilder(t *testing.T) *daemonBuilder {
@@ -141,51 +132,6 @@ func (b *daemonBuilder) withNudgeCooldown(d time.Duration) *daemonBuilder {
 	return b
 }
 
-func (b *daemonBuilder) withNow(fn func() time.Time) *daemonBuilder {
-	b.nowFn = fn
-	return b
-}
-
-func (b *daemonBuilder) withKillSession(fn func(string) error) *daemonBuilder {
-	b.killSessionFn = fn
-	return b
-}
-
-func (b *daemonBuilder) withRestartDeadAgents(v bool) *daemonBuilder {
-	b.restartDeadAgents = &v
-	return b
-}
-
-func (b *daemonBuilder) withQualityInterval(d time.Duration) *daemonBuilder {
-	b.qualityInterval = &d
-	return b
-}
-
-func (b *daemonBuilder) withQualityBaseline(fn func() error) *daemonBuilder {
-	b.qualityBaselineFn = fn
-	return b
-}
-
-func (b *daemonBuilder) withWorktreeInterval(d time.Duration) *daemonBuilder {
-	b.worktreeInterval = &d
-	return b
-}
-
-func (b *daemonBuilder) withWorktreeResetInterval(d time.Duration) *daemonBuilder {
-	b.worktreeResetInterval = &d
-	return b
-}
-
-func (b *daemonBuilder) withPruneWorktrees(fn func() (int, error)) *daemonBuilder {
-	b.pruneWorktreesFn = fn
-	return b
-}
-
-func (b *daemonBuilder) withPRBackfillInterval(d time.Duration) *daemonBuilder {
-	b.prBackfillInterval = &d
-	return b
-}
-
 // build constructs the daemon with all configured options applied and returns
 // it alongside the repos and sent-message recorder — matching the signature of
 // newTestDaemonWithSessions for easy drop-in use.
@@ -198,33 +144,6 @@ func (b *daemonBuilder) build() (*Daemon, *repo.IssueRepo, *repo.AgentRepo, *[]s
 	}
 	if b.nudgeCooldown != nil {
 		d.nudgeCooldown = *b.nudgeCooldown
-	}
-	if b.nowFn != nil {
-		d.nowFn = b.nowFn
-	}
-	if b.killSessionFn != nil {
-		d.killSession = b.killSessionFn
-	}
-	if b.restartDeadAgents != nil {
-		d.restartDeadAgents = *b.restartDeadAgents
-	}
-	if b.qualityInterval != nil {
-		d.qualityInterval = *b.qualityInterval
-	}
-	if b.qualityBaselineFn != nil {
-		d.runQualityBaseline = b.qualityBaselineFn
-	}
-	if b.worktreeInterval != nil {
-		d.worktreeInterval = *b.worktreeInterval
-	}
-	if b.worktreeResetInterval != nil {
-		d.worktreeResetInterval = *b.worktreeResetInterval
-	}
-	if b.pruneWorktreesFn != nil {
-		d.pruneStaleWorktrees = b.pruneWorktreesFn
-	}
-	if b.prBackfillInterval != nil {
-		d.prBackfillInterval = *b.prBackfillInterval
 	}
 
 	return d, issues, agents, sent
