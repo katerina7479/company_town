@@ -1,9 +1,9 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -153,8 +153,8 @@ func TestConfigLoad_workflowEmptyFrom(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error for empty from, got nil")
 	}
-	if !strings.Contains(err.Error(), "from and to must be non-empty and different") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrInvalidTicketTransition) {
+		t.Errorf("expected ErrInvalidTicketTransition, got: %v", err)
 	}
 }
 
@@ -164,8 +164,8 @@ func TestConfigLoad_workflowSameFromTo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error for same from/to, got nil")
 	}
-	if !strings.Contains(err.Error(), "from and to must be non-empty and different") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrInvalidTicketTransition) {
+		t.Errorf("expected ErrInvalidTicketTransition, got: %v", err)
 	}
 }
 
@@ -328,8 +328,8 @@ func TestValidateForStart_emptyRepo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty github_repo, got nil")
 	}
-	if !strings.Contains(err.Error(), "github_repo") {
-		t.Errorf("error should mention github_repo: %v", err)
+	if !errors.Is(err, ErrInvalidGithubRepo) {
+		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
 	}
 }
 
@@ -339,8 +339,8 @@ func TestValidateForStart_placeholder(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for placeholder github_repo, got nil")
 	}
-	if !strings.Contains(err.Error(), "edit") {
-		t.Errorf("error should mention 'edit': %v", err)
+	if !errors.Is(err, ErrInvalidGithubRepo) {
+		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
 	}
 }
 
@@ -350,8 +350,8 @@ func TestValidateForStart_urlForm(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for URL-form github_repo, got nil")
 	}
-	if !strings.Contains(err.Error(), "owner/repo") {
-		t.Errorf("error should mention owner/repo form: %v", err)
+	if !errors.Is(err, ErrInvalidGithubRepo) {
+		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
 	}
 }
 
@@ -368,7 +368,7 @@ func TestValidateForStart_noSlash(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for github_repo with no slash, got nil")
 	}
-	if !strings.Contains(err.Error(), "owner/repo") {
-		t.Errorf("error should mention owner/repo form: %v", err)
+	if !errors.Is(err, ErrInvalidGithubRepo) {
+		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
 	}
 }

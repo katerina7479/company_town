@@ -1,6 +1,7 @@
 package gtcmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -162,8 +163,8 @@ func TestPRUpdate_wrongStatus(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when ticket is not in repairing status, got nil")
 	}
-	if !strings.Contains(err.Error(), "repairing") {
-		t.Errorf("expected error to mention 'repairing', got: %v", err)
+	if !errors.Is(err, ErrNotRepairingStatus) {
+		t.Errorf("expected ErrNotRepairingStatus, got: %v", err)
 	}
 }
 
@@ -271,8 +272,8 @@ func TestPRUpdate_noBranch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for repairing ticket with no branch, got nil")
 	}
-	if !strings.Contains(err.Error(), "no branch") {
-		t.Errorf("expected error to mention 'no branch', got: %v", err)
+	if !errors.Is(err, ErrNoBranchSet) {
+		t.Errorf("expected ErrNoBranchSet, got: %v", err)
 	}
 }
 
@@ -442,8 +443,8 @@ func TestPRCreate_ErrorsOnEmptyBranch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty branch, got nil")
 	}
-	if !strings.Contains(err.Error(), "no commits yet") {
-		t.Errorf("expected error to mention 'no commits yet', got: %v", err)
+	if !errors.Is(err, ErrNoCommitsYet) {
+		t.Errorf("expected ErrNoCommitsYet, got: %v", err)
 	}
 	if pushCalled {
 		t.Error("gitPushFn should not be called when branch has no commits")
@@ -649,8 +650,8 @@ func TestPRCreate_refusesDetachedHEAD(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for detached HEAD, got nil")
 	}
-	if !strings.Contains(err.Error(), "HEAD is detached") {
-		t.Errorf("expected 'HEAD is detached' in error, got: %v", err)
+	if !errors.Is(err, ErrHeadDetached) {
+		t.Errorf("expected ErrHeadDetached, got: %v", err)
 	}
 	if pushCalled {
 		t.Error("gitPushFn must not be called when HEAD is detached")
@@ -675,8 +676,8 @@ func TestPRCreate_refusesOnDefaultBranch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when on default branch, got nil")
 	}
-	if !strings.Contains(err.Error(), "default branch") {
-		t.Errorf("expected 'default branch' in error, got: %v", err)
+	if !errors.Is(err, ErrDefaultBranch) {
+		t.Errorf("expected ErrDefaultBranch, got: %v", err)
 	}
 	if pushCalled {
 		t.Error("gitPushFn must not be called when on the default branch")
@@ -766,8 +767,8 @@ func TestPRUpdate_refusesDetachedHEAD(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for detached HEAD in prUpdate, got nil")
 	}
-	if !strings.Contains(err.Error(), "HEAD is detached") {
-		t.Errorf("expected 'HEAD is detached' in error, got: %v", err)
+	if !errors.Is(err, ErrHeadDetached) {
+		t.Errorf("expected ErrHeadDetached, got: %v", err)
 	}
 	if pushCalled {
 		t.Error("gitPushFn must not be called when HEAD is detached")

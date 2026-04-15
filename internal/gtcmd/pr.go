@@ -319,14 +319,14 @@ func assertBranchReadyForPR(dir, ticketBranch string) error {
 		return fmt.Errorf("determining current branch: %w", err)
 	}
 	if current == "HEAD" {
-		return fmt.Errorf("HEAD is detached in %s; check out the ticket branch %q before running gt pr create", dir, ticketBranch)
+		return fmt.Errorf("%w in %s; check out the ticket branch %q before running gt pr create", ErrHeadDetached, dir, ticketBranch)
 	}
 	defaultBranch, err := gitDefaultBranchFn(dir)
 	if err != nil {
 		return fmt.Errorf("determining default branch: %w", err)
 	}
 	if current == defaultBranch {
-		return fmt.Errorf("current branch %q is the repository default branch; nothing to PR", current)
+		return fmt.Errorf("current branch %q is the repository %w; nothing to PR", current, ErrDefaultBranch)
 	}
 	if ticketBranch != "" && current != ticketBranch {
 		return fmt.Errorf("current branch %q does not match the ticket's recorded branch %q; check out the correct branch before running gt pr create", current, ticketBranch)
@@ -350,7 +350,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 	}
 
 	if !issue.Branch.Valid || issue.Branch.String == "" {
-		return fmt.Errorf("ticket %d has no branch set", id)
+		return fmt.Errorf("ticket %d: %w", id, ErrNoBranchSet)
 	}
 
 	// Verify the branch has commits before attempting a push.
@@ -359,8 +359,8 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 		return fmt.Errorf("counting commits on branch: %w", err)
 	}
 	if commitCount == 0 {
-		return fmt.Errorf("ticket %s-%d branch %s has no commits yet — make at least one commit before running `gt pr create`",
-			cfg.TicketPrefix, id, issue.Branch.String)
+		return fmt.Errorf("ticket %s-%d branch %s: %w — make at least one commit before running `gt pr create`",
+			cfg.TicketPrefix, id, issue.Branch.String, ErrNoCommitsYet)
 	}
 
 	if err := assertBranchReadyForPR(workDir, issue.Branch.String); err != nil {
@@ -511,11 +511,11 @@ func prUpdate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 	}
 
 	if issue.Status != "repairing" {
-		return fmt.Errorf("ticket %d is not in repairing status (current: %s)", id, issue.Status)
+		return fmt.Errorf("ticket %d: %w (current: %s)", id, ErrNotRepairingStatus, issue.Status)
 	}
 
 	if !issue.Branch.Valid || issue.Branch.String == "" {
-		return fmt.Errorf("ticket %d has no branch set", id)
+		return fmt.Errorf("ticket %d: %w", id, ErrNoBranchSet)
 	}
 
 	if err := assertBranchReadyForPR(workDir, issue.Branch.String); err != nil {
