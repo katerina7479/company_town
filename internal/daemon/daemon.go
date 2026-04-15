@@ -819,6 +819,10 @@ func (d *Daemon) handleRepairCycleEscalation() {
 		if !d.shouldNudge(nudgeKey) {
 			continue
 		}
+		nudgeDigest := fmt.Sprintf("repair_cycle_count=%d", issue.RepairCycleCount)
+		if !d.digestChanged(nudgeKey, nudgeDigest) {
+			continue
+		}
 
 		d.logger.Printf("ticket %s-%d has bounced %d times (threshold %d) — moving to on_hold",
 			d.cfg.TicketPrefix, issue.ID, issue.RepairCycleCount, d.repairCycleThreshold)
@@ -842,7 +846,7 @@ func (d *Daemon) handleRepairCycleEscalation() {
 		if err := d.sendKeys(mayorSession, msg); err != nil {
 			d.logger.Printf("error notifying Mayor of repair-cycle escalation for ticket %d: %v", issue.ID, err)
 		} else {
-			d.recordNudge(nudgeKey, "")
+			d.recordNudge(nudgeKey, nudgeDigest)
 		}
 
 		if d.obs != nil {
@@ -1212,13 +1216,9 @@ func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []str
 	d.logger.Printf("CI failure on PR #%d for ticket %s-%d — moving to repairing",
 		prNum, d.cfg.TicketPrefix, issue.ID)
 
-	if err := d.issues.UpdateStatus(issue.ID, repo.StatusRepairing); err != nil {
-		d.logger.Printf("error moving ticket %d to repairing: %v", issue.ID, err)
-		return
-	}
 	reason := "CI: " + strings.Join(failedNames, ", ")
-	if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
-		d.logger.Printf("error setting repair reason on ticket %d: %v", issue.ID, err)
+	if !d.repairTransition(issue.ID, repo.StatusRepairing, reason) {
+		return
 	}
 	if d.obs != nil {
 		d.obs.prEventsCIFail++
@@ -1321,14 +1321,9 @@ func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 	d.logger.Printf("PR #%d has merge conflict for ticket %s-%d — moving to merge_conflict",
 		prNum, d.cfg.TicketPrefix, issue.ID)
 
-	if err := d.issues.UpdateStatus(issue.ID, repo.StatusMergeConflict); err != nil {
-		d.logger.Printf("error moving ticket %d to merge_conflict: %v", issue.ID, err)
+	if !d.repairTransition(issue.ID, repo.StatusMergeConflict, "merge conflict with main") {
 		return
 	}
-	if err := d.issues.SetRepairReason(issue.ID, "merge conflict with main"); err != nil {
-		d.logger.Printf("error setting repair reason on ticket %d: %v", issue.ID, err)
-	}
-
 	if d.obs != nil {
 		d.obs.prEventsConflict++
 	}
@@ -1393,25 +1388,37 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		d.logger.Printf("human comment on PR #%d by %s — moving ticket %s-%d to repairing",
 			prNum, c.Author, d.cfg.TicketPrefix, issue.ID)
 
-		if err := d.issues.UpdateStatus(issue.ID, repo.StatusRepairing); err != nil {
-			d.logger.Printf("error updating ticket %d to repairing: %v", issue.ID, err)
-			return
-		}
 		excerpt := c.Body
 		if runes := []rune(excerpt); len(runes) > 120 {
 			excerpt = string(runes[:120]) + "…"
 		}
 		reason := fmt.Sprintf("review: %s: %s", c.Author, excerpt)
-		if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
-			d.logger.Printf("error setting repair reason on ticket %d: %v", issue.ID, err)
+		if !d.repairTransition(issue.ID, repo.StatusRepairing, reason) {
+			return
 		}
-
 		if d.obs != nil {
 			d.obs.prEventsRepairing++
 		}
 
 		return // only need one human comment to trigger repair
 	}
+}
+
+// repairTransition moves a ticket to a repair-ish status (typically "repairing"
+// or "merge_conflict") and records the reason. Returns true when the status
+// update succeeded; the caller should return or skip further processing on
+// false. SetRepairReason failure is non-fatal — logged but does not abort.
+// Incrementing the per-handler obs counter is left to the caller because each
+// call site tracks a different field.
+func (d *Daemon) repairTransition(issueID int, status, reason string) bool {
+	if err := d.issues.UpdateStatus(issueID, status); err != nil {
+		d.logger.Printf("error moving ticket %d to %s: %v", issueID, status, err)
+		return false
+	}
+	if err := d.issues.SetRepairReason(issueID, reason); err != nil {
+		d.logger.Printf("error setting repair reason on ticket %d: %v", issueID, err)
+	}
+	return true
 }
 
 // prComment holds data from a GitHub PR review.

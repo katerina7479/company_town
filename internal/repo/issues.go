@@ -154,35 +154,32 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 		closedAt = time.Now()
 	}
 
-	var result sql.Result
-	var err error
+	// b collects the SET clause so that common columns are specified once.
+	// Adding a new always-updated column means one line here, not one per case.
+	b := newSetBuilder().
+		set("status = ?", status).
+		set("closed_at = ?", closedAt).
+		expr("updated_at = CURRENT_TIMESTAMP")
+
 	switch status {
 	case StatusRepairing:
-		result, err = r.db.Exec(
-			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = repair_cycle_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			status, closedAt, id,
-		)
+		b.expr("repair_cycle_count = repair_cycle_count + 1")
 	case StatusOpen:
 		// Human unblock: reset repair_cycle_count so the ticket gets a fresh
 		// slate. Also clear repair_reason in case it was on_hold.
-		result, err = r.db.Exec(
-			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = 0, repair_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			status, closedAt, id,
-		)
+		b.expr("repair_cycle_count = 0").expr("repair_reason = NULL")
 	case StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusUnderReview, StatusPROpen, StatusClosed, StatusOnHold:
 		// Transitioning out of a repair-ish state — clear stale repair_reason.
 		// "draft" is included because a human may manually reopen a ticket from
 		// on_hold or repairing back to draft, and the old reason must not leak.
-		result, err = r.db.Exec(
-			`UPDATE issues SET status = ?, closed_at = ?, repair_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			status, closedAt, id,
-		)
-	default:
-		result, err = r.db.Exec(
-			`UPDATE issues SET status = ?, closed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			status, closedAt, id,
-		)
+		b.expr("repair_reason = NULL")
 	}
+
+	setSQL, setArgs := b.build()
+	result, err := r.db.Exec(
+		"UPDATE issues SET "+setSQL+" WHERE id = ?", //nolint:gosec // G202: setSQL is built from string literals only, never user input
+		append(setArgs, id)...,
+	)
 	if err != nil {
 		return fmt.Errorf("updating issue status: %w", err)
 	}
@@ -776,4 +773,35 @@ func (r *IssueRepo) ClearParent(id int) error {
 		return fmt.Errorf("issue %d not found", id)
 	}
 	return nil
+}
+
+// setBuilder accumulates the SET clause of an UPDATE statement one column at a
+// time. Using it in UpdateStatus means that columns shared by every transition
+// (status, closed_at, updated_at) are written once; only the status-specific
+// extras vary per case. Adding a new always-updated column is a single-line
+// change instead of touching every branch.
+type setBuilder struct {
+	exprs []string
+	args  []interface{}
+}
+
+func newSetBuilder() *setBuilder { return &setBuilder{} }
+
+// set appends "expr" and binds arg as its ? placeholder value.
+func (b *setBuilder) set(expr string, arg interface{}) *setBuilder {
+	b.exprs = append(b.exprs, expr)
+	b.args = append(b.args, arg)
+	return b
+}
+
+// expr appends a raw SQL fragment with no bound parameter (e.g. "repair_reason = NULL").
+func (b *setBuilder) expr(fragment string) *setBuilder {
+	b.exprs = append(b.exprs, fragment)
+	return b
+}
+
+// build returns the comma-joined SET clause and the ordered argument slice.
+// The caller is responsible for appending the WHERE clause argument.
+func (b *setBuilder) build() (string, []interface{}) {
+	return strings.Join(b.exprs, ", "), b.args
 }
