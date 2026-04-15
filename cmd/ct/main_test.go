@@ -1,59 +1,59 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
-func TestParseStopArgs_noArgs(t *testing.T) {
-	target, clean, err := parseStopArgs([]string{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if target != "" || clean != false {
-		t.Errorf("expected target=%q clean=false, got target=%q clean=%v", "", target, clean)
-	}
-}
+func TestParseTargetArgs(t *testing.T) {
+	cases := []struct {
+		name       string
+		cmd        string
+		args       []string
+		allowClean bool
+		wantTarget string
+		wantClean  bool
+		wantErr    string // substring match; empty means no error
+	}{
+		// ct stop cases
+		{"stop empty", "ct stop", nil, true, "", false, ""},
+		{"stop target only", "ct stop", []string{"daemon"}, true, "daemon", false, ""},
+		{"stop clean only", "ct stop", []string{"--clean"}, true, "", true, ""},
+		{"stop target then clean", "ct stop", []string{"daemon", "--clean"}, true, "daemon", true, ""},
+		{"stop clean then target", "ct stop", []string{"--clean", "daemon"}, true, "daemon", true, ""},
+		{"stop two targets", "ct stop", []string{"daemon", "mayor"}, true, "", false, "at most one target"},
+		{"stop unknown flag", "ct stop", []string{"--weird"}, true, "", false, "unknown flag: --weird"},
 
-func TestParseStopArgs_targetOnly(t *testing.T) {
-	target, clean, err := parseStopArgs([]string{"daemon"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		// ct nuke cases
+		{"nuke empty", "ct nuke", nil, false, "", false, ""},
+		{"nuke target only", "ct nuke", []string{"prole-tin"}, false, "prole-tin", false, ""},
+		{"nuke rejects --clean", "ct nuke", []string{"--clean"}, false, "", false, "unknown flag: --clean"},
+		{"nuke rejects --clean with target", "ct nuke", []string{"prole-tin", "--clean"}, false, "", false, "unknown flag: --clean"},
+		{"nuke two targets", "ct nuke", []string{"a", "b"}, false, "", false, "at most one target"},
+		{"nuke unknown flag", "ct nuke", []string{"--force"}, false, "", false, "unknown flag: --force"},
 	}
-	if target != "daemon" || clean != false {
-		t.Errorf("expected target=daemon clean=false, got target=%q clean=%v", target, clean)
-	}
-}
 
-func TestParseStopArgs_targetAndClean(t *testing.T) {
-	target, clean, err := parseStopArgs([]string{"daemon", "--clean"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if target != "daemon" || !clean {
-		t.Errorf("expected target=daemon clean=true, got target=%q clean=%v", target, clean)
-	}
-}
-
-func TestParseStopArgs_cleanBeforeTarget(t *testing.T) {
-	target, clean, err := parseStopArgs([]string{"--clean", "daemon"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if target != "daemon" || !clean {
-		t.Errorf("expected target=daemon clean=true, got target=%q clean=%v", target, clean)
-	}
-}
-
-func TestParseStopArgs_unknownFlag(t *testing.T) {
-	_, _, err := parseStopArgs([]string{"--bogus"})
-	if err == nil {
-		t.Fatal("expected error for unknown flag")
-	}
-}
-
-func TestParseStopArgs_twoPositionals(t *testing.T) {
-	_, _, err := parseStopArgs([]string{"a", "b"})
-	if err == nil {
-		t.Fatal("expected error for two positional args")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotTarget, gotClean, err := parseTargetArgs(tc.cmd, tc.args, tc.allowClean)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if gotTarget != tc.wantTarget {
+					t.Errorf("target: want %q, got %q", tc.wantTarget, gotTarget)
+				}
+				if gotClean != tc.wantClean {
+					t.Errorf("clean: want %v, got %v", tc.wantClean, gotClean)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error: want substring %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }

@@ -44,15 +44,15 @@ func main() {
 		case "start":
 			return commands.Start()
 		case "stop":
-			target, clean, parseErr := parseStopArgs(args)
+			target, clean, parseErr := parseTargetArgs("ct stop", args, true)
 			if parseErr != nil {
 				return parseErr
 			}
 			return commands.Stop(target, clean)
 		case "nuke":
-			target := ""
-			if len(args) > 0 {
-				target = args[0]
+			target, _, parseErr := parseTargetArgs("ct nuke", args, false)
+			if parseErr != nil {
+				return parseErr
 			}
 			return commands.Nuke(target)
 		case "architect":
@@ -100,19 +100,31 @@ func main() {
 	}
 }
 
-// parseStopArgs parses the argument list for `ct stop`. Returns the optional
-// target agent name, the --clean flag, and any parse error. Order of target
-// and --clean is independent. At most one positional argument is accepted.
-func parseStopArgs(args []string) (target string, clean bool, err error) {
+// parseTargetArgs parses the argument list for commands that take an optional
+// target and an optional --clean flag (currently: ct stop, ct nuke).
+//
+//   - cmd: the command name, for error messages.
+//   - args: the argv tail after the command (os.Args[2:]).
+//   - allowClean: whether --clean is a valid flag for this command. ct nuke
+//     passes false — nuke is always destructive, so --clean would be noise.
+//
+// Returns the target (empty string means "no target, apply to all sessions"),
+// the --clean flag, and any parse error. Target and --clean may appear in
+// either order. At most one positional argument is accepted. Any unknown
+// flag is rejected.
+func parseTargetArgs(cmd string, args []string, allowClean bool) (target string, clean bool, err error) {
 	for _, a := range args {
 		switch {
 		case a == "--clean":
+			if !allowClean {
+				return "", false, fmt.Errorf("%s: unknown flag: --clean", cmd)
+			}
 			clean = true
 		case strings.HasPrefix(a, "--"):
-			return "", false, fmt.Errorf("unknown flag: %s", a)
+			return "", false, fmt.Errorf("%s: unknown flag: %s", cmd, a)
 		default:
 			if target != "" {
-				return "", false, fmt.Errorf("ct stop takes at most one target (got %q and %q)", target, a)
+				return "", false, fmt.Errorf("%s: takes at most one target (got %q and %q)", cmd, target, a)
 			}
 			target = a
 		}
