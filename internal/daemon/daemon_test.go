@@ -94,6 +94,142 @@ func withIdleResetCapture(d *Daemon) *int {
 	return &calls
 }
 
+// daemonBuilder constructs a test Daemon using a fluent API, eliminating the
+// pattern of calling newTestDaemonWithSessions then mutating individual fields.
+//
+// Usage:
+//
+//	d, issues, agents, sent := newDaemonBuilder(t).
+//	    withSessions("ct-mayor").
+//	    withRepairCycleThreshold(3).
+//	    withNudgeCooldown(5 * time.Minute).
+//	    build()
+type daemonBuilder struct {
+	t        *testing.T
+	sessions []string
+
+	repairCycleThreshold *int
+	nudgeCooldown        *time.Duration
+	nowFn                func() time.Time
+	killSessionFn        func(string) error
+	restartDeadAgents    *bool
+	qualityInterval      *time.Duration
+	qualityBaselineFn    func() error
+	worktreeInterval     *time.Duration
+	worktreeResetInterval *time.Duration
+	pruneWorktreesFn     func() (int, error)
+	prBackfillInterval   *time.Duration
+}
+
+func newDaemonBuilder(t *testing.T) *daemonBuilder {
+	t.Helper()
+	return &daemonBuilder{t: t}
+}
+
+func (b *daemonBuilder) withSessions(sessions ...string) *daemonBuilder {
+	b.sessions = sessions
+	return b
+}
+
+func (b *daemonBuilder) withRepairCycleThreshold(n int) *daemonBuilder {
+	b.repairCycleThreshold = &n
+	return b
+}
+
+func (b *daemonBuilder) withNudgeCooldown(d time.Duration) *daemonBuilder {
+	b.nudgeCooldown = &d
+	return b
+}
+
+func (b *daemonBuilder) withNow(fn func() time.Time) *daemonBuilder {
+	b.nowFn = fn
+	return b
+}
+
+func (b *daemonBuilder) withKillSession(fn func(string) error) *daemonBuilder {
+	b.killSessionFn = fn
+	return b
+}
+
+func (b *daemonBuilder) withRestartDeadAgents(v bool) *daemonBuilder {
+	b.restartDeadAgents = &v
+	return b
+}
+
+func (b *daemonBuilder) withQualityInterval(d time.Duration) *daemonBuilder {
+	b.qualityInterval = &d
+	return b
+}
+
+func (b *daemonBuilder) withQualityBaseline(fn func() error) *daemonBuilder {
+	b.qualityBaselineFn = fn
+	return b
+}
+
+func (b *daemonBuilder) withWorktreeInterval(d time.Duration) *daemonBuilder {
+	b.worktreeInterval = &d
+	return b
+}
+
+func (b *daemonBuilder) withWorktreeResetInterval(d time.Duration) *daemonBuilder {
+	b.worktreeResetInterval = &d
+	return b
+}
+
+func (b *daemonBuilder) withPruneWorktrees(fn func() (int, error)) *daemonBuilder {
+	b.pruneWorktreesFn = fn
+	return b
+}
+
+func (b *daemonBuilder) withPRBackfillInterval(d time.Duration) *daemonBuilder {
+	b.prBackfillInterval = &d
+	return b
+}
+
+// build constructs the daemon with all configured options applied and returns
+// it alongside the repos and sent-message recorder — matching the signature of
+// newTestDaemonWithSessions for easy drop-in use.
+func (b *daemonBuilder) build() (*Daemon, *repo.IssueRepo, *repo.AgentRepo, *[]sentMessage) {
+	b.t.Helper()
+	d, issues, agents, sent := newTestDaemonWithSessions(b.t, b.sessions)
+
+	if b.repairCycleThreshold != nil {
+		d.repairCycleThreshold = *b.repairCycleThreshold
+	}
+	if b.nudgeCooldown != nil {
+		d.nudgeCooldown = *b.nudgeCooldown
+	}
+	if b.nowFn != nil {
+		d.nowFn = b.nowFn
+	}
+	if b.killSessionFn != nil {
+		d.killSession = b.killSessionFn
+	}
+	if b.restartDeadAgents != nil {
+		d.restartDeadAgents = *b.restartDeadAgents
+	}
+	if b.qualityInterval != nil {
+		d.qualityInterval = *b.qualityInterval
+	}
+	if b.qualityBaselineFn != nil {
+		d.runQualityBaseline = b.qualityBaselineFn
+	}
+	if b.worktreeInterval != nil {
+		d.worktreeInterval = *b.worktreeInterval
+	}
+	if b.worktreeResetInterval != nil {
+		d.worktreeResetInterval = *b.worktreeResetInterval
+	}
+	if b.pruneWorktreesFn != nil {
+		d.pruneStaleWorktrees = b.pruneWorktreesFn
+	}
+	if b.prBackfillInterval != nil {
+		d.prBackfillInterval = *b.prBackfillInterval
+	}
+
+	return d, issues, agents, sent
+}
+
 func TestHandlePRMerged_closesTicket(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
@@ -2713,8 +2849,10 @@ func TestRunCmd_noStderrOnFailure(t *testing.T) {
 // --- handleRepairCycleEscalation tests ---
 
 func TestHandleRepairCycleEscalation_escalatesWhenThresholdReached(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		build()
 
 	id, _ := issues.Create("Bouncy ticket", "task", nil, nil, nil)
 	// Simulate 3 transitions to repairing (each UpdateStatus("repairing") increments the count).
@@ -2745,8 +2883,10 @@ func TestHandleRepairCycleEscalation_escalatesWhenThresholdReached(t *testing.T)
 }
 
 func TestHandleRepairCycleEscalation_setsRepairReason(t *testing.T) {
-	d, issues, _, _ := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
+	d, issues, _, _ := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		build()
 
 	id, _ := issues.Create("Bouncy ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
@@ -2768,8 +2908,10 @@ func TestHandleRepairCycleEscalation_setsRepairReason(t *testing.T) {
 }
 
 func TestHandleRepairCycleEscalation_noEscalationBelowThreshold(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		build()
 
 	id, _ := issues.Create("Fine ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
@@ -2788,8 +2930,10 @@ func TestHandleRepairCycleEscalation_noEscalationBelowThreshold(t *testing.T) {
 }
 
 func TestHandleRepairCycleEscalation_disabledWhenThresholdZero(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 0 // disabled
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(0). // disabled
+		build()
 
 	id, _ := issues.Create("Many bounces", "task", nil, nil, nil)
 	for i := 0; i < 10; i++ {
@@ -2804,8 +2948,9 @@ func TestHandleRepairCycleEscalation_disabledWhenThresholdZero(t *testing.T) {
 }
 
 func TestHandleRepairCycleEscalation_noEscalationWhenMayorNotRunning(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
-	d.repairCycleThreshold = 3
+	d, issues, _, sent := newDaemonBuilder(t).
+		withRepairCycleThreshold(3).
+		build() // no active sessions
 
 	id, _ := issues.Create("Orphaned ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
@@ -2820,9 +2965,11 @@ func TestHandleRepairCycleEscalation_noEscalationWhenMayorNotRunning(t *testing.
 }
 
 func TestHandleRepairCycleEscalation_cooldownSuppressesRepeat(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
-	d.nudgeCooldown = 5 * time.Minute
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		withNudgeCooldown(5 * time.Minute).
+		build()
 
 	id, _ := issues.Create("Repeated escalation", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
