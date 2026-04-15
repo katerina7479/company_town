@@ -197,13 +197,16 @@ Daemon output lives at `.company_town/logs/daemon.log`.
 | Command | Action |
 |---|---|
 | `ct init` | Set up `.company_town/`, start Dolt, run migrations, write `.gitignore` entries. Idempotent. Always refreshes agent CLAUDE.md templates from the embedded copies — see the warning below. |
-| `ct start` | Start daemon + Mayor, attach to the Mayor's tmux session. |
-| `ct stop [--clean]` | Graceful shutdown. Agents write handoffs and exit. `--clean` also prunes prole worktrees. |
-| `ct nuke` | Kill every session immediately. No handoffs. |
+| `ct doctor` | Check system dependencies (`dolt`, `tmux`, `gh`, `claude`) and project setup. Run this first if `ct start` is failing. |
+| `ct start` | Start daemon + Mayor, attach to the Mayor's tmux session. Idempotent. |
+| `ct stop [target] [--clean]` | Graceful shutdown. With no target, stops every session. With a target (`daemon`, `architect`, `reviewer`, `artisan-<specialty>`, `prole-<name>`), stops only that one. `--clean` prunes prole worktrees after stopping; applies only to prole targets. |
+| `ct nuke [target]` | Kill sessions immediately. No handoffs. With no target, kills everything. Targets: `daemon`, `architect`, `mayor`, `reviewer`, `prole-<name>`, `artisan-<specialty>`, `bare` (the shared bare clone). |
 | `ct architect [stop]` | Start or gracefully stop the Architect. |
 | `ct artisan <specialty> [stop]` | Start or stop an Artisan of the given specialty. |
-| `ct attach <agent>` | Attach to a running agent's tmux session. |
-| `ct dashboard` | Open the live agents + tickets TUI. |
+| `ct attach <name>` | Attach to a running agent's tmux session. |
+| `ct dashboard` | Split-pane TUI of agents and tickets. |
+| `ct quality` | Live quality-metrics TUI dashboard (coverage, lint, todo count, etc. with sparklines). |
+| `ct metrics [--since N]` | Print system performance metrics. Defaults to the last 7 days. |
 
 > **Heads up: `ct init` overwrites agent CLAUDE.md files.** The templates under `.company_town/agents/*/CLAUDE.md` are rewritten from the embedded copies on every `ct init`. If you want to customize agent behavior, edit the source templates at `internal/commands/templates/*-CLAUDE.md` and rebuild, *not* the deployed copies — those will be clobbered on the next `ct init`.
 
@@ -211,26 +214,50 @@ Daemon output lives at `.company_town/logs/daemon.log`.
 
 Agents use this directly. Users generally don't, but it's fine for debugging and one-off corrections.
 
+**Tickets**
+
 | Command | Action |
 |---|---|
 | `gt ticket create <title> [--type task\|bug\|epic] [--parent <id>] [--specialty <s>] [--description <d>] [--priority <P0-P3>]` | Create a ticket in `draft` status. |
 | `gt ticket show <id>` | Print one ticket's details (including description). |
 | `gt ticket list [--status <status>]` | List tickets, optionally filtered. |
-| `gt ticket ready` | List unblocked open tickets in selection order. |
-| `gt ticket assign <id> <agent>` | Assign a ticket to an agent (also moves status to `in_progress`). |
-| `gt ticket status <id> <status>` | Transition a ticket. |
-| `gt ticket depend <id> <depends_on_id>` | Add a dependency edge. |
+| `gt ticket ready` | List unblocked `open` tickets in selection order. |
+| `gt ticket assign <id> <agent>` | Set a ticket's assignee. Does **not** change status — the prole's accept workflow flips it to `in_progress` when the prole picks it up. |
+| `gt ticket unassign <id>` | Clear a ticket's assignee. |
+| `gt ticket status <id> <status>` | Transition a ticket's status. |
+| `gt ticket type <id> <task\|bug\|epic>` | Change a ticket's type. |
+| `gt ticket priority <id> <P0-P3>` | Change a ticket's priority. |
 | `gt ticket close <id>` | Close a ticket. |
 | `gt ticket delete <id>` | Hard delete. For mistakes. |
+| `gt ticket depend <id> <depends_on_id>` | Add a dependency edge (id is blocked by depends_on_id). |
+| `gt ticket undepend <id> <depends_on_id>` | Remove a dependency edge. |
+| `gt ticket parent <id> <parent_id>` | Attach a ticket to a parent (epic). |
+| `gt ticket unparent <id>` | Detach a ticket from its parent. |
+| `gt ticket review <id> <approve\|request-changes>` | Reviewer's verdict transition — moves the ticket to `pr_open` or `repairing`. |
+
+**Agents and proles**
+
+| Command | Action |
+|---|---|
+| `gt agent register <name> <type> [--specialty <s>]` | Register a new agent row in the DB. |
+| `gt agent status <name> <idle\|working\|dead> [--issue <id>]` | Update an agent's status, optionally tagging the ticket it's working on. |
+| `gt agent accept <id>` | Agent claims a ticket it's been assigned. Fires the role's `accept` workflow (for proles, this flips the ticket to `in_progress`). |
+| `gt agent release <id>` | Agent releases its current ticket back to the pool. |
+| `gt agent do <id>` | Convenience: accept + start working in one step. |
 | `gt prole create <name>` | Spin up a new prole (worktree + tmux + DB row). |
 | `gt prole reset <name>` | Reset an idle prole's worktree — pulls main, clears context. |
 | `gt prole list` | List registered proles. |
-| `gt agent register <name> <type> [--specialty <s>]` | Register a new agent in the DB. |
-| `gt agent status <name> <idle\|working\|dead>` | Update an agent's status. |
+| `gt create reviewer <name>` | One-shot helper to register and start a Reviewer agent. |
+
+**PRs, sessions, system**
+
+| Command | Action |
+|---|---|
 | `gt pr create <ticket_id>` | File a PR for a ticket's branch. |
 | `gt start <agent>` / `gt stop <agent>` | Start or stop an agent's tmux session. |
 | `gt status` | Print system status. |
 | `gt check <run\|list\|history>` | Run and view quality checks. |
+| `gt log <tail\|show> [flags]` | Read the command audit log. `gt log show --entity <ticket-id>` is the first-stop debugger when a ticket's state looks wrong. |
 | `gt migrate` | Apply pending database migrations. |
 
 ## Project layout
