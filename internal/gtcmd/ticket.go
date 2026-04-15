@@ -236,6 +236,9 @@ func ticketShow(issues *repo.IssueRepo, prefix string, args []string) error {
 		}
 		fmt.Printf("  depends:   %s\n", strings.Join(depStrs, ", "))
 	}
+	if issue.RepairReason.Valid && issue.RepairReason.String != "" {
+		fmt.Printf("  repair:    %s\n", issue.RepairReason.String)
+	}
 	if issue.Description.Valid && issue.Description.String != "" {
 		fmt.Printf("  ---\n  %s\n", issue.Description.String)
 	}

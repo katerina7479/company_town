@@ -1,0 +1,1 @@
+ALTER TABLE issues ADD COLUMN repair_reason TEXT DEFAULT NULL;

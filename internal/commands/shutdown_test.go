@@ -574,3 +574,136 @@ func TestNukeCore_targetedAgent_removesWorktreeButNotBareClone(t *testing.T) {
 		t.Errorf("targeted agent nuke must not remove bare clone, got %v", removed)
 	}
 }
+
+// --- filterSessions tests ---
+
+func TestFilterSessions_exactMatch(t *testing.T) {
+	all := []string{"ct-daemon", "ct-mayor", "ct-prole-copper"}
+	got := filterSessions(all, "ct-daemon")
+	if len(got) != 1 || got[0] != "ct-daemon" {
+		t.Errorf("expected [ct-daemon], got %v", got)
+	}
+}
+
+func TestFilterSessions_noMatch(t *testing.T) {
+	all := []string{"ct-daemon", "ct-mayor"}
+	got := filterSessions(all, "ct-prole-iron")
+	if len(got) != 0 {
+		t.Errorf("expected empty, got %v", got)
+	}
+}
+
+func TestFilterSessions_emptyInput(t *testing.T) {
+	got := filterSessions(nil, "ct-daemon")
+	if len(got) != 0 {
+		t.Errorf("expected empty on nil input, got %v", got)
+	}
+}
+
+func TestFilterSessions_noPrefixMatch(t *testing.T) {
+	// "ct-prole" must not match "ct-prole-copper" — exact match only.
+	all := []string{"ct-prole-copper", "ct-prole-iron"}
+	got := filterSessions(all, "ct-prole")
+	if len(got) != 0 {
+		t.Errorf("expected no match for partial name, got %v", got)
+	}
+}
+
+// --- Stop (targeted) tests via filterSessions ---
+
+func TestStop_targetFilters_daemon(t *testing.T) {
+	all := []string{"ct-daemon", "ct-mayor", "ct-prole-copper"}
+	filtered := filterSessions(all, "ct-daemon")
+	if len(filtered) != 1 || filtered[0] != "ct-daemon" {
+		t.Errorf("expected [ct-daemon], got %v", filtered)
+	}
+}
+
+func TestStop_targetFilters_prole(t *testing.T) {
+	all := []string{"ct-daemon", "ct-mayor", "ct-prole-copper"}
+	filtered := filterSessions(all, "ct-prole-copper")
+	if len(filtered) != 1 || filtered[0] != "ct-prole-copper" {
+		t.Errorf("expected [ct-prole-copper], got %v", filtered)
+	}
+}
+
+func TestStop_targetFilters_artisan(t *testing.T) {
+	all := []string{"ct-daemon", "ct-artisan-backend"}
+	filtered := filterSessions(all, "ct-artisan-backend")
+	if len(filtered) != 1 || filtered[0] != "ct-artisan-backend" {
+		t.Errorf("expected [ct-artisan-backend], got %v", filtered)
+	}
+}
+
+func TestStop_targetNotFound_returnsNil(t *testing.T) {
+	all := []string{"ct-daemon", "ct-mayor"}
+	filtered := filterSessions(all, "ct-prole-iron")
+	if len(filtered) != 0 {
+		t.Errorf("expected nil when not found, got %v", filtered)
+	}
+}
+
+func TestStop_cleanNonProle_stopCoreStillRunsNoRemoval(t *testing.T) {
+	// Targeted stop of daemon with --clean: daemon killed, no worktree removed.
+	killed := []string{}
+	killFn := func(s string) error {
+		killed = append(killed, s)
+		return nil
+	}
+	sendKeysFn := func(s, msg string) error { return nil }
+	updateStatus := func(name, status string) error { return nil }
+	removed := []string{}
+	removeAll := func(p string) error {
+		removed = append(removed, p)
+		return nil
+	}
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	stopCore([]string{"ct-daemon"}, t.TempDir(), true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+
+	if len(killed) != 1 || killed[0] != "ct-daemon" {
+		t.Errorf("expected daemon killed, got %v", killed)
+	}
+	if len(removed) != 0 {
+		t.Errorf("--clean on daemon must not remove any worktree, got %v", removed)
+	}
+}
+
+func TestStop_cleanProleTarget_removesWorktree(t *testing.T) {
+	killed := []string{}
+	killFn := func(s string) error {
+		killed = append(killed, s)
+		return nil
+	}
+	sent := []string{}
+	sendKeysFn := func(s, msg string) error {
+		sent = append(sent, s)
+		return nil
+	}
+	updateStatus := func(name, status string) error { return nil }
+	removed := []string{}
+	removeAll := func(p string) error {
+		removed = append(removed, p)
+		return nil
+	}
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	ctDir := t.TempDir()
+	stopCore([]string{"ct-prole-copper"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+
+	if len(killed) != 0 {
+		t.Errorf("prole should be signaled, not killed, got kills: %v", killed)
+	}
+	if len(sent) != 1 || sent[0] != "ct-prole-copper" {
+		t.Errorf("expected prole signaled, got %v", sent)
+	}
+	expectedWorktree := filepath.Join(ctDir, "proles", "copper")
+	if len(removed) != 1 || removed[0] != expectedWorktree {
+		t.Errorf("expected worktree %q removed, got %v", expectedWorktree, removed)
+	}
+	if len(pruned) != 1 {
+		t.Errorf("expected worktree prune called once, got %v", pruned)
+	}
+}
