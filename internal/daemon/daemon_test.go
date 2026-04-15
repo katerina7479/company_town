@@ -214,6 +214,65 @@ func TestHandlePRClosed_noopIfAlreadyClosed(t *testing.T) {
 	d.handlePRClosed(issue)
 }
 
+func TestHandlePRClosed_noSpam(t *testing.T) {
+	// A re-opened ticket with a stale closed pr_number should only produce one
+	// ESCALATION nudge to the Mayor, not one per poll tick.
+	mayorSession := "ct-mayor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+
+	id, _ := issues.Create("Stale-PR ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 190)
+
+	issue, _ := issues.Get(id)
+
+	// First call — should nudge.
+	d.handlePRClosed(issue)
+	// Second and third calls — same PR, same status — should be suppressed.
+	d.handlePRClosed(issue)
+	d.handlePRClosed(issue)
+
+	if len(*sent) != 1 {
+		t.Errorf("expected exactly 1 nudge, got %d: %v", len(*sent), *sent)
+	}
+}
+
+func TestHandlePRClosed_renotifiesOnNewPR(t *testing.T) {
+	// If the ticket later gets a different closed PR attached, the Mayor should
+	// be notified again (digest changes because the PR number changes).
+	mayorSession := "ct-mayor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+
+	id, _ := issues.Create("Re-scoped ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 190)
+
+	issue, _ := issues.Get(id)
+	d.handlePRClosed(issue) // first nudge: PR #190
+	d.handlePRClosed(issue) // suppressed: same digest
+
+	// Ticket gets re-scoped and a new PR is attached.
+	issues.SetPR(id, 201)
+	issue, _ = issues.Get(id)
+	d.handlePRClosed(issue) // new PR → digest changes → nudge fires again
+
+	if len(*sent) != 2 {
+		t.Errorf("expected 2 nudges (PR 190 + PR 201), got %d: %v", len(*sent), *sent)
+	}
+}
+
+func TestHandlePRClosed_noNudgeWhenMayorSessionAbsent(t *testing.T) {
+	// No sessions active — no nudge, but also no panic.
+	d, issues, _ := newTestDaemon(t) // no active sessions
+
+	id, _ := issues.Create("Test ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 99)
+
+	issue, _ := issues.Get(id)
+	d.handlePRClosed(issue) // should not panic; Mayor session absent
+}
+
 // --- Reviewer nudge tests ---
 
 func TestHandleInReviewTickets_nudgesReviewerPerTicket(t *testing.T) {
