@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/katerina7479/company_town/internal/repo"
 )
@@ -155,6 +157,68 @@ func TestCheckForHumanComments_SkipsBotAuthor(t *testing.T) {
 	got, _ := d.issues.Get(issue.ID)
 	if got.Status != "pr_open" {
 		t.Errorf("status: got %q, want \"pr_open\" (bot comment should be skipped)", got.Status)
+	}
+}
+
+func TestCheckForHumanComments_ExcerptTruncatesAtRuneBoundary(t *testing.T) {
+	// Build a body where a multi-byte UTF-8 character straddles the 120-byte
+	// mark. "é" is 2 bytes (0xC3 0xA9); placing it so that byte 120 lands
+	// inside it would corrupt the string if we sliced by bytes. We want the
+	// final excerpt to be valid UTF-8 and end with the ellipsis, not garbage.
+	//
+	// 119 ASCII 'a' chars + 'é' (2 bytes) = 121 bytes, 120 runes → exactly at
+	// the boundary. Appending more ASCII pushes it past 120 runes so truncation
+	// fires.
+	body := strings.Repeat("a", 119) + "é" + strings.Repeat("b", 10) // 131 bytes, 130 runes
+	comments := []prComment{{Author: "human", Body: body}}
+	d := makeCommentDaemon(t, comments)
+
+	issue := issueInStatus(t, d, "pr_open")
+	d.checkForHumanComments(issue, 97)
+
+	got, _ := d.issues.Get(issue.ID)
+	if got.Status != "repairing" {
+		t.Fatalf("expected repairing, got %q", got.Status)
+	}
+	if !got.RepairReason.Valid {
+		t.Fatal("expected repair_reason to be set")
+	}
+
+	reason := got.RepairReason.String
+	// Must be valid UTF-8 — the old byte-slice code could produce an invalid
+	// sequence when the cut landed inside "é".
+	if !utf8.ValidString(reason) {
+		t.Errorf("repair_reason is not valid UTF-8: %q", reason)
+	}
+	// Must end with the ellipsis indicator (excerpt was truncated).
+	if !strings.HasSuffix(reason, "…") {
+		t.Errorf("expected truncated reason to end with '…', got: %q", reason)
+	}
+	// The 'é' must appear in the excerpt (it's at rune 119, within the 120-rune
+	// limit).
+	if !strings.Contains(reason, "é") {
+		t.Errorf("expected 'é' to appear in excerpt (rune 119 is within limit), got: %q", reason)
+	}
+}
+
+func TestCheckForHumanComments_ExcerptNotTruncatedIfShort(t *testing.T) {
+	// A body shorter than 120 runes must not be truncated or have "…" appended.
+	body := "please fix the linting errors"
+	comments := []prComment{{Author: "human", Body: body}}
+	d := makeCommentDaemon(t, comments)
+
+	issue := issueInStatus(t, d, "pr_open")
+	d.checkForHumanComments(issue, 97)
+
+	got, _ := d.issues.Get(issue.ID)
+	if !got.RepairReason.Valid {
+		t.Fatal("expected repair_reason to be set")
+	}
+	if strings.Contains(got.RepairReason.String, "…") {
+		t.Errorf("short body should not be truncated, got: %q", got.RepairReason.String)
+	}
+	if !strings.Contains(got.RepairReason.String, body) {
+		t.Errorf("full body should appear in reason, got: %q", got.RepairReason.String)
 	}
 }
 

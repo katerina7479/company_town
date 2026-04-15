@@ -161,7 +161,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		lookupPRForBranch: func(branch string) (int, bool, error) {
 			return lookupPRForBranch(branch, cfg.ProjectRoot)
 		},
-		prBackfillInterval: time.Duration(cfg.PRBackfillIntervalSeconds) * time.Second,
+		prBackfillInterval:   time.Duration(cfg.PRBackfillIntervalSeconds) * time.Second,
 		restartDeadAgents:    cfg.RestartDeadAgents,
 		restartCooldown:      time.Duration(cfg.RestartCooldownSeconds) * time.Second,
 		lastRestartedAt:      make(map[string]time.Time),
@@ -1392,8 +1392,8 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 			return
 		}
 		excerpt := c.Body
-		if len(excerpt) > 120 {
-			excerpt = excerpt[:120] + "…"
+		if runes := []rune(excerpt); len(runes) > 120 {
+			excerpt = string(runes[:120]) + "…"
 		}
 		reason := fmt.Sprintf("review: %s: %s", c.Author, excerpt)
 		if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
