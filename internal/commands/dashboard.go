@@ -164,6 +164,9 @@ type dashboardData struct {
 // tickMsg triggers a periodic refresh.
 type tickMsg time.Time
 
+// secondTickMsg triggers a one-second UI refresh for the countdown display.
+type secondTickMsg time.Time
+
 // dataMsg delivers a freshly fetched snapshot.
 type dataMsg dashboardData
 
@@ -281,10 +284,17 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+func secondTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return secondTickMsg(t)
+	})
+}
+
 func (m dashboardModel) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { return m.fetch() },
 		tickCmd(),
+		secondTickCmd(),
 	)
 }
 
@@ -502,6 +512,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tickCmd(),
 		)
 
+	case secondTickMsg:
+		return m, secondTickCmd()
+
 	case dataMsg:
 		m.data = dashboardData(msg)
 		m.statusMsg = "" // clear transient status on each data refresh
@@ -714,23 +727,28 @@ func (m dashboardModel) View() string {
 }
 
 // renderDaemonLine renders a one-line daemon liveness status for the footer.
-// Three states: fresh (✓ green), stale (⚠ red), missing (✗ red). Stale is
-// defined as age > 3 × pollingInterval, floor 30s.
+// Shows a forward countdown to the next expected tick rather than a backwards
+// "last seen" duration.
+//
+// States:
+//   - daemon not seen → " daemon: down ✗" (red)
+//   - countdown positive → " daemon: next tick in Xs ✓" (green)
+//   - countdown expired, no new tick → " daemon: overdue +Xs ⚠" (red)
 func (m dashboardModel) renderDaemonLine() string {
 	if m.data.lastDaemonTick == nil {
-		return statusStyles["dead"].Render(" daemon: not running ✗")
+		return statusStyles["dead"].Render(" daemon: down ✗")
 	}
-	age := time.Since(*m.data.lastDaemonTick)
-	staleThreshold := 3 * m.pollingInterval
-	if staleThreshold < 30*time.Second {
-		staleThreshold = 30 * time.Second
+	elapsed := time.Since(*m.data.lastDaemonTick)
+	remaining := m.pollingInterval - elapsed
+	if remaining > 0 {
+		secs := int(remaining.Seconds()) + 1
+		label := fmt.Sprintf(" daemon: next tick in %ds ✓", secs)
+		return statusStyles["working"].Render(label)
 	}
-	if age > staleThreshold {
-		label := fmt.Sprintf(" daemon: %s ago ⚠  (expected every %s)", formatDuration(age), m.pollingInterval)
-		return statusStyles["dead"].Render(label)
-	}
-	label := fmt.Sprintf(" daemon: %s ago ✓", formatDuration(age))
-	return statusStyles["working"].Render(label)
+	overdue := -remaining
+	secs := int(overdue.Seconds())
+	label := fmt.Sprintf(" daemon: overdue +%ds ⚠", secs)
+	return statusStyles["dead"].Render(label)
 }
 
 func (m dashboardModel) renderAgents(width, height int) string {
