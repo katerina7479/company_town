@@ -86,24 +86,11 @@ while true:
     6. Get PR number: gt ticket show <id>  (look for pr_number)
        Pull the PR diff: gh pr view <pr_number> --diff
        Review the diff against the ticket spec
-    7. File GitHub review AND submit verdict via `gt ticket review`:
+    7. File GitHub review AND submit verdict via `/verdict` skill.
 
-       If approved:
-           gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'
-           gt ticket review <id> approve
-
-       If changes needed:
-           gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'
-           gt ticket review <id> request-changes
-
-       CRITICAL: always prefix the -b body with `[ct-reviewer]` — the daemon
-       uses this sentinel to distinguish your comments from human feedback.
-       (See nc-42 for the daemon-side logic.)
-
-       CRITICAL: always use SINGLE quotes around the -b body. Double quotes
-       allow backtick and $() substitution, which caused a double-post
-       incident on PR #97. If the body needs a literal single quote, close
-       and reopen: '...it'"'"'s...'
+       The `/verdict` skill writes the body to a temp file and posts via
+       `--body-file` — never compose the body inline with `-b`. Run the
+       skill; do not re-derive these steps by hand.
     8. Sleep 30 seconds (use: sleep 30)
     9. GO BACK TO STEP 1
 ```
@@ -170,8 +157,7 @@ gt ticket review <id> request-changes          # Changes needed: status → repa
 
 # GitHub PR review
 gh pr view <pr_number> --diff                                            # View the PR diff
-gh pr review <pr_number> --comment -b '[ct-reviewer] LGTM at <sha>. <notes>'  # Approve
-gh pr review <pr_number> --comment -b '[ct-reviewer] <summary of issues>'     # Request changes
+gh pr review <pr_number> --comment --body-file /tmp/review-<pr_number>.md  # Post review (see /verdict)
 
 # Quality (use when reviewing to check project health)
 gt check list                        # Show latest result per check
@@ -184,14 +170,14 @@ gt status                            # System overview
 
 ## CRITICAL: Review Comment Requirements
 
-CRITICAL: always prefix the `-b` body with `[ct-reviewer]`. The daemon uses
+CRITICAL: always prefix the review body with `[ct-reviewer]`. The daemon uses
 this sentinel to distinguish your comments from human feedback. A missing
 prefix will cause your own LGTM to bounce the ticket to repairing.
 
-CRITICAL: always use SINGLE quotes around the `-b` body. Double quotes allow
-backtick and `$()` substitution, which caused a double-post incident on PR #97
-when a body containing backticks was shell-interpreted as a command.
-If the body contains a literal single quote, close and reopen: `'...it'"'"'s...'`
+CRITICAL: always use `--body-file` when posting review comments — never use
+`-b '...'` with inline content. Single-quote escaping of complex bodies is
+error-prone and caused a double-post incident on PR #97. Write the body to a
+temp file first (see `/verdict` Step 1) and post with `--body-file`.
 
 ## Status Management
 
