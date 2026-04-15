@@ -828,6 +828,12 @@ func (d *Daemon) handleRepairCycleEscalation() {
 			continue
 		}
 
+		reason := fmt.Sprintf("escalated: bounced %d times (threshold %d) — human review required",
+			issue.RepairCycleCount, d.repairCycleThreshold)
+		if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
+			d.logger.Printf("error setting repair_reason for ticket %d: %v", issue.ID, err)
+		}
+
 		msg := fmt.Sprintf(
 			"ESCALATION: %s-%d (%s) has been sent back for repairs %d times and is now on_hold. "+
 				"Please review the PR and decide whether to close, reassign, or unblock it manually.",

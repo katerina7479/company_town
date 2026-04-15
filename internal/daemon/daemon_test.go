@@ -2744,6 +2744,29 @@ func TestHandleRepairCycleEscalation_escalatesWhenThresholdReached(t *testing.T)
 	}
 }
 
+func TestHandleRepairCycleEscalation_setsRepairReason(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Bouncy ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+
+	d.handleRepairCycleEscalation()
+
+	ticket, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !ticket.RepairReason.Valid {
+		t.Fatal("expected repair_reason to be set after escalation to on_hold")
+	}
+	if !containsAll(ticket.RepairReason.String, "escalated", "3") {
+		t.Errorf("expected repair_reason to mention bounce count, got %q", ticket.RepairReason.String)
+	}
+}
+
 func TestHandleRepairCycleEscalation_noEscalationBelowThreshold(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
 	d.repairCycleThreshold = 3
