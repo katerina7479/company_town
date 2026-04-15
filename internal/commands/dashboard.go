@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -35,101 +34,6 @@ func defaultRestartAgent(name, agentType string) error {
 
 // refreshInterval controls how often the dashboard polls the database.
 const refreshInterval = 5 * time.Second
-
-// lipgloss styles
-var (
-	boldStyle = lipgloss.NewStyle().Bold(true)
-
-	panelStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			Padding(0, 1)
-
-	panelFocusedStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("6")). // cyan when focused
-				Padding(0, 1)
-
-	headerStyle = lipgloss.NewStyle().Bold(true).Underline(true)
-
-	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("237"))
-
-	priorityStyles = map[string]lipgloss.Style{
-		"P0": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true), // bright red bold
-		"P1": lipgloss.NewStyle().Foreground(lipgloss.Color("208")),          // orange
-		"P2": lipgloss.NewStyle().Foreground(lipgloss.Color("3")),            // yellow
-		// P3 intentionally absent: default foreground conveys "average/normal"
-		"P4": lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray (below average)
-		"P5": lipgloss.NewStyle().Foreground(lipgloss.Color("238")), // dark gray (trivial/archive)
-	}
-
-	typeStyles = map[string]lipgloss.Style{
-		"epic":     lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true), // magenta bold
-		"bug":      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),            // bright red
-		"refactor": lipgloss.NewStyle().Foreground(lipgloss.Color("4")),            // blue
-	}
-
-	statusStyles = map[string]lipgloss.Style{
-		// Agent statuses
-		"working": lipgloss.NewStyle().Foreground(lipgloss.Color("2")), // green
-		"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")), // yellow
-		"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")), // red
-		// Ticket statuses
-		repo.StatusDraft:         lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
-		repo.StatusOpen:          lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
-		repo.StatusInProgress:    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
-		repo.StatusCIRunning:     lipgloss.NewStyle().Foreground(lipgloss.Color("12")),  // bright blue — CI gating
-		repo.StatusInReview:      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
-		repo.StatusUnderReview:   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
-		repo.StatusPROpen:        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
-		repo.StatusReviewed:      lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
-		repo.StatusRepairing:     lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
-		repo.StatusOnHold:        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
-		repo.StatusMergeConflict: lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution
-		repo.StatusClosed:        lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray
-	}
-
-	footerStyle = lipgloss.NewStyle().Faint(true)
-)
-
-func colorStatus(status string) string {
-	if s, ok := statusStyles[status]; ok {
-		return s.Render(status)
-	}
-	return status
-}
-
-// priorityCell returns a fixed 5-visible-char cell for the priority column.
-// e.g. "[P1] " or "     " when NULL.
-func priorityCell(p sql.NullString) string {
-	const width = 5
-	if !p.Valid || p.String == "" {
-		return strings.Repeat(" ", width)
-	}
-	label := fmt.Sprintf("[%s]", p.String) // e.g. "[P0]"
-	if s, ok := priorityStyles[p.String]; ok {
-		return s.Render(label) + " "
-	}
-	return fmt.Sprintf("%-*s", width, label)
-}
-
-// typeCell returns a fixed 1-visible-char cell for the issue type column.
-// epic → "E", bug → "B", refactor → "R", task → " " (blank — task is the default type).
-// Unknown future types also render blank. The outer Sprintf handles column spacing.
-func typeCell(issueType string) string {
-	letters := map[string]string{
-		"epic":     "E",
-		"bug":      "B",
-		"refactor": "R",
-	}
-	letter, ok := letters[issueType]
-	if !ok {
-		return " " // task and unknown types get a blank cell
-	}
-	if s, ok2 := typeStyles[issueType]; ok2 {
-		return s.Render(letter)
-	}
-	return letter
-}
 
 // formatDuration formats a duration as a compact human-readable string.
 // e.g. "3m", "2h 15m", "4d 3h"
@@ -229,6 +133,8 @@ type dashboardModel struct {
 	inputBuffer string
 	inputAction string // "nudge", "create_ticket", "status"
 	inputTarget string // agent name (nudge) or ticket ID string (status)
+
+	theme StyleTheme
 }
 
 func newDashboardModel() (*dashboardModel, error) {
@@ -252,6 +158,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		openPRFn:        defaultOpenPR,
 		sleepFn:         time.Sleep,
 		expanded:        make(map[int]bool),
+		theme:           DefaultTheme(),
 		ticketPrefix:    cfg.TicketPrefix,
 		tickFile:        filepath.Join(ctDir, "run", "daemon-tick"),
 		pollingInterval: pollingInterval,
@@ -731,7 +638,7 @@ func (m dashboardModel) View() string {
 		case "repair_reason":
 			label = fmt.Sprintf("repair_reason %s-%s", m.ticketPrefix, m.inputTarget)
 		}
-		footer = boldStyle.Render(fmt.Sprintf(" [%s] > %s█", label, m.inputBuffer))
+		footer = m.theme.Bold.Render(fmt.Sprintf(" [%s] > %s█", label, m.inputBuffer))
 	} else {
 		hint := " q quit  r refresh  tab switch panel  j/k navigate"
 		if m.focusedPanel == 0 {
@@ -748,7 +655,7 @@ func (m dashboardModel) View() string {
 			hint += "  " + m.statusMsg
 		}
 		// Two-line footer: daemon liveness above the key hint.
-		footer = m.renderDaemonLine() + "\n" + footerStyle.Render(hint)
+		footer = m.renderDaemonLine() + "\n" + m.theme.Footer.Render(hint)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
@@ -764,24 +671,24 @@ func (m dashboardModel) View() string {
 //   - countdown expired, no new tick → " daemon: overdue +Xs ⚠" (red)
 func (m dashboardModel) renderDaemonLine() string {
 	if m.data.lastDaemonTick == nil {
-		return statusStyles["dead"].Render(" daemon: down ✗")
+		return m.theme.Status["dead"].Render(" daemon: down ✗")
 	}
 	elapsed := time.Since(*m.data.lastDaemonTick)
 	remaining := m.pollingInterval - elapsed
 	if remaining > 0 {
 		secs := int(remaining.Seconds()) + 1
 		label := fmt.Sprintf(" daemon: next tick in %ds ✓", secs)
-		return statusStyles["working"].Render(label)
+		return m.theme.Status["working"].Render(label)
 	}
 	overdue := -remaining
 	secs := int(overdue.Seconds())
 	label := fmt.Sprintf(" daemon: overdue +%ds ⚠", secs)
-	return statusStyles["dead"].Render(label)
+	return m.theme.Status["dead"].Render(label)
 }
 
 func (m dashboardModel) renderAgents(width, height int) string {
 	var sb strings.Builder
-	sb.WriteString(headerStyle.Render("Agents") + "\n\n")
+	sb.WriteString(m.theme.Header.Render("Agents") + "\n\n")
 
 	focused := m.focusedPanel == 0
 	// innerWidth is the content area width: outer width minus border (2) and padding (2).
@@ -789,31 +696,31 @@ func (m dashboardModel) renderAgents(width, height int) string {
 	rowWidth := innerWidth
 
 	if len(m.data.agents) == 0 {
-		sb.WriteString(footerStyle.Render("(none registered)"))
+		sb.WriteString(m.theme.Footer.Render("(none registered)"))
 	} else {
 		for i, a := range m.data.agents {
-			name := boldStyle.Render(fmt.Sprintf("%-14s", a.Name))
-			status := colorStatus(a.Status)
+			name := m.theme.Bold.Render(fmt.Sprintf("%-14s", a.Name))
+			status := m.theme.ColorStatus(a.Status)
 			issue := ""
 			if a.CurrentIssue.Valid {
 				issue = fmt.Sprintf(" → nc-%d", a.CurrentIssue.Int64)
 			}
 			age := ""
 			if a.StatusChangedAt.Valid {
-				age = footerStyle.Render(" (" + formatDuration(time.Since(a.StatusChangedAt.Time)) + ")")
+				age = m.theme.Footer.Render(" (" + formatDuration(time.Since(a.StatusChangedAt.Time)) + ")")
 			}
 			line := fmt.Sprintf("%s %s%s%s", name, status, issue, age)
 			if focused && i == m.agentCursor {
-				line = selectedStyle.Width(rowWidth).Render(line)
+				line = m.theme.Selected.Width(rowWidth).Render(line)
 			}
 			sb.WriteString(line + "\n")
 		}
 	}
 
 	inner := sb.String()
-	style := panelStyle
+	style := m.theme.Panel
 	if focused {
-		style = panelFocusedStyle
+		style = m.theme.PanelFocused
 	}
 	return style.
 		Width(width).
@@ -823,7 +730,7 @@ func (m dashboardModel) renderAgents(width, height int) string {
 
 func (m dashboardModel) renderTickets(width, height int) string {
 	var sb strings.Builder
-	sb.WriteString(headerStyle.Render("Tickets") + "\n\n")
+	sb.WriteString(m.theme.Header.Render("Tickets") + "\n\n")
 
 	focused := m.focusedPanel == 1
 	// innerWidth is the content area width: outer width minus border (2) and padding (2).
@@ -832,24 +739,24 @@ func (m dashboardModel) renderTickets(width, height int) string {
 
 	flat := m.flatTickets()
 	if len(flat) == 0 {
-		sb.WriteString(footerStyle.Render("(no tickets)"))
+		sb.WriteString(m.theme.Footer.Render("(no tickets)"))
 	} else {
 		for i, fn := range flat {
-			line := renderIssueRow(fn.node, fn.depth, innerWidth)
+			line := m.renderIssueRow(fn.node, fn.depth, innerWidth)
 			if focused && i == m.ticketCursor {
-				line = selectedStyle.Width(rowWidth).Render(line)
+				line = m.theme.Selected.Width(rowWidth).Render(line)
 			}
 			sb.WriteString(line + "\n")
 			if m.expanded[fn.node.ID] {
-				sb.WriteString(renderTicketDetails(fn.node, fn.depth, innerWidth))
+				sb.WriteString(m.renderTicketDetails(fn.node, fn.depth, innerWidth))
 			}
 		}
 	}
 
 	inner := sb.String()
-	style := panelStyle
+	style := m.theme.Panel
 	if focused {
-		style = panelFocusedStyle
+		style = m.theme.PanelFocused
 	}
 	return style.
 		Width(width).
@@ -889,7 +796,7 @@ func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
 }
 
 // renderIssueRow renders a single ticket row as a string (without trailing newline).
-func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
+func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	indent := strings.Repeat("  ", depth)
 	bullet := "●"
 	if depth > 0 {
@@ -898,9 +805,9 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 
 	prefix := fmt.Sprintf("%s%s", indent, bullet)
 	idStr := fmt.Sprintf("%-6d", node.ID)
-	coloredStatus := colorStatus(node.Status)
+	coloredStatus := m.theme.ColorStatus(node.Status)
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
-	age := footerStyle.Render(ageRaw)
+	age := m.theme.Footer.Render(ageRaw)
 
 	prStr := "      " // 6 chars blank when no PR
 	if node.PRNumber.Valid {
@@ -908,10 +815,10 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	}
 
 	const priorityWidth = 5 // visible chars: "[P0] " or "     "
-	pri := priorityCell(node.Priority)
+	pri := m.theme.PriorityCell(node.Priority)
 
 	const typeWidth = 1 // visible char: "E" / "B" / "R" / " " (blank for task)
-	typ := typeCell(node.IssueType)
+	typ := m.theme.TypeCell(node.IssueType)
 
 	const assigneeWidth = 8 // visible chars: up to 8-char agent name (e.g. "obsidian") or blank
 	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")
@@ -944,39 +851,39 @@ func renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 
 // renderTicketDetails renders the expanded detail lines for a ticket.
 // Returns a string (may be empty) to append after the ticket row.
-func renderTicketDetails(node *repo.IssueNode, depth int, width int) string {
+func (m dashboardModel) renderTicketDetails(node *repo.IssueNode, depth int, width int) string {
 	var sb strings.Builder
 	detailIndent := strings.Repeat("  ", depth+1)
 
 	if node.Description.Valid && node.Description.String != "" {
 		wrapped := wordWrap(node.Description.String, width-len(detailIndent)-4)
 		for _, line := range strings.Split(wrapped, "\n") {
-			sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent, footerStyle.Render(line)))
+			fmt.Fprintf(&sb, "%s  %s\n", detailIndent, m.theme.Footer.Render(line))
 		}
 	}
 
 	if node.Assignee.Valid {
-		sb.WriteString(fmt.Sprintf("%s  assignee: %s\n", detailIndent, footerStyle.Render(node.Assignee.String)))
+		fmt.Fprintf(&sb, "%s  assignee: %s\n", detailIndent, m.theme.Footer.Render(node.Assignee.String))
 	}
 
 	if node.PRNumber.Valid {
-		sb.WriteString(fmt.Sprintf("%s  PR: %s\n", detailIndent, footerStyle.Render(fmt.Sprintf("#%d", node.PRNumber.Int64))))
+		fmt.Fprintf(&sb, "%s  PR: %s\n", detailIndent, m.theme.Footer.Render(fmt.Sprintf("#%d", node.PRNumber.Int64)))
 	}
 
 	if node.Branch.Valid {
-		sb.WriteString(fmt.Sprintf("%s  branch: %s\n", detailIndent, footerStyle.Render(node.Branch.String)))
+		fmt.Fprintf(&sb, "%s  branch: %s\n", detailIndent, m.theme.Footer.Render(node.Branch.String))
 	}
 
 	if node.RepairReason.Valid && node.RepairReason.String != "" {
-		fmt.Fprintf(&sb, "%s  repair: %s\n", detailIndent, footerStyle.Render(node.RepairReason.String))
+		fmt.Fprintf(&sb, "%s  repair: %s\n", detailIndent, m.theme.Footer.Render(node.RepairReason.String))
 	}
 
-	sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent,
-		footerStyle.Render(fmt.Sprintf("created: %s  updated: %s",
+	fmt.Fprintf(&sb, "%s  %s\n", detailIndent,
+		m.theme.Footer.Render(fmt.Sprintf("created: %s  updated: %s",
 			node.CreatedAt.Format("2006-01-02 15:04"),
 			node.UpdatedAt.Format("2006-01-02 15:04"),
 		)),
-	))
+	)
 	sb.WriteString("\n")
 	return sb.String()
 }
