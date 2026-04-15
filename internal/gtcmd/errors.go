@@ -1,3 +1,4 @@
+// Package gtcmd implements the gt agent CLI subcommands.
 package gtcmd
 
 import "errors"
