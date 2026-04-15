@@ -64,31 +64,16 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 	var agentType, templateType, model, agentDir, prompt string
 
 	switch {
-	case name == "architect":
-		agentType = "architect"
-		templateType = "architect"
-		model = cfg.Agents.Architect.Model
-		agentDir = filepath.Join(ctDir, "agents", "architect")
-		prompt = fmt.Sprintf(
-			"You are the Architect. Ticket prefix: %s. "+
-				"Read your CLAUDE.md for instructions. "+
-				"Check memory/handoff.md to resume previous work. "+
-				"Begin your patrol loop: check for draft tickets and spec them out.",
-			cfg.TicketPrefix,
-		)
-
-	case name == "reviewer":
-		agentType = "reviewer"
-		templateType = "reviewer"
-		model = cfg.Agents.Reviewer.Model
-		agentDir = filepath.Join(ctDir, "agents", "reviewer")
-		prompt = fmt.Sprintf(
-			"You are the Reviewer. Ticket prefix: %s. "+
-				"Read your CLAUDE.md for instructions. "+
-				"Check memory/handoff.md to resume previous work. "+
-				"Begin patrol: check for in_review tickets and review their PRs.",
-			cfg.TicketPrefix,
-		)
+	case agentRegistry[name].agentSubDir != "":
+		// Registered startable agent (architect, reviewer). Mayor is also in the
+		// registry but has an empty agentSubDir so it falls through to the default.
+		spec := agentRegistry[name]
+		agentType = spec.agentType
+		templateType = spec.templateType
+		ac := spec.configFor(cfg)
+		model = ac.Model
+		agentDir = filepath.Join(ctDir, "agents", spec.agentSubDir)
+		prompt = spec.promptFn(cfg)
 
 	case strings.HasPrefix(name, "artisan-"):
 		specialty := strings.TrimPrefix(name, "artisan-")
@@ -272,8 +257,9 @@ func Stop(args []string) error {
 
 	var signalPath string
 	switch {
-	case name == "architect":
-		signalPath = filepath.Join(ctDir, "agents", "architect", "memory", "handoff_requested")
+	case agentRegistry[name].hasSignalFile:
+		spec := agentRegistry[name]
+		signalPath = filepath.Join(ctDir, "agents", spec.agentSubDir, "memory", "handoff_requested")
 	case strings.HasPrefix(name, "artisan-"):
 		specialty := strings.TrimPrefix(name, "artisan-")
 		signalPath = filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
