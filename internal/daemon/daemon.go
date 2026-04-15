@@ -819,6 +819,10 @@ func (d *Daemon) handleRepairCycleEscalation() {
 		if !d.shouldNudge(nudgeKey) {
 			continue
 		}
+		nudgeDigest := fmt.Sprintf("repair_cycle_count=%d", issue.RepairCycleCount)
+		if !d.digestChanged(nudgeKey, nudgeDigest) {
+			continue
+		}
 
 		d.logger.Printf("ticket %s-%d has bounced %d times (threshold %d) — moving to on_hold",
 			d.cfg.TicketPrefix, issue.ID, issue.RepairCycleCount, d.repairCycleThreshold)
@@ -842,7 +846,7 @@ func (d *Daemon) handleRepairCycleEscalation() {
 		if err := d.sendKeys(mayorSession, msg); err != nil {
 			d.logger.Printf("error notifying Mayor of repair-cycle escalation for ticket %d: %v", issue.ID, err)
 		} else {
-			d.recordNudge(nudgeKey, "")
+			d.recordNudge(nudgeKey, nudgeDigest)
 		}
 
 		if d.obs != nil {

@@ -2841,6 +2841,83 @@ func TestHandleRepairCycleEscalation_cooldownSuppressesRepeat(t *testing.T) {
 	}
 }
 
+func TestHandleRepairCycleEscalation_reEscalatesAfterCountIncrements(t *testing.T) {
+	// Regression test for nc-177: after the first escalation, if the ticket is
+	// unblocked and re-enters repair with a higher RepairCycleCount, the Mayor
+	// must be notified again. Under the old empty-digest behavior,
+	// digestChanged("repair_cycle:N", "") always returns false after the first
+	// nudge, so the second notification is silently dropped.
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Re-escalating ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing") // count = 3, threshold hit
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 1 {
+		t.Fatalf("first escalation: expected 1 message, got %d", len(*sent))
+	}
+
+	// Simulate unblock: set back to repairing with a higher count by updating
+	// status twice more (count becomes 5).
+	issues.UpdateStatus(id, "in_progress")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing") // count = 5
+
+	// Clear the cooldown for this key so shouldNudge passes.
+	nudgeKey := fmt.Sprintf("repair_cycle:%d", id)
+	delete(d.lastNudged, nudgeKey)
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 2 {
+		t.Errorf("second escalation: expected 2 total messages (digest changed), got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairCycleEscalation_matchingDigestSuppresses(t *testing.T) {
+	// If repair_cycle_count has not changed since the last nudge, the digest is
+	// identical and digestChanged returns false — no second notification.
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Same-count ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing") // count = 3
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 1 {
+		t.Fatalf("first escalation: expected 1 message, got %d", len(*sent))
+	}
+
+	// Move back to repairing WITHOUT incrementing count (simulate same count).
+	// The only way to do this without extra UpdateStatus("repairing") calls is to
+	// clear the nudge cooldown but leave the digest — RepairCycleCount stays at 3.
+	nudgeKey := fmt.Sprintf("repair_cycle:%d", id)
+	delete(d.lastNudged, nudgeKey)
+	issues.UpdateStatus(id, "repairing") // count = 4 — wait, this increments
+
+	// Re-set: we want to test same count. Restore the digest state by re-recording
+	// the nudge with count=4's digest before calling again, but that's circular.
+	// Instead: check the ticket's current count and assert it changed, so the
+	// second call with cooldown cleared but SAME digest (same count as stored)
+	// would be blocked. We achieve this by recording a fake nudge at the current count.
+	ticket, _ := issues.Get(id)
+	d.lastNudgeDigest[nudgeKey] = fmt.Sprintf("repair_cycle_count=%d", ticket.RepairCycleCount)
+
+	d.handleRepairCycleEscalation()
+
+	// Digest matches stored value → no second nudge.
+	if len(*sent) != 1 {
+		t.Errorf("same-count: expected still 1 message (digest unchanged), got %d", len(*sent))
+	}
+}
+
 func TestUpdateStatus_incrementsRepairCycleCount(t *testing.T) {
 	conn, err := db.NewTestDB()
 	if err != nil {
