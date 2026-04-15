@@ -1,6 +1,9 @@
 package gtcmd
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -350,5 +353,236 @@ func TestStopDaemon_SessionAlreadyGone(t *testing.T) {
 
 	if killed {
 		t.Error("expected killSessionFn NOT to be called when session does not exist")
+	}
+}
+
+// TestStop_missingArgs verifies that Stop returns an error when no agent name is provided.
+func TestStop_missingArgs(t *testing.T) {
+	if err := Stop([]string{}); err == nil {
+		t.Fatal("expected error for Stop with no args")
+	}
+}
+
+// TestStop_nonDaemon_notRunning verifies that Stop returns early with a friendly
+// message when the named agent's tmux session does not exist.
+func TestStop_nonDaemon_notRunning(t *testing.T) {
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	tmuxExistsFn = func(_ string) bool { return false }
+
+	if err := Stop([]string{"architect"}); err != nil {
+		t.Fatalf("Stop for non-running agent: %v", err)
+	}
+}
+
+// TestStopDaemon_KillError verifies that stopDaemonWithDeps returns an error when
+// killSessionFn fails.
+func TestStopDaemon_KillError(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	agents := repo.NewAgentRepo(conn, nil)
+	if err := agents.Register("daemon", "daemon", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	oldKill := killSessionFn
+	defer func() { killSessionFn = oldKill }()
+	killSessionFn = func(_ string) error {
+		return fmt.Errorf("simulated kill failure")
+	}
+
+	err = stopDaemonWithDeps(agents, session.SessionName("daemon"))
+	if err == nil {
+		t.Fatal("expected error from killSessionFn failure, got nil")
+	}
+}
+
+// TestStopDaemon_DBUpdateWarning verifies that stopDaemonWithDeps continues
+// (doesn't return early) when agents.UpdateStatus fails, issuing only a warning.
+func TestStopDaemon_DBUpdateWarning(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	// Close the connection so all DB ops fail.
+	conn.Close()
+
+	agents := repo.NewAgentRepo(conn, nil)
+
+	killed := false
+	oldKill := killSessionFn
+	defer func() { killSessionFn = oldKill }()
+	killSessionFn = func(_ string) error {
+		killed = true
+		return nil
+	}
+
+	// DB is closed so UpdateStatus will warn, but kill must still happen.
+	err = stopDaemonWithDeps(agents, session.SessionName("daemon"))
+	if err != nil {
+		t.Fatalf("expected nil error from stopDaemonWithDeps: %v", err)
+	}
+	if !killed {
+		t.Error("expected killSessionFn to be called even when DB update failed")
+	}
+}
+
+// TestStart_unknownAgent verifies that startAgentWithDeps returns an error for
+// unrecognized agent names that are not in the registry and not artisan- prefixed.
+func TestStart_unknownAgent(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	cfg := &config.Config{ProjectRoot: t.TempDir()}
+	agents := repo.NewAgentRepo(conn, nil)
+
+	err = startAgentWithDeps(cfg, agents, "bogus-agent")
+	if err == nil {
+		t.Fatal("expected error for unknown agent, got nil")
+	}
+}
+
+// TestStart_artisan verifies that startAgentWithDeps handles an artisan-<specialty>
+// agent, registering it and launching a session.
+func TestStart_artisan(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot:  tmpDir,
+		TicketPrefix: "nc",
+		Agents: config.AgentsConfig{
+			Artisan: map[string]config.AgentConfig{
+				"frontend": {Model: "claude-test"},
+			},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+
+	oldCreate := createInteractiveFn
+	defer func() { createInteractiveFn = oldCreate }()
+	createInteractiveFn = func(_ session.AgentSessionConfig) error { return nil }
+
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	tmuxExistsFn = func(_ string) bool { return false }
+
+	oldEnsure := ensureAgentWorktreeFn
+	defer func() { ensureAgentWorktreeFn = oldEnsure }()
+	ensureAgentWorktreeFn = func(_ *config.Config, agentDir string) (string, error) {
+		return agentDir + "/worktree", nil
+	}
+
+	if err := startAgentWithDeps(cfg, agents, "artisan-frontend"); err != nil {
+		t.Fatalf("startAgentWithDeps artisan-frontend: %v", err)
+	}
+
+	a, err := agents.Get("artisan-frontend")
+	if err != nil {
+		t.Fatalf("agents.Get(artisan-frontend): %v", err)
+	}
+	if a.Type != "artisan" {
+		t.Errorf("expected type=artisan, got %q", a.Type)
+	}
+	if !a.Specialty.Valid || a.Specialty.String != "frontend" {
+		t.Errorf("expected specialty=frontend, got %v", a.Specialty)
+	}
+}
+
+// TestStart_artisanUnknownSpecialty verifies that startAgentWithDeps returns an
+// error when the specialty is not in the config.
+func TestStart_artisanUnknownSpecialty(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	cfg := &config.Config{
+		ProjectRoot: t.TempDir(),
+		Agents: config.AgentsConfig{
+			Artisan: map[string]config.AgentConfig{},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+
+	err = startAgentWithDeps(cfg, agents, "artisan-nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown artisan specialty, got nil")
+	}
+}
+
+// TestStart_nonDaemon_alreadyRunning verifies that startAgentWithDeps returns nil
+// and prints a message when the agent's tmux session already exists (for non-daemon agents).
+func TestStart_nonDaemon_alreadyRunning(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot:  tmpDir,
+		TicketPrefix: "nc",
+		Agents: config.AgentsConfig{
+			Architect: config.AgentConfig{Model: "claude-test"},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+
+	// Stub both fns: worktree provisioning is a no-op, session always exists.
+	oldEnsure := ensureAgentWorktreeFn
+	defer func() { ensureAgentWorktreeFn = oldEnsure }()
+	ensureAgentWorktreeFn = func(_ *config.Config, agentDir string) (string, error) {
+		return agentDir + "/worktree", nil
+	}
+
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	tmuxExistsFn = func(_ string) bool { return true }
+
+	// Session already running → startAgentWithDeps must return nil without launching.
+	if err := startAgentWithDeps(cfg, agents, "architect"); err != nil {
+		t.Fatalf("startAgentWithDeps with running session: %v", err)
+	}
+}
+
+// TestStop_nonDaemon_running verifies that Stop signals a running non-daemon agent
+// and returns nil even when the database is unavailable (DB open failure is non-fatal
+// in Stop's non-daemon path).
+//
+// A fake .company_town/ directory is created under t.TempDir() and the test CWD
+// is moved there so db.FindProjectRoot() succeeds without a real project checkout.
+func TestStop_nonDaemon_running(t *testing.T) {
+	// Create a minimal fake project root so FindProjectRoot() succeeds in all
+	// environments (local and CI both run this test inside the gtcmd package dir).
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, config.DirName), 0750); err != nil {
+		t.Fatalf("creating .company_town: %v", err)
+	}
+	t.Chdir(projectRoot)
+
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	// Agent has a live tmux session.
+	tmuxExistsFn = func(_ string) bool { return true }
+
+	// "copper" is a prole — not in agentRegistry, no signal file, not daemon.
+	// db.OpenFromWorkingDir() fails (no config.json in the fake root) which is
+	// non-fatal in Stop's non-daemon path — it prints a warning and returns nil.
+	if err := Stop([]string{"copper"}); err != nil {
+		t.Fatalf("Stop(copper) with running session: %v", err)
 	}
 }

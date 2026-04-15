@@ -330,6 +330,45 @@ func TestAgentRelease_safeWhenAlreadyIdle(t *testing.T) {
 	}
 }
 
+func TestAgentRelease_ticketInWrongStatus_skipsTransition(t *testing.T) {
+	// When the ticket is NOT in the expected From status, release should
+	// print a note to stderr and not transition the ticket.
+	cfg := &config.Config{
+		TicketPrefix: "nc",
+		Agents: config.AgentsConfig{
+			Reviewer: config.AgentConfig{
+				Model: "sonnet",
+				Workflow: &config.WorkflowConfig{
+					Release: &config.WorkflowAction{
+						TicketTransition: &config.TicketTransition{From: "under_review", To: "in_review"},
+					},
+				},
+			},
+			Prole: config.AgentConfig{Model: "sonnet"},
+		},
+	}
+	deps, buf := setupWorkflowTest(t, cfg)
+	mustRegisterAgent(t, deps.agents, "reviewer", "reviewer")
+	// Ticket is in_review (NOT under_review), so transition must be skipped.
+	id := mustCreateTicket(t, deps.issues, "in_review")
+	deps.agents.SetCurrentIssue("reviewer", &id)
+	setEnv(t, "CT_AGENT_NAME", "reviewer")
+
+	if err := agentRelease(deps, nil); err != nil {
+		t.Fatalf("agentRelease with wrong ticket status: %v", err)
+	}
+
+	// Status should remain in_review (no transition)
+	issue, _ := deps.issues.Get(id)
+	if issue.Status != "in_review" {
+		t.Errorf("expected ticket status unchanged (in_review), got %q", issue.Status)
+	}
+	// A note must appear on stderr
+	if buf.Len() == 0 {
+		t.Error("expected note on stderr about wrong ticket status, got none")
+	}
+}
+
 // --- do tests ---
 
 // doCfg returns a config where the prole has a workflow with a custom action "submit".
@@ -448,4 +487,77 @@ func TestAgentDo_noWorkflowActionsErrors(t *testing.T) {
 // idStr converts an int to string for test argument slices.
 func idStr(id int) string {
 	return strconv.Itoa(id)
+}
+
+// TestAgentAccept_missingArgs verifies that agentAccept returns an error when
+// no ticket ID argument is provided.
+func TestAgentAccept_missingArgs(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, proleCfg())
+	setEnv(t, "CT_AGENT_NAME", "iron")
+
+	err := agentAccept(deps, []string{})
+	if err == nil {
+		t.Fatal("expected error for missing ticket ID arg, got nil")
+	}
+}
+
+// TestAgentAccept_badTicketID verifies that agentAccept returns an error when the
+// ticket ID argument cannot be parsed as an integer.
+func TestAgentAccept_badTicketID(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, proleCfg())
+	mustRegisterAgent(t, deps.agents, "iron", "prole")
+	setEnv(t, "CT_AGENT_NAME", "iron")
+
+	err := agentAccept(deps, []string{"not-a-valid-number"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID, got nil")
+	}
+}
+
+// TestAgentDo_missingArgs verifies that agentDo returns an error when fewer than
+// two arguments are provided (action + ticket-id are both required).
+func TestAgentDo_missingArgs(t *testing.T) {
+	deps, _ := setupWorkflowTest(t, doCfg())
+	setEnv(t, "CT_AGENT_NAME", "copper")
+
+	err := agentDo(deps, []string{"submit"}) // missing ticket-id
+	if err == nil {
+		t.Fatal("expected error for missing ticket-id arg, got nil")
+	}
+}
+
+// TestAgentRelease_currentIssueNotFound_printsNote verifies that when an agent's
+// current_issue points to a nonexistent ticket, agentRelease prints a note to
+// stderr and returns nil (non-fatal).
+func TestAgentRelease_currentIssueNotFound_printsNote(t *testing.T) {
+	cfg := &config.Config{
+		TicketPrefix: "nc",
+		Agents: config.AgentsConfig{
+			Reviewer: config.AgentConfig{
+				Model: "sonnet",
+				Workflow: &config.WorkflowConfig{
+					Release: &config.WorkflowAction{
+						TicketTransition: &config.TicketTransition{From: "under_review", To: "in_review"},
+					},
+				},
+			},
+			Prole: config.AgentConfig{Model: "sonnet"},
+		},
+	}
+	deps, buf := setupWorkflowTest(t, cfg)
+	mustRegisterAgent(t, deps.agents, "reviewer", "reviewer")
+	setEnv(t, "CT_AGENT_NAME", "reviewer")
+
+	// Point the agent at a nonexistent ticket ID so issues.Get fails.
+	nonExistentID := 9999
+	if err := deps.agents.SetCurrentIssue("reviewer", &nonExistentID); err != nil {
+		t.Fatalf("SetCurrentIssue: %v", err)
+	}
+
+	if err := agentRelease(deps, nil); err != nil {
+		t.Fatalf("agentRelease: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Error("expected note on stderr about missing ticket, got none")
+	}
 }

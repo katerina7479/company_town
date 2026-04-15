@@ -168,6 +168,63 @@ func TestLogTail_returnsLastN(t *testing.T) {
 	}
 }
 
+func TestLogTail_nRequiresValue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commands.log")
+	os.Create(path)
+
+	err := logTail(path, []string{"-n"})
+	if err == nil {
+		t.Fatal("expected error for -n with no value")
+	}
+}
+
+func TestLogTail_invalidNValue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commands.log")
+	os.Create(path)
+
+	if err := logTail(path, []string{"-n", "not-a-number"}); err == nil {
+		t.Fatal("expected error for invalid -n value")
+	}
+	if err := logTail(path, []string{"-n", "0"}); err == nil {
+		t.Fatal("expected error for -n=0")
+	}
+}
+
+func TestLogTail_unknownFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commands.log")
+	os.Create(path)
+
+	if err := logTail(path, []string{"--bogus"}); err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+}
+
+func TestLogTail_nCapAt10000(t *testing.T) {
+	path := writeTestLog(t, nil) // empty file is fine; we just test arg parsing
+	// n > 10000 should not error — it gets capped silently
+	if err := logTail(path, []string{"-n", "99999"}); err != nil {
+		t.Fatalf("logTail with n=99999 should not error: %v", err)
+	}
+}
+
+func TestLogTail_malformedLineWarning(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "commands.log")
+	os.WriteFile(path, []byte("NOT_JSON\n"), 0644)
+
+	_, errStr := captureLogOutput(func() {
+		if err := logTail(path, nil); err != nil {
+			t.Errorf("logTail: %v", err)
+		}
+	})
+	if !strings.Contains(errStr, "warning: skipped") {
+		t.Errorf("expected malformed warning on stderr, got: %q", errStr)
+	}
+}
+
 func TestLogTail_jsonPassthrough(t *testing.T) {
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	path := writeTestLog(t, []cmdlog.Entry{
@@ -415,6 +472,71 @@ func TestLogShow_malformedLineSkipped(t *testing.T) {
 
 	if !strings.Contains(errStr, "warning: skipped 1 malformed") {
 		t.Errorf("expected malformed-line warning on stderr, got: %q", errStr)
+	}
+}
+
+func TestRenderLine_malformedJSON(t *testing.T) {
+	captureLogOutput(func() {
+		got := renderLine("NOT_VALID_JSON")
+		if got {
+			t.Error("expected renderLine to return false for malformed JSON")
+		}
+	})
+}
+
+func TestRenderEntry_withErrorField(t *testing.T) {
+	entry := cmdlog.Entry{
+		Timestamp:  time.Now(),
+		Actor:      "copper",
+		Binary:     "gt",
+		Args:       []string{"ticket", "show", "1"},
+		ExitCode:   1,
+		DurationMs: 5,
+		Error:      "something went wrong",
+	}
+	outStr, _ := captureLogOutput(func() {
+		renderEntry(entry)
+	})
+	if !strings.Contains(outStr, "error: something went wrong") {
+		t.Errorf("expected error field in output, got: %q", outStr)
+	}
+}
+
+func TestRenderEntry_annotationWithBeforeAfter(t *testing.T) {
+	entry := cmdlog.Entry{
+		Timestamp:  time.Now(),
+		Actor:      "iron",
+		Binary:     "gt",
+		Args:       []string{"ticket", "status", "5", "closed"},
+		DurationMs: 3,
+		Entities: []cmdlog.Annotation{
+			{Entity: "ticket=5", Before: "open", After: "closed"},
+		},
+	}
+	outStr, _ := captureLogOutput(func() {
+		renderEntry(entry)
+	})
+	if !strings.Contains(outStr, "open->closed") {
+		t.Errorf("expected before/after in output, got: %q", outStr)
+	}
+}
+
+func TestRenderEntry_annotationWithoutBeforeAfter(t *testing.T) {
+	entry := cmdlog.Entry{
+		Timestamp:  time.Now(),
+		Actor:      "tin",
+		Binary:     "gt",
+		Args:       []string{"ticket", "show", "3"},
+		DurationMs: 2,
+		Entities: []cmdlog.Annotation{
+			{Entity: "ticket=3"},
+		},
+	}
+	outStr, _ := captureLogOutput(func() {
+		renderEntry(entry)
+	})
+	if !strings.Contains(outStr, "ticket=3") {
+		t.Errorf("expected entity in output, got: %q", outStr)
 	}
 }
 

@@ -197,6 +197,56 @@ func TestTicketCreate_invalidType(t *testing.T) {
 	}
 }
 
+func TestTicketCreate_withParent(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	parentID, _ := issues.Create("Parent epic", "epic", nil, nil, nil)
+	if err := ticketCreate(issues, "nc", []string{"child task", "--parent", fmt.Sprintf("%d", parentID)}); err != nil {
+		t.Fatalf("ticketCreate with --parent: %v", err)
+	}
+	child, err := issues.Get(2)
+	if err != nil {
+		t.Fatalf("Get child: %v", err)
+	}
+	if !child.ParentID.Valid || int(child.ParentID.Int64) != parentID {
+		t.Errorf("expected ParentID=%d, got %v", parentID, child.ParentID)
+	}
+}
+
+func TestTicketCreate_withSpecialty(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketCreate(issues, "nc", []string{"specialty task", "--specialty", "frontend"}); err != nil {
+		t.Fatalf("ticketCreate with --specialty: %v", err)
+	}
+	ticket, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !ticket.Specialty.Valid || ticket.Specialty.String != "frontend" {
+		t.Errorf("expected specialty='frontend', got %v", ticket.Specialty)
+	}
+}
+
+func TestTicketCreate_missingFlagValues(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	cases := []struct {
+		args []string
+		name string
+	}{
+		{[]string{"title", "--parent"}, "--parent missing value"},
+		{[]string{"title", "--specialty"}, "--specialty missing value"},
+		{[]string{"title", "--priority"}, "--priority missing value"},
+		{[]string{"title", "--type"}, "--type missing value"},
+	}
+	for _, tc := range cases {
+		if err := ticketCreate(issues, "nc", tc.args); err == nil {
+			t.Errorf("%s: expected error, got nil", tc.name)
+		}
+	}
+}
+
 func TestTicketCreate_validType(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
@@ -355,6 +405,17 @@ func TestTicketPrioritize_notFound(t *testing.T) {
 	}
 }
 
+func TestTicketReview_usageError(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketReview(issues, []string{"1"}); err == nil {
+		t.Fatal("expected usage error for < 2 args")
+	}
+	if err := ticketReview(issues, []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+}
+
 func TestTicketReview_ApproveFromUnderReview(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
@@ -453,6 +514,15 @@ func TestTicketReview_RejectsUnknownVerdict(t *testing.T) {
 	}
 	if !errors.Is(err, ErrUnknownVerdict) {
 		t.Errorf("expected ErrUnknownVerdict, got: %v", err)
+	}
+}
+
+// TestTicketReview_badID covers the parseTicketID error path in ticketReview.
+func TestTicketReview_badID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	err := ticketReview(issues, []string{"not-a-valid-number", "approve"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID, got nil")
 	}
 }
 
@@ -681,6 +751,71 @@ func TestTicketAssign_nudgesAgentAndLeavesStatusAlone(t *testing.T) {
 	}
 }
 
+func TestTicketAssign_sendKeysFailureIsNonFatal(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.SetTmuxSession("copper", "ct-prole-copper"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+	id, err := issues.Create("Send keys fail ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	origExists := assignSessionExists
+	origSend := assignSendKeys
+	defer func() {
+		assignSessionExists = origExists
+		assignSendKeys = origSend
+	}()
+	assignSessionExists = func(string) bool { return true }
+	assignSendKeys = func(string, string) error { return fmt.Errorf("tmux error") }
+
+	// Even with sendKeys failure, ticketAssign should return nil (non-fatal nudge).
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+		t.Fatalf("expected no error when sendKeys fails (non-fatal): %v", err)
+	}
+
+	// Ticket should still be assigned.
+	issue, _ := issues.Get(id)
+	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
+		t.Errorf("expected ticket assignee='copper', got %v", issue.Assignee)
+	}
+}
+
+func TestTicketAssign_noTmuxSessionRecorded(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	// Register agent but do NOT set a tmux session — agent.TmuxSession.Valid = false.
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	id, err := issues.Create("Build thing", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sent := withStubSession(t, map[string]bool{})
+
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+		t.Fatalf("ticketAssign: %v", err)
+	}
+
+	// Nudge should be skipped since no session is recorded.
+	if len(*sent) != 0 {
+		t.Errorf("expected 0 sendKeys calls (no session), got %d", len(*sent))
+	}
+
+	// Ticket should still be assigned.
+	issue, _ := issues.Get(id)
+	if !issue.Assignee.Valid || issue.Assignee.String != "copper" {
+		t.Errorf("expected ticket assignee='copper', got %v", issue.Assignee)
+	}
+}
+
 func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
 	issues, agents := setupTicketTestRepos(t)
 
@@ -884,6 +1019,24 @@ func TestTicketUndepend_nonexistentTicket(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "9999") {
 		t.Errorf("error should mention missing ticket id, got: %v", err)
+	}
+}
+
+func TestTicketUndepend_nonexistentFirstTicket(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id1, _ := issues.Create("Real ticket", "task", nil, nil, nil)
+
+	// First arg is nonexistent, second is real — tests issues.Get(id) failure branch.
+	err := ticketUndepend(issues, cfg.TicketPrefix, []string{
+		"9999", fmt.Sprintf("%d", id1),
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent first ticket")
+	}
+	if !strings.Contains(err.Error(), "9999") {
+		t.Errorf("error should mention missing id, got: %v", err)
 	}
 }
 
@@ -1256,5 +1409,630 @@ func TestTicketStatus_InProgress_AgentRowMissing(t *testing.T) {
 	got, _ := issues.Get(id)
 	if got.Status == "in_progress" {
 		t.Error("ticket should not transition to in_progress when agent row is missing")
+	}
+}
+
+// --- ticketShow ---
+
+func TestTicketShow_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, err := issues.Create("Show this ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := ticketShow(issues, "nc", []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketShow: %v", err)
+	}
+}
+
+func TestTicketShow_missingArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketShow(issues, "nc", []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+}
+
+func TestTicketShow_notFound(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketShow(issues, "nc", []string{"9999"}); err == nil {
+		t.Fatal("expected error for nonexistent ticket")
+	}
+}
+
+func TestTicketShow_withAllFields(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	parent, _ := issues.Create("Parent epic", "epic", nil, nil, nil)
+	child, err := issues.Create("Child task", "task", &parent, nil, nil)
+	if err != nil {
+		t.Fatalf("Create child: %v", err)
+	}
+	if err := issues.SetAssignee(child, "iron"); err != nil {
+		t.Fatalf("SetAssignee: %v", err)
+	}
+	if err := ticketShow(issues, "nc", []string{fmt.Sprintf("%d", child)}); err != nil {
+		t.Fatalf("ticketShow with parent: %v", err)
+	}
+}
+
+func TestTicketShow_prefixedID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("Prefixed", "task", nil, nil, nil)
+	if err := ticketShow(issues, "nc", []string{fmt.Sprintf("nc-%d", id)}); err != nil {
+		t.Fatalf("ticketShow with prefix: %v", err)
+	}
+}
+
+// --- ticketList ---
+
+func TestTicketList_empty(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketList(issues, "nc", []string{}); err != nil {
+		t.Fatalf("ticketList empty: %v", err)
+	}
+}
+
+func TestTicketList_withTickets(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("First ticket", "task", nil, nil, nil)
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	issues.Create("Second ticket", "bug", nil, nil, nil)
+
+	if err := ticketList(issues, "nc", []string{}); err != nil {
+		t.Fatalf("ticketList: %v", err)
+	}
+}
+
+func TestTicketList_statusMissingValue(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketList(issues, "nc", []string{"--status"}); err == nil {
+		t.Fatal("expected error for --status with no value")
+	}
+}
+
+func TestTicketList_withStatusFilter(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+	issues.Create("Draft ticket", "task", nil, nil, nil)
+
+	if err := ticketList(issues, "nc", []string{"--status", "open"}); err != nil {
+		t.Fatalf("ticketList --status open: %v", err)
+	}
+}
+
+// --- ticketReady ---
+
+func TestTicketReady_empty(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketReady(issues, "nc"); err != nil {
+		t.Fatalf("ticketReady empty: %v", err)
+	}
+}
+
+func TestTicketReady_withReadyTickets(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("Ready task", "task", nil, nil, nil)
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	if err := ticketReady(issues, "nc"); err != nil {
+		t.Fatalf("ticketReady: %v", err)
+	}
+}
+
+// --- ticketClose ---
+
+func TestTicketClose_happyPath(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	id, err := issues.Create("Close me", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := ticketClose(issues, agents, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketClose: %v", err)
+	}
+
+	got, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get after close: %v", err)
+	}
+	if got.Status != "closed" {
+		t.Errorf("expected status=closed, got %q", got.Status)
+	}
+}
+
+func TestTicketClose_clearsAgentCurrentIssue(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	id, _ := issues.Create("Assigned task", "task", nil, nil, nil)
+	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if err := agents.SetCurrentIssue("iron", &id); err != nil {
+		t.Fatalf("SetCurrentIssue: %v", err)
+	}
+
+	if err := ticketClose(issues, agents, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketClose: %v", err)
+	}
+
+	a, _ := agents.Get("iron")
+	if a.CurrentIssue.Valid {
+		t.Errorf("expected current_issue=NULL after close, got %d", a.CurrentIssue.Int64)
+	}
+}
+
+func TestTicketClose_missingArg(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	if err := ticketClose(issues, agents, []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+}
+
+func TestTicketClose_notFound(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	if err := ticketClose(issues, agents, []string{"9999"}); err == nil {
+		t.Fatal("expected error for nonexistent ticket")
+	}
+}
+
+func TestTicketClose_prefixedID(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	id, _ := issues.Create("Prefix close", "task", nil, nil, nil)
+	if err := ticketClose(issues, agents, []string{fmt.Sprintf("nc-%d", id)}); err != nil {
+		t.Fatalf("ticketClose with prefix: %v", err)
+	}
+}
+
+// --- ticketDelete ---
+
+func TestTicketDelete_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("Delete me", "task", nil, nil, nil)
+	if err := ticketDelete(issues, []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketDelete: %v", err)
+	}
+
+	if _, err := issues.Get(id); err == nil {
+		t.Error("expected error getting deleted ticket, got nil")
+	}
+}
+
+func TestTicketDelete_missingArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	if err := ticketDelete(issues, []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+}
+
+func TestTicketDelete_notFound(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	if err := ticketDelete(issues, []string{"9999"}); err == nil {
+		t.Fatal("expected error for nonexistent ticket")
+	}
+}
+
+func TestTicketDelete_prefixedID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("Prefix delete", "task", nil, nil, nil)
+	if err := ticketDelete(issues, []string{fmt.Sprintf("nc-%d", id)}); err != nil {
+		t.Fatalf("ticketDelete with prefix: %v", err)
+	}
+}
+
+// --- ticketShow with all optional fields ---
+
+func TestTicketShow_withDescription(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("Desc ticket", "task", nil, nil, nil)
+	if err := issues.UpdateDescription(id, "some description"); err != nil {
+		t.Fatalf("UpdateDescription: %v", err)
+	}
+	if err := ticketShow(issues, "nc", []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketShow with description: %v", err)
+	}
+}
+
+func TestTicketShow_withBranchAndPR(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("With branch", "task", nil, nil, nil)
+	// Assign sets the branch
+	if err := issues.Assign(id, "copper", "prole/copper/nc-1"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	// SetPR sets the PR number
+	if err := issues.SetPR(id, 42); err != nil {
+		t.Fatalf("SetPR: %v", err)
+	}
+	if err := ticketShow(issues, "nc", []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketShow with branch+PR: %v", err)
+	}
+}
+
+func TestTicketShow_withRepairReason(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("With repair reason", "task", nil, nil, nil)
+	if err := issues.SetRepairReason(id, "CI failed on lint"); err != nil {
+		t.Fatalf("SetRepairReason: %v", err)
+	}
+	if err := ticketShow(issues, "nc", []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketShow with repair reason: %v", err)
+	}
+}
+
+func TestTicketShow_withDependencies(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id1, _ := issues.Create("Blocker", "task", nil, nil, nil)
+	id2, _ := issues.Create("Blocked", "task", nil, nil, nil)
+	if err := issues.AddDependency(id2, id1); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+	if err := ticketShow(issues, "nc", []string{fmt.Sprintf("%d", id2)}); err != nil {
+		t.Fatalf("ticketShow with deps: %v", err)
+	}
+}
+
+// --- ticketDispatch coverage ---
+
+func TestTicketDispatch_show(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Show dispatch", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"show", fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("dispatch show: %v", err)
+	}
+}
+
+func TestTicketDispatch_list(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketDispatch(issues, agents, cfg, []string{"list"}); err != nil {
+		t.Fatalf("dispatch list: %v", err)
+	}
+}
+
+func TestTicketDispatch_ready(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketDispatch(issues, agents, cfg, []string{"ready"}); err != nil {
+		t.Fatalf("dispatch ready: %v", err)
+	}
+}
+
+func TestTicketDispatch_close(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Close dispatch", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"close", fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("dispatch close: %v", err)
+	}
+}
+
+func TestTicketDispatch_delete(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Delete dispatch", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"delete", fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("dispatch delete: %v", err)
+	}
+}
+
+func TestTicketDispatch_unassign(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Unassign dispatch", "task", nil, nil, nil)
+	issues.SetAssignee(id, "copper")
+	if err := ticketDispatch(issues, agents, cfg, []string{"unassign", fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("dispatch unassign: %v", err)
+	}
+}
+
+func TestTicketDispatch_status(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Status dispatch", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"status", fmt.Sprintf("%d", id), "open"}); err != nil {
+		t.Fatalf("dispatch status: %v", err)
+	}
+}
+
+func TestTicketDispatch_review(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Review dispatch", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "under_review")
+	if err := ticketDispatch(issues, agents, cfg, []string{"review", fmt.Sprintf("%d", id), "approve"}); err != nil {
+		t.Fatalf("dispatch review: %v", err)
+	}
+}
+
+func TestTicketDispatch_describe(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Describe dispatch", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"describe", fmt.Sprintf("%d", id), "description text"}); err != nil {
+		t.Fatalf("dispatch describe: %v", err)
+	}
+}
+
+func TestTicketDispatch_type(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("Type dispatch", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"type", fmt.Sprintf("%d", id), "bug"}); err != nil {
+		t.Fatalf("dispatch type: %v", err)
+	}
+}
+
+func TestTicketDispatch_depend(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id1, _ := issues.Create("A", "task", nil, nil, nil)
+	id2, _ := issues.Create("B", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"depend", fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1)}); err != nil {
+		t.Fatalf("dispatch depend: %v", err)
+	}
+}
+
+func TestTicketDispatch_undepend(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id1, _ := issues.Create("A", "task", nil, nil, nil)
+	id2, _ := issues.Create("B", "task", nil, nil, nil)
+	issues.AddDependency(id2, id1)
+	if err := ticketDispatch(issues, agents, cfg, []string{"undepend", fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1)}); err != nil {
+		t.Fatalf("dispatch undepend: %v", err)
+	}
+}
+
+func TestTicketDispatch_parent(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	parent, _ := issues.Create("Epic", "epic", nil, nil, nil)
+	child, _ := issues.Create("Child", "task", nil, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"parent", fmt.Sprintf("%d", child), fmt.Sprintf("%d", parent)}); err != nil {
+		t.Fatalf("dispatch parent: %v", err)
+	}
+}
+
+func TestTicketDispatch_unparent(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	parent, _ := issues.Create("Epic", "epic", nil, nil, nil)
+	child, _ := issues.Create("Child", "task", &parent, nil, nil)
+	if err := ticketDispatch(issues, agents, cfg, []string{"unparent", fmt.Sprintf("%d", child)}); err != nil {
+		t.Fatalf("dispatch unparent: %v", err)
+	}
+}
+
+func TestTicketDispatch_create(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketDispatch(issues, agents, cfg, []string{"create", "New ticket via dispatch"}); err != nil {
+		t.Fatalf("dispatch create: %v", err)
+	}
+}
+
+// --- ticketDepend error paths ---
+
+func TestTicketDepend_missingArgs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketDepend(issues, "nc", []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+	if err := ticketDepend(issues, "nc", []string{"1"}); err == nil {
+		t.Fatal("expected usage error for 1 arg")
+	}
+}
+
+func TestTicketDepend_nonexistentTicket(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("Exists", "task", nil, nil, nil)
+	// Second ticket (dependsOnID) doesn't exist
+	if err := ticketDepend(issues, "nc", []string{fmt.Sprintf("%d", id), "9999"}); err == nil {
+		t.Fatal("expected error for nonexistent dependsOn ticket")
+	}
+	// First ticket doesn't exist
+	if err := ticketDepend(issues, "nc", []string{"9999", fmt.Sprintf("%d", id)}); err == nil {
+		t.Fatal("expected error for nonexistent ticket")
+	}
+}
+
+// --- ticketAssign error paths ---
+
+func TestTicketAssign_nonexistentTicket(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	// Register the agent so assign.Execute gets past the agent check.
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	sent := withStubSession(t, map[string]bool{})
+
+	// Nonexistent ticket ID — assign.Execute should fail with "getting ticket".
+	err := ticketAssign(cfg, issues, agents, []string{"9999", "copper"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent ticket, got nil")
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge on failure, got %d", len(*sent))
+	}
+}
+
+func TestTicketAssign_missingArgs(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketAssign(cfg, issues, agents, []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+	if err := ticketAssign(cfg, issues, agents, []string{"1"}); err == nil {
+		t.Fatal("expected usage error for 1 arg")
+	}
+}
+
+// --- ticketStatus error paths ---
+
+func TestTicketStatus_missingArgs(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	if err := ticketStatus(issues, agents, []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+	if err := ticketStatus(issues, agents, []string{"1"}); err == nil {
+		t.Fatal("expected usage error for 1 arg")
+	}
+}
+
+// --- ticketParent error paths ---
+
+func TestTicketParent_missingArgs(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketParent(issues, cfg.TicketPrefix, []string{}); err == nil {
+		t.Fatal("expected usage error for 0 args")
+	}
+	if err := ticketParent(issues, cfg.TicketPrefix, []string{"1"}); err == nil {
+		t.Fatal("expected usage error for 1 arg")
+	}
+}
+
+// --- ticketUnparent via dispatch ---
+
+func TestTicketDispatch_unknownCommand(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	if err := ticketDispatch(issues, agents, cfg, []string{"bogus"}); err == nil {
+		t.Fatal("expected error for unknown command, got nil")
+	}
+}
+
+// TestWalkParents_cycleDetected verifies that walkParents returns an error when the
+// parent chain contains a cycle that was created directly (bypassing ticketParent guards).
+func TestWalkParents_cycleDetected(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	a, _ := issues.Create("A", "task", nil, nil, nil)
+	b, _ := issues.Create("B", "task", nil, nil, nil)
+
+	// Create a cycle directly in the DB, bypassing ticketParent's anti-cycle guard.
+	if err := issues.SetParent(a, b); err != nil {
+		t.Fatalf("SetParent(a→b): %v", err)
+	}
+	if err := issues.SetParent(b, a); err != nil {
+		t.Fatalf("SetParent(b→a): %v", err)
+	}
+
+	_, err := walkParents(issues, a)
+	if err == nil {
+		t.Fatal("expected cycle error from walkParents, got nil")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("expected 'cycle' in error, got: %v", err)
+	}
+}
+
+// TestTicketDepend_badFirstArg covers the parseTicketID error path for the first arg.
+func TestTicketDepend_badFirstArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	err := ticketDepend(issues, "nc", []string{"not-a-number", "1"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric first arg")
+	}
+}
+
+// TestTicketDepend_badSecondArg covers the parseTicketID error path for the second arg.
+func TestTicketDepend_badSecondArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	id, _ := issues.Create("task", "task", nil, nil, nil)
+	err := ticketDepend(issues, "nc", []string{fmt.Sprintf("%d", id), "bad-id"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric second arg")
+	}
+}
+
+// TestTicketUndepend_badSecondArg covers the parseTicketID error path for the second arg.
+func TestTicketUndepend_badSecondArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	id, _ := issues.Create("task", "task", nil, nil, nil)
+	err := ticketUndepend(issues, "nc", []string{fmt.Sprintf("%d", id), "bad-id"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric second arg in undepend")
+	}
+}
+
+// TestTicketClose_badID covers the parseTicketID error path in ticketClose.
+func TestTicketClose_badID(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	err := ticketClose(issues, agents, []string{"not-a-number"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID in close")
+	}
+}
+
+// TestTicketUnparent_badID covers the parseTicketID error path in ticketUnparent.
+func TestTicketUnparent_badID(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	err := ticketUnparent(issues, "nc", []string{"not-a-number"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID in unparent")
+	}
+}
+
+// TestTicketParent_badSecondArg covers the parseTicketID error for the second argument.
+func TestTicketParent_badSecondArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	id, _ := issues.Create("task", "task", nil, nil, nil)
+	err := ticketParent(issues, "nc", []string{fmt.Sprintf("%d", id), "bad-id"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric parent ID")
 	}
 }

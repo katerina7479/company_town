@@ -3,6 +3,7 @@ package gtcmd
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -92,6 +93,31 @@ func TestCreateReviewer_success(t *testing.T) {
 	}
 	if !strings.Contains(capturedCfg.Prompt, "robin") {
 		t.Errorf("prompt %q does not mention reviewer name", capturedCfg.Prompt)
+	}
+}
+
+func TestCreateReviewer_sessionCreateFails(t *testing.T) {
+	origCreate := createInteractiveFn
+	origExists := tmuxExistsFn
+	defer func() {
+		createInteractiveFn = origCreate
+		tmuxExistsFn = origExists
+	}()
+
+	createInteractiveFn = func(_ session.AgentSessionConfig) error {
+		return fmt.Errorf("simulated session create failure")
+	}
+	tmuxExistsFn = func(string) bool { return false }
+
+	conn, cfg := newReviewerTestDB(t)
+	agents := repo.NewAgentRepo(conn, nil)
+
+	err := createReviewerWithDeps("jay", cfg, agents)
+	if err == nil {
+		t.Fatal("expected error when session creation fails")
+	}
+	if !strings.Contains(err.Error(), "creating session") {
+		t.Errorf("error should mention 'creating session': %v", err)
 	}
 }
 
