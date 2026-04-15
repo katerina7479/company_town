@@ -186,9 +186,11 @@ var sendKeySleepFn = func() { time.Sleep(150 * time.Millisecond) }
 
 // SendKeys sends keystrokes to a tmux session.
 //
-// It first sends C-c to clear any accumulated input in the pane — this prevents
-// nudge messages from piling up in the input box when the session is detached
-// and prior send-keys calls were never processed (nc-146).
+// It first sends C-u (readline kill-line) to clear any accumulated input in
+// the pane. This prevents nudge messages from piling up in the input box when
+// the session is detached (nc-146). C-u is used instead of C-c because C-c
+// sends SIGINT and can abort a running tool call; C-u only clears the input
+// line (nc-162).
 //
 // The message text and the Enter keystroke are sent as two separate invocations
 // with a brief pause in between. Sending them in a single call looks like a
@@ -200,10 +202,12 @@ func SendKeys(name, keys string) error {
 		return fmt.Errorf("session %s does not exist", name)
 	}
 
-	// Best-effort clear: interrupt any pending input so the message lands on a
-	// clean line. Non-fatal if this fails (e.g., the pane is in a state where
-	// C-c is ignored).
-	_ = tmuxSendExec("send-keys", "-t", name, "C-c")
+	// Best-effort clear: kill the current input line so the message lands on a
+	// clean line. C-u (readline kill-line) erases any buffered text without
+	// sending SIGINT, so it does not interrupt a running tool call. C-c would
+	// abort the current operation in Claude Code — wrong behaviour when the
+	// agent is mid-response (nc-162). Non-fatal if this fails.
+	_ = tmuxSendExec("send-keys", "-t", name, "C-u")
 
 	// Send the message text using the -l (literal) flag so each character is
 	// injected individually rather than interpreted as tmux key names or treated
