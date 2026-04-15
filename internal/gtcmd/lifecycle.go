@@ -21,6 +21,22 @@ var createInteractiveFn func(session.AgentSessionConfig) error = session.CreateI
 var tmuxExistsFn func(string) bool = tmuxExists
 var ensureAgentWorktreeFn func(cfg *config.Config, agentDir string) (string, error) = agentworktree.Ensure
 
+// startDaemonFn launches the daemon in a detached tmux session. Injected in tests.
+var startDaemonFn = func(cfg *config.Config) error {
+	sessionName := session.SessionName("daemon")
+	cmd := exec.Command("tmux", "new-session",
+		"-d",
+		"-s", sessionName,
+		"-c", cfg.ProjectRoot,
+		"ct daemon",
+	)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	_ = session.ApplyStatusBar(sessionName, "daemon")
+	return nil
+}
+
 // Start launches a named agent in a tmux session.
 func Start(args []string) error {
 	if len(args) < 1 {
@@ -104,6 +120,36 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 				return fmt.Errorf("registering %s: %w", name, regErr)
 			}
 		}
+
+	case name == "daemon":
+		sessionName := session.SessionName("daemon")
+
+		if tmuxExistsFn(sessionName) {
+			fmt.Printf("daemon is already running (session: %s)\n", sessionName)
+			return nil
+		}
+
+		// Register or upsert the daemon agent row.
+		if _, err := agents.Get("daemon"); err != nil {
+			if regErr := agents.Register("daemon", "daemon", nil); regErr != nil {
+				return fmt.Errorf("registering daemon: %w", regErr)
+			}
+		}
+
+		if err := agents.SetTmuxSession("daemon", sessionName); err != nil {
+			return fmt.Errorf("recording tmux session for daemon: %w", err)
+		}
+
+		if err := startDaemonFn(cfg); err != nil {
+			return fmt.Errorf("starting daemon: %w", err)
+		}
+
+		if err := agents.UpdateStatus("daemon", "working"); err != nil {
+			return fmt.Errorf("updating daemon status: %w", err)
+		}
+
+		fmt.Printf("Started daemon (session: %s)\n", sessionName)
+		return nil
 
 	default:
 		return fmt.Errorf("unknown agent: %s", name)
