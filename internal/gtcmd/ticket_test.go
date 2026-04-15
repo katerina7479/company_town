@@ -1,6 +1,7 @@
 package gtcmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -138,8 +139,8 @@ func TestTicketCreate_missingTitle(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when title is missing")
 	}
-	if !strings.Contains(err.Error(), "title is required") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrTitleRequired) {
+		t.Errorf("expected ErrTitleRequired, got: %v", err)
 	}
 }
 
@@ -150,8 +151,8 @@ func TestTicketCreate_multiplePositionals(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when multiple positional args are supplied")
 	}
-	if !strings.Contains(err.Error(), "expected one title") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrExpectedOneTitle) {
+		t.Errorf("expected ErrExpectedOneTitle, got: %v", err)
 	}
 }
 
@@ -162,8 +163,8 @@ func TestTicketCreate_unknownFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown flag")
 	}
-	if !strings.Contains(err.Error(), "unknown flag") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrUnknownFlag) {
+		t.Errorf("expected ErrUnknownFlag, got: %v", err)
 	}
 }
 
@@ -174,8 +175,8 @@ func TestTicketCreate_descriptionMissingValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when --description has no value")
 	}
-	if !strings.Contains(err.Error(), "--description requires a value") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrDescriptionRequired) {
+		t.Errorf("expected ErrDescriptionRequired, got: %v", err)
 	}
 }
 
@@ -186,8 +187,8 @@ func TestTicketCreate_invalidType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid --type, got nil")
 	}
-	if !strings.Contains(err.Error(), "invalid type") {
-		t.Errorf("expected 'invalid type' error, got: %v", err)
+	if !errors.Is(err, ErrInvalidType) {
+		t.Errorf("expected ErrInvalidType, got: %v", err)
 	}
 	// No ticket should have been created.
 	all, _ := issues.List("open")
@@ -429,8 +430,8 @@ func TestTicketReview_RejectsNonUnderReview(t *testing.T) {
 		err := ticketReview(issues, []string{fmt.Sprintf("%d", id), "approve"})
 		if err == nil {
 			t.Errorf("status %q: expected error, got nil", status)
-		} else if !strings.Contains(err.Error(), "not under_review") {
-			t.Errorf("status %q: unexpected error: %v", status, err)
+		} else if !errors.Is(err, ErrNotUnderReview) {
+			t.Errorf("status %q: expected ErrNotUnderReview, got: %v", status, err)
 		}
 	}
 }
@@ -450,8 +451,8 @@ func TestTicketReview_RejectsUnknownVerdict(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown verdict, got nil")
 	}
-	if !strings.Contains(err.Error(), "unknown verdict") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrUnknownVerdict) {
+		t.Errorf("expected ErrUnknownVerdict, got: %v", err)
 	}
 }
 
@@ -1138,8 +1139,8 @@ func TestTicketStatus_InProgress_NoAssignee_Errors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unassigned ticket, got nil")
 	}
-	if !strings.Contains(err.Error(), "no assignee") {
-		t.Errorf("error should mention 'no assignee', got: %v", err)
+	if !errors.Is(err, ErrNoAssignee) {
+		t.Errorf("expected ErrNoAssignee, got: %v", err)
 	}
 	// Ticket must remain in its original state — transition must not have applied.
 	got, _ := issues.Get(id)

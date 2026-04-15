@@ -120,25 +120,16 @@ func roleWorkflow(cfg *config.Config, name string) *config.WorkflowConfig {
 	return ac.Workflow
 }
 
-// roleAgentConfig returns the AgentConfig for the named agent. Top-level
-// roles take precedence; artisan specialties are checked by specialty field.
-// Returns nil if not found.
+// roleAgentConfig returns the AgentConfig for the named agent. The registry is
+// consulted first for named roles; artisan specialties are checked by name;
+// any unrecognised name is treated as a prole. Returns nil if not found.
 func roleAgentConfig(cfg *config.Config, name string) *config.AgentConfig {
-	// Look up the agent's specialty from the agents table to match artisans.
-	// We cannot query the DB here (no conn in scope), so we fall back to
-	// name-matching against the artisan map, which is keyed by specialty.
-	switch name {
-	case "mayor":
-		ac := cfg.Agents.Mayor
-		return &ac
-	case "architect":
-		ac := cfg.Agents.Architect
-		return &ac
-	case "reviewer":
-		ac := cfg.Agents.Reviewer
+	// Named roles (architect, reviewer, mayor) are in the registry.
+	if spec, ok := agentRegistry[name]; ok && spec.configFor != nil {
+		ac := spec.configFor(cfg)
 		return &ac
 	}
-	// Check artisan specialties by name — artisan agents are named after their specialty.
+	// Artisan agents are named after their specialty and appear in the artisan map.
 	if ac, ok := cfg.Agents.Artisan[name]; ok {
 		return &ac
 	}

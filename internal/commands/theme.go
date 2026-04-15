@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/katerina7479/company_town/internal/repo"
 )
 
 // StyleTheme holds all lipgloss styles used by the dashboard. Keeping them in
@@ -63,18 +65,18 @@ func DefaultTheme() StyleTheme {
 			"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")), // yellow
 			"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")), // red
 			// Ticket statuses
-			"draft":          lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
-			"open":           lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
-			"in_progress":    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
-			"ci_running":     lipgloss.NewStyle().Foreground(lipgloss.Color("12")),  // bright blue — CI gating
-			"in_review":      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
-			"under_review":   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
-			"pr_open":        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
-			"reviewed":       lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
-			"repairing":      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
-			"on_hold":        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
-			"merge_conflict": lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution
-			"closed":         lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray
+			repo.StatusDraft:         lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
+			repo.StatusOpen:          lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
+			repo.StatusInProgress:    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
+			repo.StatusCIRunning:     lipgloss.NewStyle().Foreground(lipgloss.Color("12")),  // bright blue — CI gating
+			repo.StatusInReview:      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
+			repo.StatusUnderReview:   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
+			repo.StatusPROpen:        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
+			repo.StatusReviewed:      lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
+			repo.StatusRepairing:     lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
+			repo.StatusOnHold:        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
+			repo.StatusMergeConflict: lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution
+			repo.StatusClosed:        lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray
 		},
 	}
 }

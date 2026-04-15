@@ -385,7 +385,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				flat := m.flatTickets()
 				if len(flat) > 0 {
 					node := flat[m.ticketCursor].node
-					if node.Status != "repairing" && node.Status != "merge_conflict" && node.Status != "on_hold" {
+					if node.Status != repo.StatusRepairing && node.Status != repo.StatusMergeConflict && node.Status != repo.StatusOnHold {
 						m.statusMsg = fmt.Sprintf("repair_reason only valid for repairing/merge_conflict/on_hold (current: %s)", node.Status)
 					} else {
 						m.inputMode = true
@@ -785,7 +785,7 @@ func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
 		}
 	}
 
-	isStale := node.Status == "closed" && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
+	isStale := node.Status == repo.StatusClosed && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
 	if isStale && len(children) == 0 {
 		return nil
 	}

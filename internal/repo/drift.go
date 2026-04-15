@@ -56,7 +56,7 @@ func CheckDrift(agents *AgentRepo, issues *IssueRepo, prefix string) ([]DriftEnt
 		}
 
 		// Category (b): working agent whose ticket is closed.
-		if issue.Status == "closed" {
+		if issue.Status == StatusClosed {
 			entries = append(entries, DriftEntry{
 				AgentName: a.Name,
 				Reason:    fmt.Sprintf("%s is working on %s but ticket is closed — run 'gt agent release'", a.Name, ticketRef),

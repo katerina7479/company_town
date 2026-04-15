@@ -2,6 +2,7 @@ package gtcmd
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
@@ -41,8 +42,8 @@ func TestCreateReviewer_sessionAlreadyExists(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when session already exists")
 	}
-	if !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, ErrSessionAlreadyExists) {
+		t.Errorf("expected ErrSessionAlreadyExists, got: %v", err)
 	}
 }
 
