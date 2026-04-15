@@ -51,7 +51,11 @@ func main() {
 			}
 			return commands.Stop(clean)
 		case "nuke":
-			return commands.Nuke()
+			target := ""
+			if len(args) > 0 {
+				target = args[0]
+			}
+			return commands.Nuke(target)
 		case "architect":
 			if len(args) > 0 && args[0] == "stop" {
 				return commands.ArchitectStop()
@@ -106,7 +110,8 @@ Commands:
   stop [--clean]      Graceful shutdown with handoffs (--clean removes prole
                       worktrees immediately after signalling — does NOT wait
                       for agents to exit, so in-flight commits may be lost)
-  nuke                Immediate shutdown, no handoffs
+  nuke [target]       Immediate shutdown, no handoffs (target: daemon, architect,
+                      mayor, reviewer, prole-<name>, artisan-<specialty>, bare)
   architect           Start the Architect agent
   architect stop      Signal Architect to write handoff and exit
   artisan <specialty> Start an Artisan agent for the given specialty

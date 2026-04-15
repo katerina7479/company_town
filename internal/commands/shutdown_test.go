@@ -270,7 +270,7 @@ func TestNukeCore_killsDaemonSession(t *testing.T) {
 	removeAll := func(string) error { return nil }
 	worktreePrune := func(string) error { return nil }
 
-	nukeCore([]string{"ct-daemon"}, t.TempDir(), killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-daemon"}, t.TempDir(), "", killFn, updateStatus, removeAll, worktreePrune)
 
 	if len(killed) != 1 || killed[0] != "ct-daemon" {
 		t.Errorf("expected daemon session killed, got %v", killed)
@@ -287,7 +287,7 @@ func TestNukeCore_marksDaemonDeadAfterKill(t *testing.T) {
 	removeAll := func(string) error { return nil }
 	worktreePrune := func(string) error { return nil }
 
-	nukeCore([]string{"ct-daemon"}, t.TempDir(), killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-daemon"}, t.TempDir(), "", killFn, updateStatus, removeAll, worktreePrune)
 
 	if updated["daemon"] != "dead" {
 		t.Errorf("expected daemon status set to 'dead', got %q", updated["daemon"])
@@ -304,7 +304,7 @@ func TestNukeCore_updatesStatusForAllSessions(t *testing.T) {
 	removeAll := func(string) error { return nil }
 	worktreePrune := func(string) error { return nil }
 
-	nukeCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), "", killFn, updateStatus, removeAll, worktreePrune)
 
 	for _, name := range []string{"daemon", "mayor", "prole-copper"} {
 		if updated[name] != "dead" {
@@ -323,7 +323,7 @@ func TestNukeCore_nilUpdateStatusWhenDBUnavailable(t *testing.T) {
 	worktreePrune := func(string) error { return nil }
 
 	// nil updateStatus simulates DB unavailable — must not panic
-	nukeCore([]string{"ct-daemon", "ct-mayor"}, t.TempDir(), killFn, nil, removeAll, worktreePrune)
+	nukeCore([]string{"ct-daemon", "ct-mayor"}, t.TempDir(), "", killFn, nil, removeAll, worktreePrune)
 
 	if len(killed) != 2 {
 		t.Errorf("expected 2 kills, got %v", killed)
@@ -343,7 +343,7 @@ func TestNukeCore_removesWorktreeDirsForProles(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	nukeCore([]string{"ct-prole-copper", "ct-prole-iron"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-prole-copper", "ct-prole-iron"}, ctDir, "", killFn, updateStatus, removeAll, worktreePrune)
 
 	// Expect copper worktree + iron worktree + bare clone = 3 removals.
 	expectedCopper := filepath.Join(ctDir, "proles", "copper")
@@ -382,7 +382,7 @@ func TestNukeCore_removesAgentWorktreesOnNuke(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	nukeCore([]string{"ct-daemon", "ct-mayor"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-daemon", "ct-mayor"}, ctDir, "", killFn, updateStatus, removeAll, worktreePrune)
 
 	// daemon has no worktree — mayor does.
 	expectedMayor := filepath.Join(ctDir, "agents", "mayor", "worktree")
@@ -408,7 +408,7 @@ func TestNukeCore_removesBarecloneAfterKillingProles(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	nukeCore([]string{"ct-prole-copper"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-prole-copper"}, ctDir, "", killFn, updateStatus, removeAll, worktreePrune)
 
 	expectedRepo := filepath.Join(ctDir, "repo.git")
 	found := map[string]bool{}
@@ -433,12 +433,144 @@ func TestNukeCore_doesNotRemoveWorktreeWhenKillFails(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	nukeCore([]string{"ct-prole-copper"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
+	nukeCore([]string{"ct-prole-copper"}, ctDir, "", killFn, updateStatus, removeAll, worktreePrune)
 
 	if len(removed) != 0 {
 		t.Errorf("expected no removal when kill failed, got %v", removed)
 	}
 	if len(pruned) != 0 {
 		t.Errorf("expected no prune when kill failed, got %v", pruned)
+	}
+}
+
+// --- targeted nukeCore tests ---
+
+func TestNukeCore_targetedProle_killsOnlyThatSession(t *testing.T) {
+	ctDir := t.TempDir()
+
+	killed := []string{}
+	killFn := func(s string) error { killed = append(killed, s); return nil }
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error { updated[name] = status; return nil }
+	removed := []string{}
+	removeAll := func(p string) error { removed = append(removed, p); return nil }
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	sessions := []string{"ct-prole-copper", "ct-prole-iron", "ct-architect"}
+	nukeCore(sessions, ctDir, "prole-copper", killFn, updateStatus, removeAll, worktreePrune)
+
+	if len(killed) != 1 || killed[0] != "ct-prole-copper" {
+		t.Errorf("expected only ct-prole-copper killed, got %v", killed)
+	}
+	if updated["prole-copper"] != "dead" {
+		t.Errorf("expected prole-copper status=dead, got %q", updated["prole-copper"])
+	}
+	if updated["prole-iron"] != "" || updated["architect"] != "" {
+		t.Errorf("targeted nuke must not touch other agents, got %v", updated)
+	}
+}
+
+func TestNukeCore_targetedProle_removesWorktreeButNotBareClone(t *testing.T) {
+	ctDir := t.TempDir()
+
+	killFn := func(s string) error { return nil }
+	updateStatus := func(name, status string) error { return nil }
+	removed := []string{}
+	removeAll := func(p string) error { removed = append(removed, p); return nil }
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	sessions := []string{"ct-prole-copper", "ct-prole-iron"}
+	nukeCore(sessions, ctDir, "prole-copper", killFn, updateStatus, removeAll, worktreePrune)
+
+	expectedWorktree := filepath.Join(ctDir, "proles", "copper")
+	unexpectedBare := filepath.Join(ctDir, "repo.git")
+	found := map[string]bool{}
+	for _, p := range removed {
+		found[p] = true
+	}
+	if !found[expectedWorktree] {
+		t.Errorf("expected copper worktree removed, got %v", removed)
+	}
+	if found[unexpectedBare] {
+		t.Errorf("targeted nuke must not remove bare clone (shared by other proles), got %v", removed)
+	}
+	if len(pruned) != 1 {
+		t.Errorf("expected worktree prune called once after targeted nuke, got %v", pruned)
+	}
+}
+
+func TestNukeCore_targetedProle_missingSession_isNoop(t *testing.T) {
+	ctDir := t.TempDir()
+
+	killed := []string{}
+	killFn := func(s string) error { killed = append(killed, s); return nil }
+	updateStatus := func(name, status string) error { return nil }
+	removed := []string{}
+	removeAll := func(p string) error { removed = append(removed, p); return nil }
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	// "tin" is not in the running sessions list.
+	nukeCore([]string{"ct-prole-copper"}, ctDir, "prole-tin", killFn, updateStatus, removeAll, worktreePrune)
+
+	if len(killed) != 0 {
+		t.Errorf("expected no kills for absent target, got %v", killed)
+	}
+	if len(removed) != 0 {
+		t.Errorf("expected no removals for absent target, got %v", removed)
+	}
+}
+
+func TestNukeCore_targetedBare_removesOnlyBareClone(t *testing.T) {
+	ctDir := t.TempDir()
+
+	killed := []string{}
+	killFn := func(s string) error { killed = append(killed, s); return nil }
+	removed := []string{}
+	removeAll := func(p string) error { removed = append(removed, p); return nil }
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	// sessions passed but should be ignored for target=="bare"
+	nukeCore([]string{"ct-prole-copper"}, ctDir, "bare", killFn, nil, removeAll, worktreePrune)
+
+	if len(killed) != 0 {
+		t.Errorf("bare target must not kill sessions, got %v", killed)
+	}
+	expectedBare := filepath.Join(ctDir, "repo.git")
+	if len(removed) != 1 || removed[0] != expectedBare {
+		t.Errorf("expected only bare clone removed, got %v", removed)
+	}
+	if len(pruned) != 0 {
+		t.Errorf("bare target must not run worktree prune, got %v", pruned)
+	}
+}
+
+func TestNukeCore_targetedAgent_removesWorktreeButNotBareClone(t *testing.T) {
+	ctDir := t.TempDir()
+
+	killFn := func(s string) error { return nil }
+	updateStatus := func(name, status string) error { return nil }
+	removed := []string{}
+	removeAll := func(p string) error { removed = append(removed, p); return nil }
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	sessions := []string{"ct-architect", "ct-mayor"}
+	nukeCore(sessions, ctDir, "architect", killFn, updateStatus, removeAll, worktreePrune)
+
+	expectedWorktree := filepath.Join(ctDir, "agents", "architect", "worktree")
+	unexpectedBare := filepath.Join(ctDir, "repo.git")
+	found := map[string]bool{}
+	for _, p := range removed {
+		found[p] = true
+	}
+	if !found[expectedWorktree] {
+		t.Errorf("expected architect worktree removed, got %v", removed)
+	}
+	if found[unexpectedBare] {
+		t.Errorf("targeted agent nuke must not remove bare clone, got %v", removed)
 	}
 }
