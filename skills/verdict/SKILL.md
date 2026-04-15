@@ -11,7 +11,23 @@ Atomic verdict submission. Prevents the failure mode of leaving the ticket in `u
 - You have the PR number and ticket ID.
 - Your review body is ready (draft it before running this skill — do not compose it inline in the command).
 
-## Step 1 — Write the review body to a temp file
+## Step 1 — File any follow-ups you noticed
+
+Before writing the review body, scan your review notes for anything **out of scope** — neighbouring dead code, thin tests for adjacent behaviour, TODO/FIXME/XXX markers, a small refactor that would make the next ticket easier, a bug one file over. File each as its own ticket now so you can cite it in the review body.
+
+```bash
+gt ticket create "<short imperative title>" \
+  --type <bug|refactor|task> \
+  --parent <reviewing-ticket-id> \
+  --priority <P2|P3> \
+  --description "Noticed while reviewing <PREFIX-ID>. <What + where + why>. Files: path/to/file.go:LINE."
+```
+
+See the **File Follow-Ups** section of your CLAUDE.md for the full guidance on when to file vs. block. If you filed nothing, that's fine — but pause and actually ask yourself before moving on. The architect would rather triage five mediocre follow-ups than miss one good one.
+
+Record the IDs of any filed follow-ups (e.g. `NC-201`, `NC-202`); you will cite them in Step 2.
+
+## Step 2 — Write the review body to a temp file
 
 ```bash
 cat > /tmp/review-<pr_number>.md << 'EOF'
@@ -33,10 +49,13 @@ For changes requested — use the format from your CLAUDE.md Review Comment Form
 - `path/to/file.go:42` — <one-line fix required>
 - `path/to/other.go:17` — <one-line fix required>
 
-[non-blocking] <optional note, max 2>
+[non-blocking] Filed NC-201 for the missing prole_test.go edge case.
+[non-blocking] Filed NC-202 for the TODO on dashboard.go:442.
 ```
 
-## Step 2 — Post the GitHub comment
+Cite every follow-up you filed in Step 1 as a `[non-blocking]` line so the PR author sees what you punted.
+
+## Step 3 — Post the GitHub comment
 
 ```bash
 gh pr review <pr_number> --comment --body-file /tmp/review-<pr_number>.md
@@ -52,7 +71,7 @@ gh pr view <pr_number> --comments
 
 The last comment should show your review body.
 
-## Step 3 — Submit the ticket verdict
+## Step 4 — Submit the ticket verdict
 
 **If approving:**
 
@@ -70,7 +89,7 @@ gt ticket review <ticket-id> request-changes
 
 This moves the ticket to `repairing` and notifies the prole.
 
-## Step 4 — Verify the ticket transitioned
+## Step 5 — Verify the ticket transitioned
 
 ```bash
 gt ticket show <ticket-id>
@@ -78,7 +97,7 @@ gt ticket show <ticket-id>
 
 Header must show `[pr_open]` (approve) or `[repairing]` (request-changes). If the status is still `under_review`, the transition failed — fix it before going idle.
 
-## Step 5 — Clean up
+## Step 6 — Clean up
 
 Remove the temp review file and the PR inspection worktree:
 
@@ -90,10 +109,10 @@ ct reviewer inspect --clean
 `ct reviewer inspect --clean` is idempotent — safe to run even if the worktree
 was already cleaned up or `/claim-review` exited early.
 
-## Step 6 — Go idle
+## Step 7 — Go idle
 
 ```bash
 gt agent status reviewer idle
 ```
 
-**Key ordering invariant:** Write body → post comment → verify comment → submit verdict → verify ticket → clean up → idle. Never go idle before the ticket status is confirmed. Never leave a `working` reviewer status behind.
+**Key ordering invariant:** File follow-ups → write body → post comment → verify comment → submit verdict → verify ticket → clean up → idle. Never go idle before the ticket status is confirmed. Never leave a `working` reviewer status behind.
