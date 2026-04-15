@@ -12,20 +12,20 @@ import (
 
 // reviewerTestCfg returns a config pointing at a temp dir with a fake bare
 // repo directory so reviewerInspectCore/reviewerInspectCleanCore can locate it.
-func reviewerTestCfg(t *testing.T) (*config.Config, string) {
+func reviewerTestCfg(t *testing.T) *config.Config {
 	t.Helper()
 	root := t.TempDir()
 	bareDir := filepath.Join(root, ".company_town", "repo.git")
-	if err := os.MkdirAll(bareDir, 0755); err != nil {
+	if err := os.MkdirAll(bareDir, 0750); err != nil {
 		t.Fatalf("creating fake bare dir: %v", err)
 	}
-	return &config.Config{ProjectRoot: root}, bareDir
+	return &config.Config{ProjectRoot: root}
 }
 
 // TestReviewerInspect_createsWorktree verifies that reviewerInspectCore calls
 // gitWorktreeAddFn with the correct path and ref.
 func TestReviewerInspect_createsWorktree(t *testing.T) {
-	cfg, _ := reviewerTestCfg(t)
+	cfg := reviewerTestCfg(t)
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
@@ -69,11 +69,11 @@ func TestReviewerInspect_createsWorktree(t *testing.T) {
 // TestReviewerInspect_removesExistingPathFirst verifies that if pr-worktree
 // already exists, gitWorktreeRemoveFn is called before gitWorktreeAddFn.
 func TestReviewerInspect_removesExistingPathFirst(t *testing.T) {
-	cfg, _ := reviewerTestCfg(t)
+	cfg := reviewerTestCfg(t)
 
 	// Pre-create the worktree path to simulate a stale prior review.
 	wtPath := prWorktreePath(cfg)
-	if err := os.MkdirAll(wtPath, 0755); err != nil {
+	if err := os.MkdirAll(wtPath, 0750); err != nil {
 		t.Fatalf("pre-creating worktree path: %v", err)
 	}
 
@@ -109,7 +109,7 @@ func TestReviewerInspect_removesExistingPathFirst(t *testing.T) {
 // TestReviewerInspect_ghFailurePropagates verifies that a gh CLI error surfaces
 // with a wrapped "looking up PR branch" context.
 func TestReviewerInspect_ghFailurePropagates(t *testing.T) {
-	cfg, _ := reviewerTestCfg(t)
+	cfg := reviewerTestCfg(t)
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
@@ -129,7 +129,7 @@ func TestReviewerInspect_ghFailurePropagates(t *testing.T) {
 // TestReviewerInspect_gitAddFailurePropagates verifies that a git worktree add
 // error reaches the caller.
 func TestReviewerInspect_gitAddFailurePropagates(t *testing.T) {
-	cfg, _ := reviewerTestCfg(t)
+	cfg := reviewerTestCfg(t)
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
@@ -154,7 +154,7 @@ func TestReviewerInspect_gitAddFailurePropagates(t *testing.T) {
 // TestReviewerInspectClean_absent_isNoop verifies that Clean returns nil and
 // does NOT call gitWorktreeRemoveFn when the pr-worktree directory is absent.
 func TestReviewerInspectClean_absent_isNoop(t *testing.T) {
-	cfg, _ := reviewerTestCfg(t)
+	cfg := reviewerTestCfg(t)
 
 	removed := false
 	oldRemove := gitWorktreeRemoveFn
@@ -175,10 +175,10 @@ func TestReviewerInspectClean_absent_isNoop(t *testing.T) {
 // TestReviewerInspectClean_presentWorktree_removes verifies that Clean calls
 // gitWorktreeRemoveFn with the correct path when the worktree exists.
 func TestReviewerInspectClean_presentWorktree_removes(t *testing.T) {
-	cfg, _ := reviewerTestCfg(t)
+	cfg := reviewerTestCfg(t)
 
 	wtPath := prWorktreePath(cfg)
-	if err := os.MkdirAll(wtPath, 0755); err != nil {
+	if err := os.MkdirAll(wtPath, 0750); err != nil {
 		t.Fatalf("pre-creating worktree: %v", err)
 	}
 
@@ -201,10 +201,10 @@ func TestReviewerInspectClean_presentWorktree_removes(t *testing.T) {
 // TestReviewerInspectClean_gitRemoveFails_fallsBackToRemoveAll verifies that
 // when gitWorktreeRemoveFn errors, the directory is cleaned up via os.RemoveAll.
 func TestReviewerInspectClean_gitRemoveFails_fallsBackToRemoveAll(t *testing.T) {
-	cfg, _ := reviewerTestCfg(t)
+	cfg := reviewerTestCfg(t)
 
 	wtPath := prWorktreePath(cfg)
-	if err := os.MkdirAll(wtPath, 0755); err != nil {
+	if err := os.MkdirAll(wtPath, 0750); err != nil {
 		t.Fatalf("pre-creating worktree: %v", err)
 	}
 
