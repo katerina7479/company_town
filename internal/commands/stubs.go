@@ -478,12 +478,22 @@ func Nuke(target string) error {
 		defer conn.Close()
 	}
 
-	nukeCore(sessions, ctDir, target, session.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
+	killed := nukeCore(sessions, ctDir, target, session.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
 
-	if target != "" {
+	switch {
+	case target == "":
+		if killed > 0 {
+			fmt.Println("\nAll sessions killed.")
+		}
+	case killed == 0:
+		// nukeCore already printed "no running session for target %q" — don't
+		// add a misleading follow-up.
+	case killed == 1:
 		fmt.Printf("\n%s killed.\n", target)
-	} else {
-		fmt.Println("\nAll sessions killed.")
+	default:
+		// Unreachable for named targets (nukeCore filters to at most one session
+		// matching the exact name), but print a safe summary instead of a lie.
+		fmt.Printf("\n%d sessions matching %q killed.\n", killed, target)
 	}
 	return nil
 }
@@ -499,7 +509,9 @@ func Nuke(target string) error {
 //     whose name is ct-<target>, remove its worktree, and run git worktree prune.
 //     The bare clone is NOT removed in single-target mode (it is shared by all
 //     proles; removing it while other proles are running would break them).
-func nukeCore(sessions []string, ctDir string, target string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) {
+// nukeCore returns the number of sessions actually killed. The caller uses
+// this to decide whether to print a "killed" summary line.
+func nukeCore(sessions []string, ctDir string, target string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) int {
 	// "bare" target: remove only the bare clone, no sessions to kill.
 	if target == "bare" {
 		repoGit := filepath.Join(ctDir, "repo.git")
@@ -508,7 +520,7 @@ func nukeCore(sessions []string, ctDir string, target string, killFn func(string
 		} else {
 			fmt.Printf("  removed bare clone: %s\n", repoGit)
 		}
-		return
+		return 0
 	}
 
 	// Named target: restrict to the single matching session.
@@ -529,12 +541,14 @@ func nukeCore(sessions []string, ctDir string, target string, killFn func(string
 	fullTeardown := target == ""
 
 	var cleanedAny bool
+	killedCount := 0
 	for _, s := range sessions {
 		agentName := s[len(session.SessionPrefix):]
 		if err := killFn(s); err != nil {
 			fmt.Printf("  error killing %s: %v\n", s, err)
 		} else {
 			fmt.Printf("  killed: %s\n", s)
+			killedCount++
 
 			var worktreeDir string
 			switch {
@@ -575,6 +589,7 @@ func nukeCore(sessions []string, ctDir string, target string, killFn func(string
 			}
 		}
 	}
+	return killedCount
 }
 
 // agentWorktreePath returns the worktree directory for a named non-prole agent,
