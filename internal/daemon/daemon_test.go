@@ -2510,7 +2510,7 @@ func TestHandlePRConflict_noSpam(t *testing.T) {
 	}
 }
 
-func TestHandlePRConflictResolved_movesMergeConflictToPROpen(t *testing.T) {
+func TestHandlePRConflictResolved_passingCI_movesMergeConflictToPROpen(t *testing.T) {
 	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
@@ -2518,11 +2518,27 @@ func TestHandlePRConflictResolved_movesMergeConflictToPROpen(t *testing.T) {
 	issues.SetPR(id, 77)
 
 	issue, _ := issues.Get(id)
-	d.handlePRConflictResolved(issue, 77)
+	d.handlePRConflictResolved(issue, 77, "passing")
 
 	updated, _ := issues.Get(id)
 	if updated.Status != "pr_open" {
-		t.Errorf("expected status=pr_open, got %q", updated.Status)
+		t.Errorf("expected status=pr_open when checks=passing, got %q", updated.Status)
+	}
+}
+
+func TestHandlePRConflictResolved_pendingCI_movesMergeConflictToCIRunning(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 78)
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflictResolved(issue, 78, "pending")
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "ci_running" {
+		t.Errorf("expected status=ci_running when checks=pending, got %q", updated.Status)
 	}
 }
 
@@ -2552,7 +2568,7 @@ func TestHandlePREvents_conflictingOpenPR_movesToMergeConflict(t *testing.T) {
 	}
 }
 
-func TestHandlePREvents_mergeableAfterConflict_movesToPROpen(t *testing.T) {
+func TestHandlePREvents_mergeableAfterConflict_passingCI_movesToPROpen(t *testing.T) {
 	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
@@ -2567,7 +2583,28 @@ func TestHandlePREvents_mergeableAfterConflict_movesToPROpen(t *testing.T) {
 
 	updated, _ := issues.Get(id)
 	if updated.Status != "pr_open" {
-		t.Errorf("expected status=pr_open after conflict resolved, got %q", updated.Status)
+		t.Errorf("expected status=pr_open when checks=passing after conflict resolved, got %q", updated.Status)
+	}
+}
+
+func TestHandlePREvents_mergeableAfterConflict_pendingCI_movesToCIRunning(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 100)
+
+	// Simulates the common case: conflict is resolved, a new commit is pushed,
+	// and CI re-triggers — GitHub returns MERGEABLE + pending checks.
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "MERGEABLE", "pending", nil, false, nil
+	}
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "ci_running" {
+		t.Errorf("expected status=ci_running when checks=pending after conflict resolved, got %q", updated.Status)
 	}
 }
 
