@@ -139,8 +139,10 @@ func (r *IssueRepo) List(status string) ([]*Issue, error) {
 // UpdateStatus changes an issue's status. When transitioning to "repairing",
 // repair_cycle_count is incremented atomically so the daemon can detect
 // tickets that have bounced too many times and escalate them. When
-// transitioning out of "repairing" or "merge_conflict", repair_reason is
-// cleared so stale messages don't linger on recovered tickets.
+// transitioning to "open", repair_cycle_count is reset to 0 so a human
+// unblocking an on_hold ticket gets a fresh slate. When transitioning out of
+// "repairing" or "merge_conflict", repair_reason is cleared so stale messages
+// don't linger on recovered tickets.
 func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	var oldStatus string
 	if r.events != nil {
@@ -158,6 +160,13 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	case "repairing":
 		result, err = r.db.Exec(
 			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = repair_cycle_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			status, closedAt, id,
+		)
+	case "open":
+		// Human unblock: reset repair_cycle_count so the ticket gets a fresh
+		// slate. Also clear repair_reason in case it was on_hold.
+		result, err = r.db.Exec(
+			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = 0, repair_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			status, closedAt, id,
 		)
 	case "in_progress", "ci_running", "in_review", "under_review", "pr_open", "closed", "on_hold":

@@ -1589,3 +1589,84 @@ func TestIssueRepo_UpdateStatus_preservesRepairReasonOnRepairingTransition(t *te
 			got.RepairReason.Valid, got.RepairReason.String)
 	}
 }
+
+// TestUpdateStatus_openResetsRepairCycleCount verifies that transitioning to
+// "open" resets repair_cycle_count to 0. This is the human-unblock path:
+// when a human moves an on_hold ticket back to open, the bounce counter is
+// cleared so the ticket gets a fresh slate.
+func TestUpdateStatus_openResetsRepairCycleCount(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id, _ := r.Create("Bouncy ticket", "task", nil, nil, nil)
+
+	// Accumulate some repair cycles.
+	r.UpdateStatus(id, "repairing") //nolint:errcheck
+	r.UpdateStatus(id, "repairing") //nolint:errcheck
+	r.UpdateStatus(id, "on_hold")   //nolint:errcheck
+
+	got, _ := r.Get(id)
+	if got.RepairCycleCount != 2 {
+		t.Fatalf("precondition: expected repair_cycle_count=2, got %d", got.RepairCycleCount)
+	}
+
+	// Human unblocks by moving back to open — count must reset.
+	if err := r.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus to open: %v", err)
+	}
+
+	got, _ = r.Get(id)
+	if got.RepairCycleCount != 0 {
+		t.Errorf("expected repair_cycle_count=0 after open, got %d", got.RepairCycleCount)
+	}
+	if got.Status != "open" {
+		t.Errorf("expected status=open, got %q", got.Status)
+	}
+}
+
+// TestUpdateStatus_openClearsRepairReason verifies that transitioning to "open"
+// clears a stale repair_reason (e.g. one set by the daemon after on_hold).
+func TestUpdateStatus_openClearsRepairReason(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id, _ := r.Create("Reason ticket", "task", nil, nil, nil)
+	r.UpdateStatus(id, "repairing") //nolint:errcheck
+	r.UpdateStatus(id, "on_hold")   //nolint:errcheck
+	// Simulate the daemon or human annotating the on_hold ticket after the
+	// status transition (on_hold clears repair_reason on entry, but it can be
+	// set again afterwards).
+	r.SetRepairReason(id, "escalated: too many bounces") //nolint:errcheck
+
+	// Confirm repair_reason is set before the open transition.
+	got, _ := r.Get(id)
+	if !got.RepairReason.Valid {
+		t.Fatal("precondition: expected repair_reason to be set after SetRepairReason")
+	}
+
+	r.UpdateStatus(id, "open") //nolint:errcheck
+
+	got, _ = r.Get(id)
+	if got.RepairReason.Valid {
+		t.Errorf("expected repair_reason cleared after open, got %q", got.RepairReason.String)
+	}
+}
+
+// TestUpdateStatus_repairingAfterOpenIncrements verifies that after a human
+// unblock (open reset), a new repairing transition increments from 0 (not
+// from the prior accumulated value).
+func TestUpdateStatus_repairingAfterOpenIncrements(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id, _ := r.Create("Fresh start ticket", "task", nil, nil, nil)
+
+	r.UpdateStatus(id, "repairing") //nolint:errcheck
+	r.UpdateStatus(id, "repairing") //nolint:errcheck
+	r.UpdateStatus(id, "on_hold")   //nolint:errcheck
+	r.UpdateStatus(id, "open")      //nolint:errcheck // resets to 0
+
+	r.UpdateStatus(id, "repairing") //nolint:errcheck
+
+	got, _ := r.Get(id)
+	if got.RepairCycleCount != 1 {
+		t.Errorf("expected repair_cycle_count=1 after fresh repairing post-open, got %d", got.RepairCycleCount)
+	}
+}
