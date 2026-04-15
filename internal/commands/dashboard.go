@@ -922,7 +922,7 @@ func renderTicketDetails(node *repo.IssueNode, depth int, width int) string {
 	}
 
 	if node.RepairReason.Valid && node.RepairReason.String != "" {
-		sb.WriteString(fmt.Sprintf("%s  repair: %s\n", detailIndent, footerStyle.Render(node.RepairReason.String)))
+		fmt.Fprintf(&sb, "%s  repair: %s\n", detailIndent, footerStyle.Render(node.RepairReason.String))
 	}
 
 	sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent,
