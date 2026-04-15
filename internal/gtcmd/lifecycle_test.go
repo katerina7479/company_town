@@ -280,3 +280,75 @@ func TestStart_WorkDirIsWorktree(t *testing.T) {
 		t.Errorf("session WorkDir must not be cfg.ProjectRoot after nc-128 fix")
 	}
 }
+
+// TestStopDaemon_KillsSession verifies that stopping the daemon kills its tmux
+// session and sets agent status to idle.
+func TestStopDaemon_KillsSession(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	agents := repo.NewAgentRepo(conn, nil)
+
+	// Register daemon in working state.
+	if err := agents.Register("daemon", "daemon", nil); err != nil {
+		t.Fatalf("Register daemon: %v", err)
+	}
+	if err := agents.UpdateStatus("daemon", "working"); err != nil {
+		t.Fatalf("UpdateStatus working: %v", err)
+	}
+
+	sessionName := session.SessionName("daemon")
+
+	var killedSession string
+	oldKill := killSessionFn
+	defer func() { killSessionFn = oldKill }()
+	killSessionFn = func(s string) error {
+		killedSession = s
+		return nil
+	}
+
+	if err := stopDaemonWithDeps(agents, sessionName); err != nil {
+		t.Fatalf("stopDaemonWithDeps: %v", err)
+	}
+
+	if killedSession != sessionName {
+		t.Errorf("expected killSessionFn called with %q, got %q", sessionName, killedSession)
+	}
+
+	a, err := agents.Get("daemon")
+	if err != nil {
+		t.Fatalf("agents.Get(daemon): %v", err)
+	}
+	if a.Status != "idle" {
+		t.Errorf("expected status=idle after stop, got %q", a.Status)
+	}
+}
+
+// TestStopDaemon_SessionAlreadyGone verifies that if the daemon tmux session
+// does not exist, Stop returns early without error.
+func TestStopDaemon_SessionAlreadyGone(t *testing.T) {
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	tmuxExistsFn = func(_ string) bool { return false }
+
+	killed := false
+	oldKill := killSessionFn
+	defer func() { killSessionFn = oldKill }()
+	killSessionFn = func(_ string) error {
+		killed = true
+		return nil
+	}
+
+	// Stop with no real DB — the early-return path should not reach killSessionFn.
+	// We pass args directly to Stop; it will call tmuxExistsFn first.
+	if err := Stop([]string{"daemon"}); err != nil {
+		t.Fatalf("Stop(daemon) with no session: %v", err)
+	}
+
+	if killed {
+		t.Error("expected killSessionFn NOT to be called when session does not exist")
+	}
+}

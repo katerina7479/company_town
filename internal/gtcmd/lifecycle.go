@@ -21,6 +21,7 @@ import (
 var createInteractiveFn func(session.AgentSessionConfig) error = session.CreateInteractive
 var tmuxExistsFn func(string) bool = tmuxExists
 var ensureAgentWorktreeFn func(cfg *config.Config, agentDir string) (string, error) = agentworktree.Ensure
+var killSessionFn func(string) error = session.Kill
 
 // startDaemonFn launches the daemon in a detached tmux session. Injected in tests.
 var startDaemonFn = func(cfg *config.Config) error {
@@ -221,7 +222,23 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 	return nil
 }
 
+// stopDaemonWithDeps is the injectable core of the daemon stop path. Extracted for testability.
+func stopDaemonWithDeps(agents *repo.AgentRepo, sessionName string) error {
+	if err := agents.UpdateStatus("daemon", "idle"); err != nil {
+		fmt.Printf("warning: could not update daemon status: %v\n", err)
+	}
+
+	if err := killSessionFn(sessionName); err != nil {
+		return fmt.Errorf("killing daemon session: %w", err)
+	}
+
+	fmt.Printf("Stopped daemon (session %s killed).\n", sessionName)
+	return nil
+}
+
 // Stop gracefully signals a named agent to write a handoff and exit.
+// For the daemon, which runs a Go binary (not a Claude session), the tmux
+// session is killed directly after the DB status flip.
 func Stop(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt stop <agent-name>")
@@ -230,9 +247,21 @@ func Stop(args []string) error {
 	name := args[0]
 	sessionName := session.SessionName(name)
 
-	if !tmuxExists(sessionName) {
+	if !tmuxExistsFn(sessionName) {
 		fmt.Printf("%s is not running.\n", name)
 		return nil
+	}
+
+	// Daemon has no Claude session to write a handoff — kill the tmux session directly.
+	if name == "daemon" {
+		conn, stopCfg, err := db.OpenFromWorkingDir()
+		if err != nil {
+			return fmt.Errorf("opening db to stop daemon: %w", err)
+		}
+		defer conn.Close()
+		stopEvents := eventlog.NewLogger(config.CompanyTownDir(stopCfg.ProjectRoot))
+		agents := repo.NewAgentRepo(conn, stopEvents)
+		return stopDaemonWithDeps(agents, sessionName)
 	}
 
 	projectRoot, err := db.FindProjectRoot()
