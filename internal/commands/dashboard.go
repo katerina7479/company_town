@@ -921,6 +921,10 @@ func renderTicketDetails(node *repo.IssueNode, depth int, width int) string {
 		sb.WriteString(fmt.Sprintf("%s  branch: %s\n", detailIndent, footerStyle.Render(node.Branch.String)))
 	}
 
+	if node.RepairReason.Valid && node.RepairReason.String != "" {
+		fmt.Fprintf(&sb, "%s  repair: %s\n", detailIndent, footerStyle.Render(node.RepairReason.String))
+	}
+
 	sb.WriteString(fmt.Sprintf("%s  %s\n", detailIndent,
 		footerStyle.Render(fmt.Sprintf("created: %s  updated: %s",
 			node.CreatedAt.Format("2006-01-02 15:04"),

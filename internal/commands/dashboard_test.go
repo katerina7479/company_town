@@ -1838,3 +1838,22 @@ func TestDashboard_attachAgent_emptyTmuxSession_statusMsg(t *testing.T) {
 		t.Errorf("expected statusMsg to contain 'no tmux session recorded', got %q", dm.statusMsg)
 	}
 }
+
+// --- repair_reason display tests ---
+
+func TestRenderTicketDetails_repairReasonShownWhenSet(t *testing.T) {
+	node := makeDetailNode("", "", "", 0)
+	node.RepairReason = sql.NullString{String: "CI: lint, test", Valid: true}
+	out := renderTicketDetails(node, 0, 80)
+	if !strings.Contains(out, "repair:") || !strings.Contains(out, "CI: lint, test") {
+		t.Errorf("expected repair_reason in output, got:\n%s", out)
+	}
+}
+
+func TestRenderTicketDetails_repairReasonOmittedWhenNull(t *testing.T) {
+	node := makeDetailNode("", "", "", 0)
+	out := renderTicketDetails(node, 0, 80)
+	if strings.Contains(out, "repair:") {
+		t.Errorf("expected no repair line when repair_reason is null, got:\n%s", out)
+	}
+}
