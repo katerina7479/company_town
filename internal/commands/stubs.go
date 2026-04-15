@@ -299,9 +299,13 @@ func ArchitectStop() error {
 	return nil
 }
 
-// Stop implements `ct stop` — graceful shutdown with handoffs.
+// Stop implements `ct stop [target] [--clean]`. When target is "", it stops
+// every Company Town session (full shutdown, today's behavior). When target
+// names a specific agent ("daemon", "architect", "reviewer",
+// "artisan-<specialty>", "prole-<name>"), it stops only that session and
+// leaves everything else running.
 // When clean is true, worktree directories for stopped prole sessions are removed.
-func Stop(clean bool) error {
+func Stop(target string, clean bool) error {
 	sessions, err := session.ListCompanyTown()
 	if err != nil {
 		return err
@@ -312,9 +316,23 @@ func Stop(clean bool) error {
 		return nil
 	}
 
+	if target != "" {
+		wanted := session.SessionName(target)
+		filtered := filterSessions(sessions, wanted)
+		if len(filtered) == 0 {
+			return fmt.Errorf("no running session matches target %q (expected %s)", target, wanted)
+		}
+		sessions = filtered
+		fmt.Printf("Targeted stop: %s\n", wanted)
+	}
+
 	if clean {
-		fmt.Println("--clean: prole worktrees will be removed immediately after signaling.")
-		fmt.Println("         Agents will NOT get time to finish in-flight commits.")
+		if target != "" && !strings.HasPrefix(target, "prole-") {
+			fmt.Println("note: --clean has no effect on non-prole targets")
+		} else {
+			fmt.Println("--clean: prole worktrees will be removed immediately after signaling.")
+			fmt.Println("         Agents will NOT get time to finish in-flight commits.")
+		}
 	}
 
 	projectRoot, err := db.FindProjectRoot()
@@ -333,8 +351,24 @@ func Stop(clean bool) error {
 
 	stopCore(sessions, ctDir, clean, session.Kill, session.SendKeys, updateStatus, os.RemoveAll, gitWorktreePrune)
 
-	fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
-	fmt.Println("Run `ct nuke` if you need to force-kill all sessions.")
+	if target == "" {
+		fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
+		fmt.Println("Run `ct nuke` if you need to force-kill all sessions.")
+	} else {
+		fmt.Printf("\nHandoff signal sent to %s.\n", target)
+	}
+	return nil
+}
+
+// filterSessions returns only the sessions in all whose name equals wanted.
+// Exact match — no prefix matching, since session names like "ct-prole-copper"
+// should not match target "prole" by accident.
+func filterSessions(all []string, wanted string) []string {
+	for _, s := range all {
+		if s == wanted {
+			return []string{s}
+		}
+	}
 	return nil
 }
 
