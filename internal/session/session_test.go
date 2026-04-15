@@ -6,32 +6,37 @@ import (
 	"testing"
 )
 
+// newTestClient returns a tmuxClient with controllable seams for unit tests.
+// check always reports the named session as present. exec captures all calls.
+// sleep is a no-op so tests finish instantly.
+func newTestClient(check func(string) bool, exec func(...string) error) *tmuxClient {
+	if check == nil {
+		check = func(string) bool { return true }
+	}
+	if exec == nil {
+		exec = func(...string) error { return nil }
+	}
+	return &tmuxClient{
+		check: check,
+		exec:  exec,
+		sleep: func() {},
+		spawn: func(string, ...string) ([]byte, error) { return nil, nil },
+	}
+}
+
 // TestSendKeys_clearsInputBeforeSubmit verifies that SendKeys sends C-u to
 // clear any accumulated input in the pane before injecting the nudge message.
 // C-u (kill-line) is used instead of C-c so that a running tool call is not
 // interrupted (nc-162). This prevents detached panes from accumulating
 // pending nudges in the input box (nc-146).
 func TestSendKeys_clearsInputBeforeSubmit(t *testing.T) {
-	// Override Exists so it reports the session as present.
-	origExists := existsFn
-	existsFn = func(string) bool { return true }
-	defer func() { existsFn = origExists }()
-
-	// Capture all send-keys calls.
 	var calls [][]string
-	orig := tmuxSendExec
-	tmuxSendExec = func(args ...string) error {
+	c := newTestClient(nil, func(args ...string) error {
 		calls = append(calls, append([]string{}, args...))
 		return nil
-	}
-	defer func() { tmuxSendExec = orig }()
+	})
 
-	// Disable the sleep so the test runs fast.
-	origSleep := sendKeySleepFn
-	sendKeySleepFn = func() {}
-	defer func() { sendKeySleepFn = origSleep }()
-
-	if err := SendKeys("ct-tin", "hello"); err != nil {
+	if err := c.SendKeys("ct-tin", "hello"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -64,23 +69,13 @@ func TestSendKeys_clearsInputBeforeSubmit(t *testing.T) {
 // input handler sees it as a real submit rather than a paste continuation
 // (nc-153).
 func TestSendKeys_EnterSentSeparately(t *testing.T) {
-	origExists := existsFn
-	existsFn = func(string) bool { return true }
-	defer func() { existsFn = origExists }()
-
 	var calls [][]string
-	orig := tmuxSendExec
-	tmuxSendExec = func(args ...string) error {
+	c := newTestClient(nil, func(args ...string) error {
 		calls = append(calls, append([]string{}, args...))
 		return nil
-	}
-	defer func() { tmuxSendExec = orig }()
+	})
 
-	origSleep := sendKeySleepFn
-	sendKeySleepFn = func() {}
-	defer func() { sendKeySleepFn = origSleep }()
-
-	if err := SendKeys("ct-mayor", "nudge text"); err != nil {
+	if err := c.SendKeys("ct-mayor", "nudge text"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -105,27 +100,20 @@ func TestSendKeys_EnterSentSeparately(t *testing.T) {
 // call fails, SendKeys returns an error that (a) wraps the underlying error so
 // callers can use errors.Is/As and (b) includes the session name for context.
 func TestSendKeys_wrapsSendError(t *testing.T) {
-	origExists := existsFn
-	existsFn = func(string) bool { return true }
-	defer func() { existsFn = origExists }()
-
-	origSleep := sendKeySleepFn
-	sendKeySleepFn = func() {}
-	defer func() { sendKeySleepFn = origSleep }()
-
 	sentinelErr := errors.New("exit status 1")
 	callCount := 0
-	orig := tmuxSendExec
-	tmuxSendExec = func(args ...string) error {
-		callCount++
-		if callCount == 2 { // second call is the -l literal text send
-			return sentinelErr
-		}
-		return nil
-	}
-	defer func() { tmuxSendExec = orig }()
+	c := newTestClient(
+		func(string) bool { return true },
+		func(args ...string) error {
+			callCount++
+			if callCount == 2 { // second call is the -l literal text send
+				return sentinelErr
+			}
+			return nil
+		},
+	)
 
-	err := SendKeys("ct-tin", "hello")
+	err := c.SendKeys("ct-tin", "hello")
 	if err == nil {
 		t.Fatal("expected error from failed literal send")
 	}
@@ -140,27 +128,20 @@ func TestSendKeys_wrapsSendError(t *testing.T) {
 // TestSendKeys_wrapsEnterError verifies that when the Enter send-keys call
 // fails, SendKeys returns a wrapped error that includes the session name.
 func TestSendKeys_wrapsEnterError(t *testing.T) {
-	origExists := existsFn
-	existsFn = func(string) bool { return true }
-	defer func() { existsFn = origExists }()
-
-	origSleep := sendKeySleepFn
-	sendKeySleepFn = func() {}
-	defer func() { sendKeySleepFn = origSleep }()
-
 	sentinelErr := errors.New("exit status 1")
 	callCount := 0
-	orig := tmuxSendExec
-	tmuxSendExec = func(args ...string) error {
-		callCount++
-		if callCount == 3 { // third call is the Enter send
-			return sentinelErr
-		}
-		return nil
-	}
-	defer func() { tmuxSendExec = orig }()
+	c := newTestClient(
+		func(string) bool { return true },
+		func(args ...string) error {
+			callCount++
+			if callCount == 3 { // third call is the Enter send
+				return sentinelErr
+			}
+			return nil
+		},
+	)
 
-	err := SendKeys("ct-mayor", "nudge")
+	err := c.SendKeys("ct-mayor", "nudge")
 	if err == nil {
 		t.Fatal("expected error from failed Enter send")
 	}
@@ -173,24 +154,21 @@ func TestSendKeys_wrapsEnterError(t *testing.T) {
 }
 
 // TestSendKeys_sessionMissing verifies that SendKeys returns an error and does
-// not call send-keys when the session does not exist.
+// not call exec when the session does not exist.
 func TestSendKeys_sessionMissing(t *testing.T) {
-	origExists := existsFn
-	existsFn = func(string) bool { return false }
-	defer func() { existsFn = origExists }()
-
 	var calls [][]string
-	orig := tmuxSendExec
-	tmuxSendExec = func(args ...string) error {
-		calls = append(calls, args)
-		return nil
-	}
-	defer func() { tmuxSendExec = orig }()
+	c := newTestClient(
+		func(string) bool { return false },
+		func(args ...string) error {
+			calls = append(calls, args)
+			return nil
+		},
+	)
 
-	if err := SendKeys("ct-tin", "hello"); err == nil {
+	if err := c.SendKeys("ct-tin", "hello"); err == nil {
 		t.Fatal("expected error for missing session")
 	}
 	if len(calls) != 0 {
-		t.Errorf("expected no send-keys calls for missing session, got %d", len(calls))
+		t.Errorf("expected no exec calls for missing session, got %d", len(calls))
 	}
 }

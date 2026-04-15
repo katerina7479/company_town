@@ -12,6 +12,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/eventlog"
+	"github.com/katerina7479/company_town/internal/repo"
 )
 
 // Metrics implements `ct metrics [--since N]`.
@@ -111,7 +112,7 @@ func printTicketFlow(events []eventlog.Event) {
 	closed := 0
 	for _, transitions := range byTicket {
 		for _, t := range transitions {
-			if t.to == "closed" {
+			if t.to == repo.StatusClosed {
 				closed++
 			}
 		}
@@ -129,16 +130,16 @@ func printTicketFlow(events []eventlog.Event) {
 		hadRepair := false
 
 		for i, t := range transitions {
-			if t.to == "open" && firstOpen.IsZero() {
+			if t.to == repo.StatusOpen && firstOpen.IsZero() {
 				firstOpen = t.at
 			}
-			if t.to == "closed" {
+			if t.to == repo.StatusClosed {
 				lastClose = t.at
 			}
-			if t.to == "in_review" {
+			if t.to == repo.StatusInReview {
 				hadReview = true
 			}
-			if t.to == "repairing" {
+			if t.to == repo.StatusRepairing {
 				hadRepair = true
 			}
 			// Time in status: duration from this transition to the next
@@ -170,7 +171,7 @@ func printTicketFlow(events []eventlog.Event) {
 
 	if len(timeInStatus) > 0 {
 		fmt.Println("\n  Avg time in status:")
-		statusOrder := []string{"draft", "open", "in_progress", "in_review", "under_review", "pr_open", "reviewed", "repairing"}
+		statusOrder := []string{repo.StatusDraft, repo.StatusOpen, repo.StatusInProgress, repo.StatusInReview, repo.StatusUnderReview, repo.StatusPROpen, repo.StatusReviewed, repo.StatusRepairing}
 		for _, s := range statusOrder {
 			if durations, ok := timeInStatus[s]; ok {
 				fmt.Printf("    %-14s → %s\n", s, formatDuration(avgDuration(durations)))
@@ -260,13 +261,13 @@ func printPRCycle(events []eventlog.Event) {
 		rounds := 0
 
 		for _, t := range transitions {
-			if t.to == "pr_open" && prOpen.IsZero() {
+			if t.to == repo.StatusPROpen && prOpen.IsZero() {
 				prOpen = t.at
 			}
-			if t.to == "in_review" {
+			if t.to == repo.StatusInReview {
 				rounds++
 			}
-			if t.to == "closed" && !prOpen.IsZero() {
+			if t.to == repo.StatusClosed && !prOpen.IsZero() {
 				cycleTimes = append(cycleTimes, t.at.Sub(prOpen))
 			}
 		}

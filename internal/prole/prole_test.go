@@ -2,6 +2,7 @@ package prole
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -134,8 +135,8 @@ func TestCreate_MaxProlesEnforced(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when max_proles limit is reached, got nil")
 	}
-	if !strings.Contains(err.Error(), "max_proles limit reached") {
-		t.Errorf("expected 'max_proles limit reached' error, got: %v", err)
+	if !errors.Is(err, ErrMaxProlesLimitReached) {
+		t.Errorf("expected ErrMaxProlesLimitReached, got: %v", err)
 	}
 }
 
@@ -155,7 +156,7 @@ func TestCreate_MaxProlesNotEnforced_WhenZero(t *testing.T) {
 
 	// Should not return a limit error; will fail later on git ops, not limit check
 	err := Create("new-prole", cfg, agents)
-	if err != nil && strings.Contains(err.Error(), "max_proles limit reached") {
+	if errors.Is(err, ErrMaxProlesLimitReached) {
 		t.Errorf("max_proles=0 should disable the limit, but got: %v", err)
 	}
 }
@@ -174,7 +175,7 @@ func TestCreate_MaxProlesAllowsCreate_WhenUnderLimit(t *testing.T) {
 
 	// Should not return a limit error; will fail later on git ops
 	err := Create("prole-b", cfg, agents)
-	if err != nil && strings.Contains(err.Error(), "max_proles limit reached") {
+	if errors.Is(err, ErrMaxProlesLimitReached) {
 		t.Errorf("should be allowed when under limit, got: %v", err)
 	}
 }
@@ -196,7 +197,7 @@ func TestCreate_DeadProlesNotCounted(t *testing.T) {
 
 	// Dead proles don't count — should not return a limit error
 	err := Create("prole-new", cfg, agents)
-	if err != nil && strings.Contains(err.Error(), "max_proles limit reached") {
+	if errors.Is(err, ErrMaxProlesLimitReached) {
 		t.Errorf("dead proles should not count toward limit, got: %v", err)
 	}
 }

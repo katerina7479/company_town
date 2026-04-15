@@ -94,6 +94,61 @@ func withIdleResetCapture(d *Daemon) *int {
 	return &calls
 }
 
+// daemonBuilder constructs a test Daemon using a fluent API, eliminating the
+// pattern of calling newTestDaemonWithSessions then mutating individual fields.
+//
+// Usage:
+//
+//	d, issues, agents, sent := newDaemonBuilder(t).
+//	    withSessions("ct-mayor").
+//	    withRepairCycleThreshold(3).
+//	    withNudgeCooldown(5 * time.Minute).
+//	    build()
+type daemonBuilder struct {
+	t        *testing.T
+	sessions []string
+
+	repairCycleThreshold *int
+	nudgeCooldown        *time.Duration
+}
+
+func newDaemonBuilder(t *testing.T) *daemonBuilder {
+	t.Helper()
+	return &daemonBuilder{t: t}
+}
+
+func (b *daemonBuilder) withSessions(sessions ...string) *daemonBuilder {
+	b.sessions = sessions
+	return b
+}
+
+func (b *daemonBuilder) withRepairCycleThreshold(n int) *daemonBuilder {
+	b.repairCycleThreshold = &n
+	return b
+}
+
+func (b *daemonBuilder) withNudgeCooldown(d time.Duration) *daemonBuilder {
+	b.nudgeCooldown = &d
+	return b
+}
+
+// build constructs the daemon with all configured options applied and returns
+// it alongside the repos and sent-message recorder — matching the signature of
+// newTestDaemonWithSessions for easy drop-in use.
+func (b *daemonBuilder) build() (*Daemon, *repo.IssueRepo, *repo.AgentRepo, *[]sentMessage) {
+	b.t.Helper()
+	d, issues, agents, sent := newTestDaemonWithSessions(b.t, b.sessions)
+
+	if b.repairCycleThreshold != nil {
+		d.repairCycleThreshold = *b.repairCycleThreshold
+	}
+	if b.nudgeCooldown != nil {
+		d.nudgeCooldown = *b.nudgeCooldown
+	}
+
+	return d, issues, agents, sent
+}
+
 func TestHandlePRMerged_closesTicket(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
@@ -2713,8 +2768,10 @@ func TestRunCmd_noStderrOnFailure(t *testing.T) {
 // --- handleRepairCycleEscalation tests ---
 
 func TestHandleRepairCycleEscalation_escalatesWhenThresholdReached(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		build()
 
 	id, _ := issues.Create("Bouncy ticket", "task", nil, nil, nil)
 	// Simulate 3 transitions to repairing (each UpdateStatus("repairing") increments the count).
@@ -2745,8 +2802,10 @@ func TestHandleRepairCycleEscalation_escalatesWhenThresholdReached(t *testing.T)
 }
 
 func TestHandleRepairCycleEscalation_setsRepairReason(t *testing.T) {
-	d, issues, _, _ := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
+	d, issues, _, _ := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		build()
 
 	id, _ := issues.Create("Bouncy ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
@@ -2768,8 +2827,10 @@ func TestHandleRepairCycleEscalation_setsRepairReason(t *testing.T) {
 }
 
 func TestHandleRepairCycleEscalation_noEscalationBelowThreshold(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		build()
 
 	id, _ := issues.Create("Fine ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
@@ -2788,8 +2849,10 @@ func TestHandleRepairCycleEscalation_noEscalationBelowThreshold(t *testing.T) {
 }
 
 func TestHandleRepairCycleEscalation_disabledWhenThresholdZero(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 0 // disabled
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(0). // disabled
+		build()
 
 	id, _ := issues.Create("Many bounces", "task", nil, nil, nil)
 	for i := 0; i < 10; i++ {
@@ -2804,8 +2867,9 @@ func TestHandleRepairCycleEscalation_disabledWhenThresholdZero(t *testing.T) {
 }
 
 func TestHandleRepairCycleEscalation_noEscalationWhenMayorNotRunning(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
-	d.repairCycleThreshold = 3
+	d, issues, _, sent := newDaemonBuilder(t).
+		withRepairCycleThreshold(3).
+		build() // no active sessions
 
 	id, _ := issues.Create("Orphaned ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
@@ -2820,9 +2884,11 @@ func TestHandleRepairCycleEscalation_noEscalationWhenMayorNotRunning(t *testing.
 }
 
 func TestHandleRepairCycleEscalation_cooldownSuppressesRepeat(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
-	d.repairCycleThreshold = 3
-	d.nudgeCooldown = 5 * time.Minute
+	d, issues, _, sent := newDaemonBuilder(t).
+		withSessions("ct-mayor").
+		withRepairCycleThreshold(3).
+		withNudgeCooldown(5 * time.Minute).
+		build()
 
 	id, _ := issues.Create("Repeated escalation", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "repairing")
@@ -2838,6 +2904,83 @@ func TestHandleRepairCycleEscalation_cooldownSuppressesRepeat(t *testing.T) {
 	// Cooldown is active — second call should not produce another message.
 	if len(*sent) != 1 {
 		t.Errorf("expected exactly 1 escalation (cooldown suppresses second), got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairCycleEscalation_reEscalatesAfterCountIncrements(t *testing.T) {
+	// Regression test for nc-177: after the first escalation, if the ticket is
+	// unblocked and re-enters repair with a higher RepairCycleCount, the Mayor
+	// must be notified again. Under the old empty-digest behavior,
+	// digestChanged("repair_cycle:N", "") always returns false after the first
+	// nudge, so the second notification is silently dropped.
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Re-escalating ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing") // count = 3, threshold hit
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 1 {
+		t.Fatalf("first escalation: expected 1 message, got %d", len(*sent))
+	}
+
+	// Simulate unblock: set back to repairing with a higher count by updating
+	// status twice more (count becomes 5).
+	issues.UpdateStatus(id, "in_progress")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing") // count = 5
+
+	// Clear the cooldown for this key so shouldNudge passes.
+	nudgeKey := fmt.Sprintf("repair_cycle:%d", id)
+	delete(d.lastNudged, nudgeKey)
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 2 {
+		t.Errorf("second escalation: expected 2 total messages (digest changed), got %d", len(*sent))
+	}
+}
+
+func TestHandleRepairCycleEscalation_matchingDigestSuppresses(t *testing.T) {
+	// If repair_cycle_count has not changed since the last nudge, the digest is
+	// identical and digestChanged returns false — no second notification.
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	d.repairCycleThreshold = 3
+
+	id, _ := issues.Create("Same-count ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing")
+	issues.UpdateStatus(id, "repairing") // count = 3
+
+	d.handleRepairCycleEscalation()
+
+	if len(*sent) != 1 {
+		t.Fatalf("first escalation: expected 1 message, got %d", len(*sent))
+	}
+
+	// Move back to repairing WITHOUT incrementing count (simulate same count).
+	// The only way to do this without extra UpdateStatus("repairing") calls is to
+	// clear the nudge cooldown but leave the digest — RepairCycleCount stays at 3.
+	nudgeKey := fmt.Sprintf("repair_cycle:%d", id)
+	delete(d.lastNudged, nudgeKey)
+	issues.UpdateStatus(id, "repairing") // count = 4 — wait, this increments
+
+	// Re-set: we want to test same count. Restore the digest state by re-recording
+	// the nudge with count=4's digest before calling again, but that's circular.
+	// Instead: check the ticket's current count and assert it changed, so the
+	// second call with cooldown cleared but SAME digest (same count as stored)
+	// would be blocked. We achieve this by recording a fake nudge at the current count.
+	ticket, _ := issues.Get(id)
+	d.lastNudgeDigest[nudgeKey] = fmt.Sprintf("repair_cycle_count=%d", ticket.RepairCycleCount)
+
+	d.handleRepairCycleEscalation()
+
+	// Digest matches stored value → no second nudge.
+	if len(*sent) != 1 {
+		t.Errorf("same-count: expected still 1 message (digest unchanged), got %d", len(*sent))
 	}
 }
 

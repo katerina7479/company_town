@@ -55,7 +55,7 @@ func Status() error {
 	}
 
 	fmt.Println("\n=== Tickets ===")
-	for _, status := range []string{"draft", "open", "in_progress", "in_review", "under_review", "pr_open", "reviewed", "repairing", "on_hold"} {
+	for _, status := range []string{repo.StatusDraft, repo.StatusOpen, repo.StatusInProgress, repo.StatusInReview, repo.StatusUnderReview, repo.StatusPROpen, repo.StatusReviewed, repo.StatusRepairing, repo.StatusOnHold} {
 		list, err := issues.List(status)
 		if err != nil {
 			return err

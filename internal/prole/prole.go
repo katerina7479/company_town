@@ -197,7 +197,7 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 			return fmt.Errorf("counting proles: %w", err)
 		}
 		if count >= cfg.MaxProles {
-			return fmt.Errorf("max_proles limit reached (%d/%d): cannot create prole %q", count, cfg.MaxProles, name)
+			return fmt.Errorf("%w (%d/%d): cannot create prole %q", ErrMaxProlesLimitReached, count, cfg.MaxProles, name)
 		}
 	}
 
