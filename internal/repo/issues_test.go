@@ -1670,3 +1670,20 @@ func TestUpdateStatus_repairingAfterOpenIncrements(t *testing.T) {
 		t.Errorf("expected repair_cycle_count=1 after fresh repairing post-open, got %d", got.RepairCycleCount)
 	}
 }
+
+// TestUpdateStatus_draftClearsRepairReason verifies that transitioning to "draft"
+// also clears repair_reason — same stale-reason leak path.
+func TestUpdateStatus_draftClearsRepairReason(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id, _ := r.Create("Stale reason draft ticket", "task", nil, nil, nil)
+	r.UpdateStatus(id, "repairing")      //nolint:errcheck
+	r.SetRepairReason(id, "CI: failure") //nolint:errcheck
+
+	r.UpdateStatus(id, "draft") //nolint:errcheck
+
+	got, _ := r.Get(id)
+	if got.RepairReason.Valid {
+		t.Errorf("expected repair_reason cleared on → draft, got %q", got.RepairReason.String)
+	}
+}

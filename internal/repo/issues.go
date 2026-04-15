@@ -141,8 +141,8 @@ func (r *IssueRepo) List(status string) ([]*Issue, error) {
 // tickets that have bounced too many times and escalate them. When
 // transitioning to "open", repair_cycle_count is reset to 0 so a human
 // unblocking an on_hold ticket gets a fresh slate. When transitioning out of
-// "repairing" or "merge_conflict", repair_reason is cleared so stale messages
-// don't linger on recovered tickets.
+// a repair-ish state (to draft, in_progress, etc.), repair_reason is cleared
+// so stale messages don't linger on recovered tickets.
 func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	var oldStatus string
 	if r.events != nil {
@@ -169,8 +169,10 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 			`UPDATE issues SET status = ?, closed_at = ?, repair_cycle_count = 0, repair_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			status, closedAt, id,
 		)
-	case "in_progress", "ci_running", "in_review", "under_review", "pr_open", "closed", "on_hold":
+	case "draft", "in_progress", "ci_running", "in_review", "under_review", "pr_open", "closed", "on_hold":
 		// Transitioning out of a repair-ish state — clear stale repair_reason.
+		// "draft" is included because a human may manually reopen a ticket from
+		// on_hold or repairing back to draft, and the old reason must not leak.
 		result, err = r.db.Exec(
 			`UPDATE issues SET status = ?, closed_at = ?, repair_reason = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			status, closedAt, id,
