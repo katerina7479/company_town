@@ -275,8 +275,12 @@ func setupPruneEnv(t *testing.T) (cfg *config.Config, agents *repo.AgentRepo, ba
 	agents = repo.NewAgentRepo(conn, nil)
 
 	// addWorktree creates a new worktree from the bare repo with a tracking branch.
+	// Worktrees are placed under ProlesDir(cfg) so they pass the isSafeWorktreePath guard.
 	addWorktree = func(name string) string {
-		wtPath := filepath.Join(tempRoot, "worktrees", name)
+		wtPath := WorktreePath(cfg, name)
+		if err := os.MkdirAll(filepath.Dir(wtPath), 0750); err != nil {
+			t.Fatal(err)
+		}
 		branch := "prole/" + name + "/standby"
 		runGit(t, bareDir, "worktree", "add", "-b", branch, wtPath, "origin/main")
 		// Set the upstream so @{u}.. works.
@@ -604,6 +608,106 @@ func TestPruneDeadWorktrees_logsRemovalFailure(t *testing.T) {
 	}
 	// Should log a warning about the failure.
 	if !strings.Contains(buf.String(), "removefail") {
+		t.Errorf("expected warning log mentioning agent name, got: %q", buf.String())
+	}
+}
+
+// --- isSafeWorktreePath tests ---
+
+// makeSafePathCfg returns a Config whose ProjectRoot is a fresh temp dir
+// with the expected .company_town/ structure created on disk (Abs resolves
+// symlinks on macOS, so the dirs must actually exist).
+func makeSafePathCfg(t *testing.T) *config.Config {
+	t.Helper()
+	root := t.TempDir()
+	ctDir := filepath.Join(root, ".company_town")
+	for _, sub := range []string{"proles", "repo.git", "db"} {
+		if err := os.MkdirAll(filepath.Join(ctDir, sub), 0750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &config.Config{ProjectRoot: root, TicketPrefix: "nc"}
+}
+
+func TestIsSafeWorktreePath_validProle(t *testing.T) {
+	cfg := makeSafePathCfg(t)
+	path := filepath.Join(ProlesDir(cfg), "iron")
+	if err := os.MkdirAll(path, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if !isSafeWorktreePath(cfg, path) {
+		t.Errorf("expected path under proles dir to be safe: %s", path)
+	}
+}
+
+func TestIsSafeWorktreePath_emptyPath(t *testing.T) {
+	cfg := makeSafePathCfg(t)
+	if isSafeWorktreePath(cfg, "") {
+		t.Error("expected empty path to be unsafe")
+	}
+}
+
+func TestIsSafeWorktreePath_prolesDir(t *testing.T) {
+	// The proles dir itself is not a valid worktree target — must be strictly under it.
+	cfg := makeSafePathCfg(t)
+	if isSafeWorktreePath(cfg, ProlesDir(cfg)) {
+		t.Errorf("expected proles dir itself to be unsafe: %s", ProlesDir(cfg))
+	}
+}
+
+func TestIsSafeWorktreePath_bareRepo(t *testing.T) {
+	cfg := makeSafePathCfg(t)
+	if isSafeWorktreePath(cfg, BareRepoPath(cfg)) {
+		t.Errorf("expected bare repo path to be unsafe: %s", BareRepoPath(cfg))
+	}
+}
+
+func TestIsSafeWorktreePath_doltDir(t *testing.T) {
+	cfg := makeSafePathCfg(t)
+	dolt := doltDir(cfg)
+	if isSafeWorktreePath(cfg, dolt) {
+		t.Errorf("expected dolt dir to be unsafe: %s", dolt)
+	}
+}
+
+func TestIsSafeWorktreePath_outsideProlesDir(t *testing.T) {
+	cfg := makeSafePathCfg(t)
+	outside := t.TempDir() // completely separate temp dir
+	if isSafeWorktreePath(cfg, outside) {
+		t.Errorf("expected path outside proles dir to be unsafe: %s", outside)
+	}
+}
+
+func TestIsSafeWorktreePath_dotDotEscape(t *testing.T) {
+	cfg := makeSafePathCfg(t)
+	// A path that enters proles/ then escapes via ".."
+	escape := filepath.Join(ProlesDir(cfg), "..", "repo.git")
+	if isSafeWorktreePath(cfg, escape) {
+		t.Errorf("expected dot-dot escape path to be unsafe: %s", escape)
+	}
+}
+
+func TestPruneDeadWorktrees_skipsUnsafeWorktreePath(t *testing.T) {
+	// A dead prole whose WorktreePath is not under ProlesDir must be skipped
+	// with a warning — not passed to git worktree remove.
+	cfg, agents, _, _ := setupPruneEnv(t)
+
+	// Use a real directory (so os.Stat succeeds) that is NOT under proles/.
+	unsafeDir := t.TempDir()
+
+	agents.Register("unsafe", "prole", nil)
+	agents.UpdateStatus("unsafe", "dead")
+	agents.SetWorktree("unsafe", unsafeDir)
+
+	logger, buf := capturingLogger()
+	pruned, err := PruneDeadWorktrees(cfg, agents, logger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pruned) != 0 {
+		t.Errorf("expected 0 pruned (unsafe path), got %v", pruned)
+	}
+	if !strings.Contains(buf.String(), "unsafe") {
 		t.Errorf("expected warning log mentioning agent name, got: %q", buf.String())
 	}
 }

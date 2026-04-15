@@ -1,3 +1,19 @@
+// Package prole manages prole agent lifecycle: creating git worktrees, launching
+// tmux sessions, resetting idle worktrees, and pruning dead ones.
+//
+// Directory layout under .company_town/:
+//
+//	.company_town/
+//	├── config.json       — project config
+//	├── db/               — Dolt database directory (MUST NOT be touched by worktree ops)
+//	├── repo.git/         — bare clone used as the shared git object store
+//	└── proles/
+//	    ├── iron/         — worktree for prole "iron"  (only safe worktree target)
+//	    ├── copper/       — worktree for prole "copper"
+//	    └── ...
+//
+// All git worktree add/remove/reset operations must target a path under
+// .company_town/proles/ and must never touch db/ or repo.git/.
 package prole
 
 import (
@@ -26,6 +42,103 @@ func ProlesDir(cfg *config.Config) string {
 // WorktreePath returns the worktree path for a named prole.
 func WorktreePath(cfg *config.Config, name string) string {
 	return filepath.Join(ProlesDir(cfg), name)
+}
+
+// doltDir returns the path to the Dolt database directory.
+func doltDir(cfg *config.Config) string {
+	return filepath.Join(config.CompanyTownDir(cfg.ProjectRoot), "db")
+}
+
+// isSafeWorktreePath returns true when path is a valid target for git worktree
+// operations: it must be non-empty, sit under ProlesDir, and must not coincide
+// with the bare repo or the Dolt database directory.
+//
+// This prevents a corrupted or malicious WorktreePath DB value from causing
+// git worktree remove --force or git clean to operate on critical directories.
+func isSafeWorktreePath(cfg *config.Config, path string) bool {
+	if path == "" {
+		return false
+	}
+
+	// Resolve to absolute, clean paths so symlinks and ".." can't escape the check.
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	prolesDir, err := filepath.Abs(ProlesDir(cfg))
+	if err != nil {
+		return false
+	}
+	bareRepo, err := filepath.Abs(BareRepoPath(cfg))
+	if err != nil {
+		return false
+	}
+	dolt, err := filepath.Abs(doltDir(cfg))
+	if err != nil {
+		return false
+	}
+
+	// Must be strictly under the proles directory (not equal to it).
+	rel, err := filepath.Rel(prolesDir, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+
+	// Extra belt-and-suspenders: explicitly reject the bare repo and Dolt dir.
+	if absPath == bareRepo || absPath == dolt {
+		return false
+	}
+
+	return true
+}
+
+// InstallPreCommitHook copies scripts/pre-commit from the project root into the
+// git hooks directory for the given worktree. This ensures the gofmt pre-commit
+// check fires in agent and prole worktrees, which do not inherit the main
+// checkout's hook installation.
+//
+// For git worktrees, .git is a file (not a directory) that points to the
+// worktree-specific gitdir inside the bare repo. The hook is installed at
+// <gitdir>/hooks/pre-commit. Failures are non-fatal — the hook is a
+// quality-of-life guard, not required for correctness.
+func InstallPreCommitHook(projectRoot, wtPath string) {
+	hookSrc := filepath.Join(projectRoot, "scripts", "pre-commit")
+	if _, err := os.Stat(hookSrc); err != nil {
+		return // hook script not present; skip silently
+	}
+
+	// git rev-parse --git-dir from inside a worktree returns the worktree-specific
+	// gitdir (e.g. <bare>/worktrees/<name>/).
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not find gitdir for worktree at %s: %v\n", wtPath, err)
+		return
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(wtPath, gitDir)
+	}
+
+	hooksDir := filepath.Join(gitDir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0750); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not create hooks dir %s: %v\n", hooksDir, err)
+		return
+	}
+
+	data, err := os.ReadFile(hookSrc)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not read pre-commit hook: %v\n", err)
+		return
+	}
+
+	hookDst := filepath.Join(hooksDir, "pre-commit")
+	// gosec G703: hookDst is derived from git rev-parse --git-dir run in a
+	// worktree we created; not user-controlled input.
+	if err := os.WriteFile(hookDst, data, 0750); err != nil { //nolint:gosec
+		fmt.Fprintf(os.Stderr, "warning: could not install pre-commit hook at %s: %v\n", hookDst, err)
+	}
 }
 
 // EnsureBareRepo creates the bare clone if it doesn't exist, or fetches if it does.
@@ -107,6 +220,9 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		if err := addWorktreeForProle(BareRepoPath(cfg), branch, wtPath); err != nil {
 			return fmt.Errorf("creating worktree: %w", err)
 		}
+
+		// Install the pre-commit hook so gofmt checks fire in prole worktrees.
+		InstallPreCommitHook(cfg.ProjectRoot, wtPath)
 
 		// Set push remote to origin so proles push to GitHub
 		pushCmd := exec.Command("git", "remote", "set-url", "--push", "origin",
@@ -308,6 +424,10 @@ func ResetIdleWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.
 
 	for _, a := range idleProlesNeedingReset(all) {
 		wtPath := a.WorktreePath.String
+		if !isSafeWorktreePath(cfg, wtPath) {
+			logger.Printf("warning: skipping idle prole %s — worktree path %q is not under proles dir", a.Name, wtPath)
+			continue
+		}
 		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 			continue
 		}
@@ -453,6 +573,10 @@ func PruneDeadWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.
 			continue
 		}
 		wtPath := a.WorktreePath.String
+		if !isSafeWorktreePath(cfg, wtPath) {
+			logger.Printf("warning: skipping prole %s — worktree path %q is not under proles dir", a.Name, wtPath)
+			continue
+		}
 		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 			continue // already removed from disk
 		}

@@ -141,6 +141,57 @@ func TestEnsure_WorktreeInsideAgentDir(t *testing.T) {
 	}
 }
 
+func TestEnsure_CopiesPreCommitHook(t *testing.T) {
+	cfg := setupTestRepo(t)
+
+	// Place a scripts/pre-commit file in the project root.
+	scriptsDir := filepath.Join(cfg.ProjectRoot, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0750); err != nil {
+		t.Fatalf("creating scripts dir: %v", err)
+	}
+	hookSrc := filepath.Join(scriptsDir, "pre-commit")
+	if err := os.WriteFile(hookSrc, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("writing pre-commit: %v", err)
+	}
+
+	agentDir := filepath.Join(cfg.ProjectRoot, ".company_town", "agents", "architect")
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
+		t.Fatalf("creating agentDir: %v", err)
+	}
+
+	wtPath, err := agentworktree.Ensure(cfg, agentDir)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	// Resolve the worktree gitdir so we can check the hook was installed.
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse --git-dir: %v", err)
+	}
+	gitDir := string(out)
+	gitDir = gitDir[:len(gitDir)-1] // strip trailing newline
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(wtPath, gitDir)
+	}
+
+	hookDst := filepath.Join(gitDir, "hooks", "pre-commit")
+	if _, err := os.Stat(hookDst); err != nil {
+		t.Errorf("pre-commit hook not installed at %s: %v", hookDst, err)
+	}
+
+	// Verify the installed hook is executable.
+	info, err := os.Stat(hookDst)
+	if err != nil {
+		t.Fatalf("stat hook: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Errorf("pre-commit hook at %s is not executable (mode %v)", hookDst, info.Mode())
+	}
+}
+
 func TestEnsure_CLAUDEMDInParentDiscoverableFromWorktree(t *testing.T) {
 	cfg := setupTestRepo(t)
 

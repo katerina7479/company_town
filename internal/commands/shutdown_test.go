@@ -345,11 +345,10 @@ func TestNukeCore_removesWorktreeDirsForProles(t *testing.T) {
 
 	nukeCore([]string{"ct-prole-copper", "ct-prole-iron"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
 
-	if len(removed) != 2 {
-		t.Errorf("expected 2 worktree removals, got %v", removed)
-	}
+	// Expect copper worktree + iron worktree + bare clone = 3 removals.
 	expectedCopper := filepath.Join(ctDir, "proles", "copper")
 	expectedIron := filepath.Join(ctDir, "proles", "iron")
+	expectedRepo := filepath.Join(ctDir, "repo.git")
 	found := map[string]bool{}
 	for _, p := range removed {
 		found[p] = true
@@ -360,12 +359,17 @@ func TestNukeCore_removesWorktreeDirsForProles(t *testing.T) {
 	if !found[expectedIron] {
 		t.Errorf("expected iron worktree removed, got %v", removed)
 	}
+	if !found[expectedRepo] {
+		t.Errorf("expected bare clone removed in nuke, got %v", removed)
+	}
 	if len(pruned) != 1 {
 		t.Errorf("expected worktree prune called once, got %v", pruned)
 	}
 }
 
-func TestNukeCore_doesNotRemoveWorktreesForNonProles(t *testing.T) {
+func TestNukeCore_removesAgentWorktreesOnNuke(t *testing.T) {
+	// nuke removes agent worktrees (not just prole worktrees).
+	// ct-daemon has no worktree; ct-mayor has one at agents/mayor/worktree.
 	ctDir := t.TempDir()
 
 	removed := []string{}
@@ -380,11 +384,39 @@ func TestNukeCore_doesNotRemoveWorktreesForNonProles(t *testing.T) {
 
 	nukeCore([]string{"ct-daemon", "ct-mayor"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
 
-	if len(removed) != 0 {
-		t.Errorf("expected no removals for non-prole sessions, got %v", removed)
+	// daemon has no worktree — mayor does.
+	expectedMayor := filepath.Join(ctDir, "agents", "mayor", "worktree")
+	found := map[string]bool{}
+	for _, p := range removed {
+		found[p] = true
 	}
-	if len(pruned) != 0 {
-		t.Errorf("expected no prune when no proles removed, got %v", pruned)
+	if !found[expectedMayor] {
+		t.Errorf("expected mayor worktree removed in nuke, removed=%v", removed)
+	}
+}
+
+func TestNukeCore_removesBarecloneAfterKillingProles(t *testing.T) {
+	ctDir := t.TempDir()
+
+	removed := []string{}
+	killFn := func(s string) error { return nil }
+	updateStatus := func(name, status string) error { return nil }
+	removeAll := func(p string) error {
+		removed = append(removed, p)
+		return nil
+	}
+	pruned := []string{}
+	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
+
+	nukeCore([]string{"ct-prole-copper"}, ctDir, killFn, updateStatus, removeAll, worktreePrune)
+
+	expectedRepo := filepath.Join(ctDir, "repo.git")
+	found := map[string]bool{}
+	for _, p := range removed {
+		found[p] = true
+	}
+	if !found[expectedRepo] {
+		t.Errorf("expected bare clone removed in nuke, removed=%v", removed)
 	}
 }
 

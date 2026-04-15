@@ -54,6 +54,8 @@ func Ensure(cfg *config.Config, agentDir string) (string, error) {
 		if err := createWorktree(prole.BareRepoPath(cfg), wtPath); err != nil {
 			return "", fmt.Errorf("creating worktree at %s: %w", wtPath, err)
 		}
+		// Install the pre-commit hook so gofmt checks fire in agent worktrees.
+		prole.InstallPreCommitHook(cfg.ProjectRoot, wtPath)
 	} else {
 		// Worktree already exists — fetch origin so the agent's session starts
 		// with up-to-date remote tracking refs.

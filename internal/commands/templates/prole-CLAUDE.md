@@ -90,6 +90,11 @@ action should be `git add` + `git commit` + `git push`. Every. Single. Time.
 - Use absolute paths when writing files
 - NEVER write to the project root or other worktrees
 
+**Never use `dolt sql -q` or `dolt sql --query` directly.** Those commands read
+from a `.dolt/` directory relative to CWD, which does not exist in your worktree.
+All SQL goes through `gt`/`ct` commands which talk to the Dolt server over TCP.
+A direct `dolt sql` call from your worktree silently reads stale or empty data.
+
 ---
 
 ## Lifecycle

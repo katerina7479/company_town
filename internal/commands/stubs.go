@@ -443,7 +443,9 @@ func Nuke() error {
 
 // nukeCore is the testable kill logic used by Nuke.
 // updateStatus may be nil when the DB is unavailable.
-// Worktree directories for killed prole sessions are removed, then git worktree prune is run.
+// Worktree directories for all killed sessions are removed (prole worktrees
+// under .company_town/proles/, agent worktrees under .company_town/agents/),
+// then git worktree prune is run and the bare clone is removed.
 func nukeCore(sessions []string, ctDir string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) {
 	var cleanedAny bool
 	for _, s := range sessions {
@@ -452,11 +454,19 @@ func nukeCore(sessions []string, ctDir string, killFn func(string) error, update
 			fmt.Printf("  error killing %s: %v\n", s, err)
 		} else {
 			fmt.Printf("  killed: %s\n", s)
-			if strings.HasPrefix(agentName, "prole-") {
+
+			var worktreeDir string
+			switch {
+			case strings.HasPrefix(agentName, "prole-"):
 				proleName := strings.TrimPrefix(agentName, "prole-")
-				worktreeDir := filepath.Join(ctDir, "proles", proleName)
+				worktreeDir = filepath.Join(ctDir, "proles", proleName)
+			default:
+				worktreeDir = agentWorktreePath(ctDir, agentName)
+			}
+
+			if worktreeDir != "" {
 				if err := removeAll(worktreeDir); err != nil {
-					fmt.Printf("  error removing worktree for %s: %v\n", proleName, err)
+					fmt.Printf("  error removing worktree for %s: %v\n", agentName, err)
 				} else {
 					fmt.Printf("  removed worktree: %s\n", worktreeDir)
 					cleanedAny = true
@@ -474,6 +484,30 @@ func nukeCore(sessions []string, ctDir string, killFn func(string) error, update
 		if err := worktreePrune(repoGit); err != nil {
 			fmt.Printf("  error pruning worktrees: %v\n", err)
 		}
+		// Remove the bare clone itself — nuke is a full teardown.
+		if err := removeAll(repoGit); err != nil {
+			fmt.Printf("  error removing bare clone: %v\n", err)
+		} else {
+			fmt.Printf("  removed bare clone: %s\n", repoGit)
+		}
+	}
+}
+
+// agentWorktreePath returns the worktree directory for a named non-prole agent,
+// or "" if the agent has no worktree (e.g. daemon).
+func agentWorktreePath(ctDir, agentName string) string {
+	switch {
+	case agentName == "architect":
+		return filepath.Join(ctDir, "agents", "architect", "worktree")
+	case agentName == "mayor":
+		return filepath.Join(ctDir, "agents", "mayor", "worktree")
+	case agentName == "reviewer":
+		return filepath.Join(ctDir, "agents", "reviewer", "worktree")
+	case strings.HasPrefix(agentName, "artisan-"):
+		specialty := strings.TrimPrefix(agentName, "artisan-")
+		return filepath.Join(ctDir, "agents", "artisan", specialty, "worktree")
+	default:
+		return ""
 	}
 }
 
