@@ -1494,3 +1494,98 @@ func TestIssueRepo_ClearParent_notFound(t *testing.T) {
 		t.Error("expected error for nonexistent ticket")
 	}
 }
+
+func TestIssueRepo_SetRepairReason_roundTrip(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Some task", "task", nil, nil, nil)
+	r.UpdateStatus(id, "repairing")
+
+	if err := r.SetRepairReason(id, "CI: lint, test"); err != nil {
+		t.Fatalf("SetRepairReason: %v", err)
+	}
+
+	got, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.RepairReason.Valid || got.RepairReason.String != "CI: lint, test" {
+		t.Errorf("expected repair_reason=%q, got valid=%v value=%q",
+			"CI: lint, test", got.RepairReason.Valid, got.RepairReason.String)
+	}
+}
+
+func TestIssueRepo_SetRepairReason_notFound(t *testing.T) {
+	r := setupTestRepo(t)
+	if err := r.SetRepairReason(9999, "nope"); err == nil {
+		t.Error("expected error for nonexistent ticket")
+	}
+}
+
+func TestIssueRepo_SetRepairReason_emptyStringStoresNULL(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Task", "task", nil, nil, nil)
+	r.UpdateStatus(id, "repairing")
+	r.SetRepairReason(id, "CI: lint")
+
+	if err := r.SetRepairReason(id, ""); err != nil {
+		t.Fatalf("SetRepairReason: %v", err)
+	}
+
+	got, _ := r.Get(id)
+	if got.RepairReason.Valid {
+		t.Errorf("expected NULL repair_reason after empty string, got %q", got.RepairReason.String)
+	}
+}
+
+func TestIssueRepo_UpdateStatus_clearsRepairReasonOnRecovery(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Task", "task", nil, nil, nil)
+	r.UpdateStatus(id, "repairing")
+	r.SetRepairReason(id, "CI: lint")
+
+	// Transition to in_progress — repair_reason should be cleared.
+	if err := r.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	got, _ := r.Get(id)
+	if got.RepairReason.Valid {
+		t.Errorf("expected repair_reason cleared after in_progress transition, got %q", got.RepairReason.String)
+	}
+}
+
+func TestIssueRepo_UpdateStatus_clearsRepairReasonOnCIRunning(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Task", "task", nil, nil, nil)
+	r.Assign(id, "copper", "prole/copper/nc-1")
+	r.UpdateStatus(id, "repairing")
+	r.SetRepairReason(id, "merge conflict with main")
+
+	if err := r.UpdateStatus(id, "ci_running"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	got, _ := r.Get(id)
+	if got.RepairReason.Valid {
+		t.Errorf("expected repair_reason cleared on ci_running, got %q", got.RepairReason.String)
+	}
+}
+
+func TestIssueRepo_UpdateStatus_preservesRepairReasonOnRepairingTransition(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Task", "task", nil, nil, nil)
+	r.UpdateStatus(id, "repairing")
+	r.SetRepairReason(id, "CI: test")
+
+	// A second repairing transition (re-bounce) should NOT clear the reason —
+	// the daemon will overwrite it with the new reason immediately after.
+	if err := r.UpdateStatus(id, "repairing"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	got, _ := r.Get(id)
+	if !got.RepairReason.Valid || got.RepairReason.String != "CI: test" {
+		t.Errorf("expected repair_reason preserved through repairing re-bounce, got valid=%v value=%q",
+			got.RepairReason.Valid, got.RepairReason.String)
+	}
+}

@@ -3251,3 +3251,45 @@ func TestHandleOpenPR_inReview_noCIReclassification(t *testing.T) {
 		t.Errorf("in_review ticket must not be reclassified by CI; got status %q", updated.Status)
 	}
 }
+
+// --- repair_reason tests ---
+
+func TestHandleCIFailure_setsRepairReason(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("CI task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 10)
+
+	issue, _ := issues.Get(id)
+	d.handleCIFailure(issue, 10, []string{"lint", "test"})
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if !updated.RepairReason.Valid || updated.RepairReason.String != "CI: lint, test" {
+		t.Errorf("expected repair_reason=%q, got valid=%v value=%q",
+			"CI: lint, test", updated.RepairReason.Valid, updated.RepairReason.String)
+	}
+}
+
+func TestHandlePRConflict_setsRepairReason(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Conflict task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 20)
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflict(issue, 20)
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict, got %q", updated.Status)
+	}
+	if !updated.RepairReason.Valid || updated.RepairReason.String != "merge conflict with main" {
+		t.Errorf("expected repair_reason=%q, got valid=%v value=%q",
+			"merge conflict with main", updated.RepairReason.Valid, updated.RepairReason.String)
+	}
+}
