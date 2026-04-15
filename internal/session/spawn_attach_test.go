@@ -103,6 +103,36 @@ func TestSpawnAttach_Terminal_app(t *testing.T) {
 	}
 }
 
+func TestSpawnAttach_iTermExecFailureReturnsWrappedError(t *testing.T) {
+	c, _ := newSpawnClient(t, []byte("osascript: error"), errors.New("exit status 1"))
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	err := c.SpawnAttach("ct-mayor")
+	if err == nil {
+		t.Fatal("expected error from failed iTerm osascript call")
+	}
+	if errors.Is(err, ErrUnknownTerminal) {
+		t.Errorf("iTerm failure must not return ErrUnknownTerminal: %v", err)
+	}
+	if !strings.Contains(err.Error(), "iTerm") {
+		t.Errorf("error should mention iTerm: %v", err)
+	}
+}
+
+func TestSpawnAttach_AppleTerminalExecFailureReturnsWrappedError(t *testing.T) {
+	c, _ := newSpawnClient(t, []byte("osascript: error"), errors.New("exit status 1"))
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	err := c.SpawnAttach("ct-mayor")
+	if err == nil {
+		t.Fatal("expected error from failed Apple_Terminal osascript call")
+	}
+	if errors.Is(err, ErrUnknownTerminal) {
+		t.Errorf("Apple_Terminal failure must not return ErrUnknownTerminal: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Terminal.app") {
+		t.Errorf("error should mention Terminal.app: %v", err)
+	}
+}
+
 func TestOsascriptQuote(t *testing.T) {
 	got := osascriptQuote("tmux attach-session -t 'ct-iron'")
 	want := `"tmux attach-session -t 'ct-iron'"`
