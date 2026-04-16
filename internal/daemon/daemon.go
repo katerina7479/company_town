@@ -113,7 +113,7 @@ type Daemon struct {
 	vcsProvider vcs.Provider
 
 	// Cancellation cleanup (injectable for tests)
-	prCloseFn       func(prNumber int) error
+	prCloseFn         func(prNumber int) error
 	gitDeleteBranchFn func(barePath, branch string) error
 
 	// Review comment fetching (injectable for tests)
