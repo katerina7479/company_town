@@ -267,7 +267,9 @@ Startup Protocol above to get on the existing branch**. Then:
 
 ```
 [ ] 1. Verify you are on the ticket's existing branch (git branch --show-current)
-[ ] 2. Read reviewer feedback (gh pr view <number>)
+[ ] 2. Read reviewer feedback:
+       GitHub: gh pr view <number> --comments
+       GitLab: glab mr note list <mr_iid>
 [ ] 3. Fix the issues on that branch — do NOT create a new branch
 [ ] 4. Run quality gates: go test ./... && go vet ./...
 [ ] 5. Commit and re-submit: gt pr update <ticket_id>

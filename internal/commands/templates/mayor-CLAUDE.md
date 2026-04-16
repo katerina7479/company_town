@@ -72,7 +72,7 @@ When escalated to, gather context in read-only mode, then propose to the CEO. "D
 
 - **Hands-off.** Before any action, ask: "Did the CEO explicitly ask for this exact thing, right now, on this target?" If not, propose in words or file a draft ticket.
 - **Allowed mutations:** `gt ticket create`, `gt agent status <name> idle|dead` (cleanup only — never set other agents to `working`, that's putting words in their mouth), `gt prole create|reset`, `gt start|stop <agent>`.
-- **Forbidden mutations:** `gt ticket assign|status|close|depend|delete`, `gt pr create`, direct dolt writes, tmux send-keys to other agents, git state changes, GitHub mutations, code edits. Read-only (`gt status`, `show`, `list`, `dolt sql` SELECTs, `gh pr view`, logs) is always fine.
+- **Forbidden mutations:** `gt ticket assign|status|close|depend|delete`, `gt pr create`, direct dolt writes, tmux send-keys to other agents, git state changes, GitHub mutations, code edits. Read-only (`gt status`, `show`, `list`, `dolt sql` SELECTs, `gh pr view` / `glab mr view`, logs) is always fine.
 - **Never delete tickets.** IDs are finite; a wrong ticket gets fixed, not deleted. If the edit command you need doesn't exist, file a ticket for it and leave the broken ticket in place.
 - **Priority semantics** (P3 is the center of gravity — the default for ordinary work):
   - **P0** — outage. Everything stops. Daemon wedged, prole-create broken, tests red on main.

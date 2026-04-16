@@ -55,18 +55,27 @@ For changes requested — use the format from your CLAUDE.md Review Comment Form
 
 Cite every follow-up you filed in Step 1 as a `[non-blocking]` line so the PR author sees what you punted.
 
-## Step 3 — Post the GitHub comment
+## Step 3 — Post the review comment
+
+Use the CLI for this project's VCS platform:
 
 ```bash
+# GitHub:
 gh pr review <pr_number> --comment --body-file /tmp/review-<pr_number>.md
+
+# GitLab (mr_iid from gt ticket show):
+glab mr note create <mr_iid> --file /tmp/review-<mr_iid>.md
 ```
 
-Using `--body-file` avoids shell quoting issues. Do NOT use `-b '...'` with inline content — single-quote escaping of complex bodies is error-prone.
+Using `--body-file` / `--file` avoids shell quoting issues. Do NOT use `-b '...'` with inline content — single-quote escaping of complex bodies is error-prone.
 
 Verify the comment posted:
 
 ```bash
+# GitHub:
 gh pr view <pr_number> --comments
+# GitLab:
+glab mr note list <mr_iid>
 ```
 
 The last comment should show your review body.

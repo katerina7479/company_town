@@ -171,7 +171,7 @@ A well-specified ticket lets a prole start coding immediately:
 
 ## CI Gating (`ci_running`)
 
-Tickets in `ci_running` are the handoff waiting room between prole and reviewer. The prole has filed a PR; the daemon promotes the ticket to `in_review` once all CI checks pass, or routes it to `repairing` on failure. If a ticket is stuck in `ci_running`, check the PR's GitHub Actions page directly — the daemon is waiting on CI that may be queued, broken, or misconfigured.
+Tickets in `ci_running` are the handoff waiting room between prole and reviewer. The prole has filed a PR; the daemon promotes the ticket to `in_review` once all CI checks pass, or routes it to `repairing` on failure. If a ticket is stuck in `ci_running`, check the PR/MR's CI page directly — the daemon is waiting on CI that may be queued, broken, or misconfigured. For GitHub use the Actions tab or `gh pr checks`; for GitLab use `glab ci status --branch <branch>`.
 
 ## Merge Conflict Resolution
 
@@ -186,8 +186,10 @@ is an exception to the normal "architect specs, doesn't code" role boundary.
 
 **Step-by-step protocol:**
 
-1. **Get the real branch name** from the PR: `gh pr view <n> --json headRefName`
-   — do NOT use the ticket's `branch` column, which may be stale.
+1. **Get the real branch name** from the PR/MR:
+   - GitHub: `gh pr view <n> --json headRefName`
+   - GitLab: `glab mr view <iid> --output json | jq -r '.source_branch'`
+   Do NOT use the ticket's `branch` column, which may be stale.
 2. **Checkout the branch**: `git fetch origin && git checkout <branch>`
 3. **Merge main into the branch**: `git fetch origin main && git merge origin/main`
    — use merge, not rebase, to avoid rewriting history the reviewer may have cached.
@@ -195,7 +197,7 @@ is an exception to the normal "architect specs, doesn't code" role boundary.
 5. **Complete the merge**: `git merge --continue` (or `git commit` if no staged merge in progress).
 6. **Push**: `git push origin <branch>` — do NOT force-push.
 
-Once pushed, GitHub updates the PR's mergeability. The daemon detects this on
+Once pushed, GitHub/GitLab updates the PR/MR mergeability. The daemon detects this on
 the next tick and automatically moves the ticket back to `pr_open`.
 
 **Do NOT:**

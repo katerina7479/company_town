@@ -255,9 +255,13 @@ gt ticket status <id> under_review             # Claim ticket for review (prole 
 gt ticket review <id> approve                  # Approved: status → pr_open
 gt ticket review <id> request-changes          # Changes needed: status → repairing
 
-# GitHub PR review
-gh pr view <pr_number> --diff                                            # View the PR diff
-gh pr review <pr_number> --comment --body-file /tmp/review-<pr_number>.md  # Post review (see /verdict)
+# VCS platform: diff and review comment (use the CLI matching this project's platform)
+# GitHub:
+gh pr view <pr_number> --diff
+gh pr review <pr_number> --comment --body-file /tmp/review-<pr_number>.md  # see /verdict
+# GitLab (mr_iid from gt ticket show):
+glab mr diff <mr_iid>
+glab mr note create <mr_iid> --file /tmp/review-<mr_iid>.md               # see /verdict
 
 # Quality (use when reviewing to check project health)
 gt check list                        # Show latest result per check

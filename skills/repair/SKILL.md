@@ -13,7 +13,10 @@ Repair sequence for a PR sent back by the reviewer. Follow the steps in order. O
 ## Step 1 — Read the reviewer's feedback
 
 ```bash
+# GitHub:
 gh pr view --comments
+# GitLab (mr_iid from gt ticket show):
+glab mr note list <mr_iid>
 ```
 
 Identify the blockers — they are in a bulleted list, not prose. Do not start fixing until you understand every blocker. If any point is ambiguous, escalate rather than guess.
@@ -21,13 +24,19 @@ Identify the blockers — they are in a bulleted list, not prose. Do not start f
 ## Step 2 — Read the CI failures
 
 ```bash
+# GitHub:
 gh pr checks
+# GitLab:
+glab ci status --branch <branch>
 ```
 
 For any failing check, view the failure log:
 
 ```bash
+# GitHub:
 gh run view <run-id> --log-failed
+# GitLab:
+glab ci trace <job-id>
 ```
 
 Know what is failing before you start fixing. A repair that fixes the reviewer comments but ignores CI failures will be bounced again.
@@ -87,9 +96,12 @@ gt ticket show <id>
 Header must show `[ci_running]`. Then:
 
 ```bash
+# GitHub:
 gh pr view
+# GitLab:
+glab mr view <mr_iid>
 ```
 
-Confirm your new commits appear in the PR.
+Confirm your new commits appear in the PR/MR.
 
 **Key ordering invariant:** Read feedback → understand CI failures → rebase → fix → pre-flight → push → re-review. Each step depends on the previous one. Skipping steps is how repairs turn into second repairs.
