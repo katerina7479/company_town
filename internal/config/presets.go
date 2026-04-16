@@ -29,7 +29,7 @@ func GoQualityChecks() []QualityCheckConfig {
 	return []QualityCheckConfig{
 		{
 			Name:          "go_test_coverage",
-			Command:       "go test $(go list ./... | grep -vE '/cmd/ct$|/cmd/gt$|/internal/db$') -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
+			Command:       "go test $(go list ./...) -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
 			Type:          "metric",
 			Threshold:     60.0,
 			WarnThreshold: 50.0,
