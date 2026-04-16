@@ -546,9 +546,9 @@ func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
 		t.Errorf("after under_review: assignee=%v %q, want iron", got.Assignee.Valid, got.Assignee.String)
 	}
 
-	// Move to pr_open — assignee must remain "iron"
-	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "pr_open"}); err != nil {
-		t.Fatalf("ticketStatus pr_open: %v", err)
+	// Move to pr_open via ticketReview (the only valid path since nc-215).
+	if err := ticketReview(issues, []string{fmt.Sprintf("%d", id), "approve"}); err != nil {
+		t.Fatalf("ticketReview approve: %v", err)
 	}
 	got, _ = issues.Get(id)
 	if !got.Assignee.Valid || got.Assignee.String != "iron" {
@@ -1927,6 +1927,25 @@ func TestTicketStatus_missingArgs(t *testing.T) {
 	}
 	if err := ticketStatus(issues, agents, []string{"1"}); err == nil {
 		t.Fatal("expected usage error for 1 arg")
+	}
+}
+
+// TestTicketStatus_PROpenGuard verifies that ticketStatus rejects direct
+// transitions to pr_open and directs the caller to use the review path (nc-215).
+func TestTicketStatus_PROpenGuard(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	id, err := issues.Create("ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	err = ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "pr_open"})
+	if err == nil {
+		t.Fatal("expected error when setting status to pr_open directly, got nil")
+	}
+	if !strings.Contains(err.Error(), "gt ticket review") {
+		t.Errorf("expected error to mention 'gt ticket review', got: %v", err)
 	}
 }
 
