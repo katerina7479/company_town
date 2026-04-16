@@ -108,7 +108,7 @@ Commands:
   ticket <create|show|list|ready|assign|status|close|depend>   Manage tickets
   prole <create|reset|list>                                     Manage proles
   agent <register|status>                                        Manage agents
-  pr <create>                                                    File PRs
+  pr <create|update|ready|show>                                  File and manage PRs
   start <agent>                                                  Start an agent
   stop <agent>                                                   Stop an agent (graceful)
   status                                                         Print system status
