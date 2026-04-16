@@ -3800,3 +3800,160 @@ func TestHandleStuckPrompts_RespectsCooldown(t *testing.T) {
 		t.Errorf("expected exactly 1 escalation despite two calls, got %d", len(*sent))
 	}
 }
+
+// --- handleFollowUpReminder tests ---
+
+// registerReviewerAgent registers a reviewer agent named "reviewer" with session "ct-reviewer" for testing.
+func registerReviewerAgent(t *testing.T, agents *repo.AgentRepo) {
+	t.Helper()
+	if err := agents.Register("reviewer", "reviewer", nil); err != nil {
+		t.Fatalf("Register reviewer: %v", err)
+	}
+	if err := agents.SetTmuxSession("reviewer", "ct-reviewer"); err != nil {
+		t.Fatalf("SetTmuxSession reviewer: %v", err)
+	}
+}
+
+// TestHandleFollowUpReminder_noopWhenNoSessions verifies that the reminder is
+// not sent when no reviewer sessions are active.
+func TestHandleFollowUpReminder_noopWhenNoSessions(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+	d.followUpNReviews = 5
+	d.followUpInterval = 30 * time.Minute
+	d.reviewsSinceFollowUp = 10 // count trigger met but no sessions
+
+	d.handleFollowUpReminder()
+	// No assert needed — real invariant is no panic with no active sessions.
+}
+
+// TestHandleFollowUpReminder_timeBased verifies that the reminder fires when
+// the configured interval has elapsed since the last nudge.
+func TestHandleFollowUpReminder_timeBased(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	registerReviewerAgent(t, agents)
+
+	d.followUpNReviews = 5 // count threshold not met
+	d.followUpInterval = 30 * time.Minute
+	d.reviewsSinceFollowUp = 0 // count trigger NOT met
+	// lastFollowUpNudge is zero value — interval has definitely elapsed.
+
+	d.handleFollowUpReminder()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 reminder (time-based), got %d", len(*sent))
+	}
+	if !strings.Contains((*sent)[0].msg, "follow-up tickets") {
+		t.Errorf("unexpected message: %q", (*sent)[0].msg)
+	}
+}
+
+// TestHandleFollowUpReminder_countBased verifies that the reminder fires when
+// reviewsSinceFollowUp reaches the configured threshold, even if the timer has
+// not elapsed.
+func TestHandleFollowUpReminder_countBased(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	registerReviewerAgent(t, agents)
+
+	d.followUpNReviews = 5
+	d.followUpInterval = 30 * time.Minute
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.lastFollowUpNudge = base // just nudged — timer not elapsed
+	d.reviewsSinceFollowUp = 5 // count threshold exactly met
+
+	d.handleFollowUpReminder()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 reminder (count trigger), got %d", len(*sent))
+	}
+}
+
+// TestHandleFollowUpReminder_noopWhenNeitherMet verifies that the reminder is
+// suppressed when neither the count nor the timer threshold is reached.
+func TestHandleFollowUpReminder_noopWhenNeitherMet(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	registerReviewerAgent(t, agents)
+
+	d.followUpNReviews = 5
+	d.followUpInterval = 30 * time.Minute
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.lastFollowUpNudge = base // just nudged
+	d.reviewsSinceFollowUp = 2 // below threshold
+
+	d.handleFollowUpReminder()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no messages, got %d", len(*sent))
+	}
+}
+
+// TestHandleFollowUpReminder_resetsCounter verifies that reviewsSinceFollowUp
+// is reset to zero after a successful nudge.
+func TestHandleFollowUpReminder_resetsCounter(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	registerReviewerAgent(t, agents)
+
+	d.followUpNReviews = 3
+	d.followUpInterval = 0 // disabled — only count trigger fires
+	d.reviewsSinceFollowUp = 3
+
+	d.handleFollowUpReminder()
+
+	if d.reviewsSinceFollowUp != 0 {
+		t.Errorf("expected counter reset to 0 after nudge, got %d", d.reviewsSinceFollowUp)
+	}
+}
+
+// TestHandleFollowUpReminder_updatesTimestamp verifies that lastFollowUpNudge
+// is updated after a successful nudge.
+func TestHandleFollowUpReminder_updatesTimestamp(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	registerReviewerAgent(t, agents)
+
+	d.followUpNReviews = 0 // disabled — only time trigger
+	d.followUpInterval = 30 * time.Minute
+
+	base := time.Now().Add(-1 * time.Hour) // long ago
+	d.lastFollowUpNudge = base
+	d.nowFn = func() time.Time { return base.Add(1 * time.Hour) }
+
+	d.handleFollowUpReminder()
+
+	if d.lastFollowUpNudge.Equal(base) {
+		t.Error("expected lastFollowUpNudge to be updated after nudge")
+	}
+}
+
+// TestHandleFollowUpReminder_ciPassIncrementsCounter verifies that
+// handleCIPass increments reviewsSinceFollowUp so the count trigger fires
+// after enough CI passes.
+func TestHandleFollowUpReminder_ciPassIncrementsCounter(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	id, err := issues.Create("CI pass ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, repo.StatusCIRunning); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := issues.SetPR(id, 42); err != nil {
+		t.Fatalf("SetPR: %v", err)
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	before := d.reviewsSinceFollowUp
+	d.handleCIPass(issue, 42)
+
+	if d.reviewsSinceFollowUp != before+1 {
+		t.Errorf("expected reviewsSinceFollowUp to increment from %d to %d, got %d",
+			before, before+1, d.reviewsSinceFollowUp)
+	}
+}
