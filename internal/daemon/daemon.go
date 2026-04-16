@@ -389,6 +389,7 @@ func (d *Daemon) poll() {
 	d.handleDraftTickets()
 	d.handleAssignments()
 	d.handleIdleAssignedProles()
+	d.handleWorkingOpenTickets()
 	d.handleInReviewTickets()
 	d.handlePREvents()
 	d.handleRepairCycleEscalation()
@@ -588,6 +589,38 @@ func (d *Daemon) handleIdleAssignedProles() {
 		}
 		d.logger.Printf("nudged idle prole %s to resume %s-%d", agentName, d.cfg.TicketPrefix, issue.ID)
 		d.recordNudge(nudgeKey, "")
+	}
+}
+
+// handleWorkingOpenTickets scans agents in "working" status whose current_issue
+// ticket is still in "open" status, and flips the ticket to "in_progress".
+// This reconciles the drift case where a prole called `gt agent accept` but
+// skipped (or failed) the explicit `gt ticket status <id> in_progress` step —
+// leaving the ticket stuck in "open" while the agent is actively working.
+func (d *Daemon) handleWorkingOpenTickets() {
+	working, err := d.agents.ListByStatus("working")
+	if err != nil {
+		d.logger.Printf("handleWorkingOpenTickets: listing working agents: %v", err)
+		return
+	}
+	for _, agent := range working {
+		if !agent.CurrentIssue.Valid {
+			continue
+		}
+		id := int(agent.CurrentIssue.Int64)
+		issue, err := d.issues.Get(id)
+		if err != nil {
+			d.logger.Printf("handleWorkingOpenTickets: get ticket %d: %v", id, err)
+			continue
+		}
+		if issue.Status != "open" {
+			continue
+		}
+		if err := d.issues.UpdateStatus(id, "in_progress"); err != nil {
+			d.logger.Printf("handleWorkingOpenTickets: flip ticket %d to in_progress: %v", id, err)
+			continue
+		}
+		d.logger.Printf("handleWorkingOpenTickets: ticket %d flipped to in_progress (agent %s working on open ticket)", id, agent.Name)
 	}
 }
 
