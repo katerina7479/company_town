@@ -178,6 +178,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		repairCycleThreshold: cfg.RepairCycleThreshold,
 		followUpInterval:     time.Duration(cfg.ReviewerFollowUpIntervalSeconds) * time.Second,
 		followUpNReviews:     cfg.ReviewerFollowUpNReviews,
+		lastFollowUpNudge:    time.Now(),
 		tickFile:             filepath.Join(ctDir, "run", "daemon-tick"),
 	}, nil
 }
