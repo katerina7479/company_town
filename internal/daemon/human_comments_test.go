@@ -238,4 +238,326 @@ func TestGetReviewComments_ParsesBodyField(t *testing.T) {
 	if comment.Body != "[ct-reviewer] LGTM at abc123." {
 		t.Errorf("Body: got %q, want \"[ct-reviewer] LGTM at abc123.\"", comment.Body)
 	}
+	if comment.State != "COMMENTED" {
+		t.Errorf("State: got %q, want \"COMMENTED\"", comment.State)
+	}
+}
+
+func TestGetReviewComments_ParsesStateField(t *testing.T) {
+	cases := []struct {
+		state string
+		isBot bool
+	}{
+		{"APPROVED", false},
+		{"CHANGES_REQUESTED", false},
+		{"COMMENTED", false},
+		{"APPROVED", true},
+	}
+	for _, tc := range cases {
+		authorType := "User"
+		if tc.isBot {
+			authorType = "Bot"
+		}
+		line := `{"author":"reviewer","authorType":"` + authorType + `","state":"` + tc.state + `","body":"review body"}`
+		comment, ok := parseReviewLine([]byte(line))
+		if !ok {
+			t.Fatalf("parseReviewLine returned ok=false for state=%q", tc.state)
+		}
+		if comment.State != tc.state {
+			t.Errorf("State: got %q, want %q", comment.State, tc.state)
+		}
+		if comment.IsBot != tc.isBot {
+			t.Errorf("IsBot: got %v, want %v", comment.IsBot, tc.isBot)
+		}
+	}
+}
+
+// --- TDD tests approval detection ---
+
+// tddIssuePROpen creates a tdd_tests issue in pr_open status.
+func tddIssuePROpen(t *testing.T, d *Daemon) *repo.Issue {
+	t.Helper()
+	id, err := d.issues.Create("TDD tests ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := d.issues.UpdateType(id, "tdd_tests"); err != nil {
+		t.Fatalf("UpdateType: %v", err)
+	}
+	if err := d.issues.UpdateStatus(id, "pr_open"); err != nil {
+		t.Fatalf("UpdateStatus(pr_open): %v", err)
+	}
+	issue, err := d.issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	return issue
+}
+
+func TestCheckForTDDTestsApproval_HumanApproval_ClosesTicket(t *testing.T) {
+	comments := []prComment{
+		{Author: "katerina7479", IsBot: false, State: "APPROVED", Body: "LGTM, tests look good"},
+	}
+	d := makeCommentDaemon(t, comments)
+	d.obs = &tickObservations{}
+
+	issue := tddIssuePROpen(t, d)
+	d.checkForHumanComments(issue, 42)
+
+	got, _ := d.issues.Get(issue.ID)
+	if got.Status != "closed" {
+		t.Errorf("status: got %q, want \"closed\"", got.Status)
+	}
+	if d.obs.prEventsTDDApproved != 1 {
+		t.Errorf("prEventsTDDApproved: got %d, want 1", d.obs.prEventsTDDApproved)
+	}
+}
+
+func TestCheckForTDDTestsApproval_BotApproval_DoesNotClose(t *testing.T) {
+	// Bot approvals must not close the ticket — only human approvals count.
+	comments := []prComment{
+		{Author: "github-actions[bot]", IsBot: true, State: "APPROVED", Body: ""},
+	}
+	d := makeCommentDaemon(t, comments)
+	d.obs = &tickObservations{}
+
+	issue := tddIssuePROpen(t, d)
+	d.checkForHumanComments(issue, 42)
+
+	got, _ := d.issues.Get(issue.ID)
+	if got.Status != "pr_open" {
+		t.Errorf("status: got %q, want \"pr_open\" (bot approval must be skipped)", got.Status)
+	}
+	if d.obs.prEventsTDDApproved != 0 {
+		t.Errorf("prEventsTDDApproved: got %d, want 0", d.obs.prEventsTDDApproved)
+	}
+}
+
+func TestCheckForTDDTestsApproval_CommentedNotApproved_NoClose(t *testing.T) {
+	// A COMMENTED review on a tdd_tests ticket routes to repairing, not close.
+	comments := []prComment{
+		{Author: "katerina7479", IsBot: false, State: "COMMENTED", Body: "Please fix the test setup"},
+	}
+	d := makeCommentDaemon(t, comments)
+	d.obs = &tickObservations{}
+
+	issue := tddIssuePROpen(t, d)
+	d.checkForHumanComments(issue, 42)
+
+	got, _ := d.issues.Get(issue.ID)
+	if got.Status != "repairing" {
+		t.Errorf("status: got %q, want \"repairing\" (human comment without approval → repairing)", got.Status)
+	}
+	if d.obs.prEventsTDDApproved != 0 {
+		t.Errorf("prEventsTDDApproved: got %d, want 0", d.obs.prEventsTDDApproved)
+	}
+}
+
+func TestCheckForTDDTestsApproval_NoComments_NoClose(t *testing.T) {
+	// Empty comment list → no approval → no close.
+	d := makeCommentDaemon(t, nil)
+	d.obs = &tickObservations{}
+
+	issue := tddIssuePROpen(t, d)
+	d.checkForHumanComments(issue, 42)
+
+	got, _ := d.issues.Get(issue.ID)
+	if got.Status != "pr_open" {
+		t.Errorf("status: got %q, want \"pr_open\"", got.Status)
+	}
+}
+
+func TestCheckForTDDTestsApproval_ApprovalTakesPrecedenceOverComment(t *testing.T) {
+	// When a tdd_tests PR has both an APPROVED review and a human comment,
+	// the APPROVED review wins and closes the ticket (not repairs it).
+	comments := []prComment{
+		{Author: "reviewer", IsBot: false, State: "APPROVED", Body: "Looks great"},
+		{Author: "reviewer", IsBot: false, State: "COMMENTED", Body: "minor nit below"},
+	}
+	d := makeCommentDaemon(t, comments)
+	d.obs = &tickObservations{}
+
+	issue := tddIssuePROpen(t, d)
+	d.checkForHumanComments(issue, 42)
+
+	got, _ := d.issues.Get(issue.ID)
+	if got.Status != "closed" {
+		t.Errorf("status: got %q, want \"closed\" (APPROVED takes precedence over comment)", got.Status)
+	}
+}
+
+func TestCheckForTDDTestsApproval_NonTDDTicket_ApprovalRoutesToRepairing(t *testing.T) {
+	// For a regular (non-tdd_tests) ticket, an APPROVED review should route to
+	// repairing via checkForHumanComments just like any other comment, because the
+	// body is non-empty and non-sentinel.
+	comments := []prComment{
+		{Author: "katerina7479", IsBot: false, State: "APPROVED", Body: "LGTM"},
+	}
+	d := makeCommentDaemon(t, comments)
+
+	issue := issueInStatus(t, d, "pr_open")
+	d.checkForHumanComments(issue, 42)
+
+	got, _ := d.issues.Get(issue.ID)
+	// "task" type: APPROVED review is just a comment — routes to repairing.
+	if got.Status != "repairing" {
+		t.Errorf("status: got %q, want \"repairing\" (non-tdd_tests ticket should not be closed on approval)", got.Status)
+	}
+}
+
+func TestCheckForTDDTestsApproval_ViaHandlePREvents(t *testing.T) {
+	// Integration test: handlePREvents correctly closes a tdd_tests ticket in pr_open
+	// when the PR has a human APPROVED review.
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Test design for feature X", "task", nil, nil, nil)
+	issues.UpdateType(id, "tdd_tests")
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 99)
+
+	d.getPRStateFn = newPRStateFn("MERGEABLE", "passing", nil)
+	d.getReviewCommentsFn = func(_ int) ([]prComment, error) {
+		return []prComment{
+			{Author: "katerina7479", IsBot: false, State: "APPROVED", Body: "Tests look solid"},
+		}, nil
+	}
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "closed" {
+		t.Errorf("expected tdd_tests ticket to be closed on human approval; got %q", updated.Status)
+	}
+}
+
+// --- Branch/PR handoff tests ---
+
+func TestHandoffBranchToImplementation_CopiesBranchAndPR(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	// Create tdd_tests ticket with branch and PR
+	testsID, _ := d.issues.Create("TDD tests", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	d.issues.SetBranch(testsID, "prole/tin/nc-99")
+	d.issues.SetPR(testsID, 123)
+
+	// Create implementation ticket that depends on tests
+	implID, _ := d.issues.Create("Implementation", "task", nil, nil, nil)
+	d.issues.AddDependency(implID, testsID)
+
+	testsTicket, _ := d.issues.Get(testsID)
+	d.handoffBranchToImplementation(testsTicket, 123)
+
+	impl, _ := d.issues.Get(implID)
+	if !impl.Branch.Valid || impl.Branch.String != "prole/tin/nc-99" {
+		t.Errorf("Branch: got valid=%v value=%q, want valid=true value=%q",
+			impl.Branch.Valid, impl.Branch.String, "prole/tin/nc-99")
+	}
+	if !impl.PRNumber.Valid || impl.PRNumber.Int64 != 123 {
+		t.Errorf("PRNumber: got valid=%v value=%d, want valid=true value=123",
+			impl.PRNumber.Valid, impl.PRNumber.Int64)
+	}
+}
+
+func TestHandoffBranchToImplementation_NoBranch_Skips(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	// tdd_tests ticket with no branch set
+	testsID, _ := d.issues.Create("TDD tests", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	// No SetBranch call
+
+	implID, _ := d.issues.Create("Implementation", "task", nil, nil, nil)
+	d.issues.AddDependency(implID, testsID)
+
+	testsTicket, _ := d.issues.Get(testsID)
+	d.handoffBranchToImplementation(testsTicket, 42)
+
+	impl, _ := d.issues.Get(implID)
+	// Branch and PR should remain unset
+	if impl.Branch.Valid {
+		t.Errorf("expected Branch to remain unset, got %q", impl.Branch.String)
+	}
+	if impl.PRNumber.Valid {
+		t.Errorf("expected PRNumber to remain unset, got %d", impl.PRNumber.Int64)
+	}
+}
+
+func TestHandoffBranchToImplementation_NoDependents_NoOp(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	// tdd_tests ticket with no dependent tickets
+	testsID, _ := d.issues.Create("TDD tests (no impl)", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	d.issues.SetBranch(testsID, "prole/tin/nc-77")
+	d.issues.SetPR(testsID, 77)
+
+	testsTicket, _ := d.issues.Get(testsID)
+	// Should not panic or error
+	d.handoffBranchToImplementation(testsTicket, 77)
+}
+
+func TestHandoffBranchToImplementation_ClosedDependentsExcluded(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	testsID, _ := d.issues.Create("TDD tests", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	d.issues.SetBranch(testsID, "prole/tin/nc-88")
+	d.issues.SetPR(testsID, 88)
+
+	// Closed impl should not receive the branch/PR
+	closedImplID, _ := d.issues.Create("Closed impl", "task", nil, nil, nil)
+	d.issues.AddDependency(closedImplID, testsID)
+	d.issues.UpdateStatus(closedImplID, "closed")
+
+	testsTicket, _ := d.issues.Get(testsID)
+	d.handoffBranchToImplementation(testsTicket, 88)
+
+	closed, _ := d.issues.Get(closedImplID)
+	if closed.Branch.Valid {
+		t.Errorf("closed dependent should not receive branch handoff, got %q", closed.Branch.String)
+	}
+}
+
+func TestCheckForTDDTestsApproval_HandoffsOnApproval(t *testing.T) {
+	// Full integration: approval closes tests ticket AND copies branch/PR to impl.
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+	d.obs = &tickObservations{}
+
+	// Set up tests ticket with branch + PR
+	testsID, _ := issues.Create("TDD tests", "task", nil, nil, nil)
+	issues.UpdateType(testsID, "tdd_tests")
+	issues.UpdateStatus(testsID, "pr_open")
+	issues.SetBranch(testsID, "prole/tin/nc-100")
+	issues.SetPR(testsID, 100)
+
+	// Set up impl ticket that depends on tests
+	implID, _ := issues.Create("Implementation", "task", nil, nil, nil)
+	issues.AddDependency(implID, testsID)
+
+	d.getReviewCommentsFn = func(_ int) ([]prComment, error) {
+		return []prComment{
+			{Author: "katerina7479", IsBot: false, State: "APPROVED", Body: "LGTM"},
+		}, nil
+	}
+
+	testsTicket, _ := issues.Get(testsID)
+	d.checkForHumanComments(testsTicket, 100)
+
+	// Tests ticket closed
+	tests, _ := issues.Get(testsID)
+	if tests.Status != "closed" {
+		t.Errorf("tests ticket: got status %q, want \"closed\"", tests.Status)
+	}
+
+	// Impl ticket received branch and PR
+	impl, _ := issues.Get(implID)
+	if !impl.Branch.Valid || impl.Branch.String != "prole/tin/nc-100" {
+		t.Errorf("impl Branch: got valid=%v value=%q, want valid=true value=%q",
+			impl.Branch.Valid, impl.Branch.String, "prole/tin/nc-100")
+	}
+	if !impl.PRNumber.Valid || impl.PRNumber.Int64 != 100 {
+		t.Errorf("impl PRNumber: got valid=%v value=%d, want valid=true value=100",
+			impl.PRNumber.Valid, impl.PRNumber.Int64)
+	}
 }
