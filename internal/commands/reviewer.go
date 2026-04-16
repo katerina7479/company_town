@@ -14,6 +14,7 @@ import (
 
 // Package-level vars for injection in tests.
 var ghPRBranchFn func(prNumber int) (string, error) = ghPRBranch
+var gitFetchFn func(barePath, branch string) error = gitFetch
 var gitWorktreeAddFn func(barePath, wtPath, ref string) error = gitWorktreeAdd
 var gitWorktreeRemoveFn func(barePath, wtPath string) error = gitWorktreeRemove
 
@@ -58,6 +59,13 @@ func reviewerInspectCore(cfg *config.Config, prNumber int) error {
 	barePath := prole.BareRepoPath(cfg)
 	if _, err := os.Stat(barePath); os.IsNotExist(err) {
 		return fmt.Errorf("bare clone not found at %s — run `gt start reviewer` to initialize it", barePath)
+	}
+
+	// Fetch the branch from origin so origin/<branch> resolves in the bare
+	// clone. Without this, git worktree add fails with a ref-not-found error
+	// when the branch was pushed after the last fetch (nc-206).
+	if err := gitFetchFn(barePath, branch); err != nil {
+		return fmt.Errorf("fetching origin/%s: %w", branch, err)
 	}
 
 	wtPath := prWorktreePath(cfg)
@@ -107,6 +115,16 @@ func ghPRBranch(prNumber int) (string, error) {
 		return "", fmt.Errorf("gh pr view %d: %w", prNumber, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// gitFetch runs `git fetch origin <branch>` from the bare repo to ensure
+// origin/<branch> resolves before git worktree add is called.
+func gitFetch(barePath, branch string) error {
+	cmd := exec.Command("git", "fetch", "origin", branch)
+	cmd.Dir = barePath
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // gitWorktreeAdd runs `git worktree add --detach <wtPath> <ref>` from the bare repo.
