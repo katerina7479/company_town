@@ -390,6 +390,17 @@ func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 
 	status := args[1]
 
+	// Prevent cancelling a ticket that is already closed — no work to undo.
+	if status == repo.StatusCancelled {
+		issue, err := issues.Get(id)
+		if err != nil {
+			return err
+		}
+		if issue.Status == repo.StatusClosed {
+			return fmt.Errorf("ticket %d is already closed and cannot be cancelled", id)
+		}
+	}
+
 	// Reject direct transitions to pr_open — only the reviewer verdict path
 	// (`gt ticket review <id> approve`) may produce this status (nc-215).
 	// This guard catches both direct CLI misuse and daemon misfires.

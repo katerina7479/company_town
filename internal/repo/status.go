@@ -16,6 +16,7 @@ const (
 	StatusMergeConflict = "merge_conflict"
 	StatusOnHold        = "on_hold"
 	StatusClosed        = "closed"
+	StatusCancelled     = "cancelled"
 )
 
 // Agent status constants. Use these instead of raw string literals.

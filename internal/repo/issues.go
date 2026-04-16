@@ -36,7 +36,7 @@ var ValidStatuses = []string{
 	StatusDraft, StatusOpen, StatusInProgress,
 	StatusCIRunning,
 	StatusInReview, StatusUnderReview, StatusPROpen,
-	StatusReviewed, StatusRepairing, StatusOnHold, StatusMergeConflict, StatusClosed,
+	StatusReviewed, StatusRepairing, StatusOnHold, StatusMergeConflict, StatusClosed, StatusCancelled,
 }
 
 // Valid issue types.
@@ -150,7 +150,7 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 	}
 
 	var closedAt interface{}
-	if status == StatusClosed {
+	if status == StatusClosed || status == StatusCancelled {
 		closedAt = time.Now()
 	}
 
@@ -168,7 +168,7 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 		// Human unblock: reset repair_cycle_count so the ticket gets a fresh
 		// slate. Also clear repair_reason in case it was on_hold.
 		b.expr("repair_cycle_count = 0").expr("repair_reason = NULL")
-	case StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusUnderReview, StatusPROpen, StatusClosed, StatusOnHold:
+	case StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusUnderReview, StatusPROpen, StatusClosed, StatusCancelled, StatusOnHold:
 		// Transitioning out of a repair-ish state — clear stale repair_reason.
 		// "draft" is included because a human may manually reopen a ticket from
 		// on_hold or repairing back to draft, and the old reason must not leak.
@@ -256,6 +256,38 @@ func (r *IssueRepo) ClearAssignee(id int) error {
 	)
 	if err != nil {
 		return fmt.Errorf("clearing issue assignee: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
+// ClearBranch sets branch to NULL on an issue.
+func (r *IssueRepo) ClearBranch(id int) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET branch = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("clearing issue branch: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("issue %d not found", id)
+	}
+	return nil
+}
+
+// ClearPR sets pr_number to NULL on an issue.
+func (r *IssueRepo) ClearPR(id int) error {
+	result, err := r.db.Exec(
+		`UPDATE issues SET pr_number = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("clearing issue PR number: %w", err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {

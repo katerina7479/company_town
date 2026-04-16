@@ -1779,6 +1779,58 @@ func TestUpdateStatus_draftClearsRepairReason(t *testing.T) {
 	}
 }
 
+func TestClearBranch(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Branch clear ticket", "task", nil, nil, nil)
+
+	if err := r.Assign(id, "prole-copper", "prole/copper/nc-42"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	got, _ := r.Get(id)
+	if !got.Branch.Valid {
+		t.Fatal("expected branch to be set before ClearBranch")
+	}
+
+	if err := r.ClearBranch(id); err != nil {
+		t.Fatalf("ClearBranch: %v", err)
+	}
+
+	got, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Branch.Valid {
+		t.Errorf("expected branch=NULL after ClearBranch, got %q", got.Branch.String)
+	}
+}
+
+func TestClearPR(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("PR clear ticket", "task", nil, nil, nil)
+
+	if err := r.SetPR(id, 123); err != nil {
+		t.Fatalf("SetPR: %v", err)
+	}
+
+	got, _ := r.Get(id)
+	if !got.PRNumber.Valid {
+		t.Fatal("expected pr_number to be set before ClearPR")
+	}
+
+	if err := r.ClearPR(id); err != nil {
+		t.Fatalf("ClearPR: %v", err)
+	}
+
+	got, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PRNumber.Valid {
+		t.Errorf("expected pr_number=NULL after ClearPR, got %v", got.PRNumber.Int64)
+	}
+}
+
 func TestCreateTicket_TDDTestsType(t *testing.T) {
 	r := setupTestRepo(t)
 	id, err := r.Create("Failing auth tests", "tdd_tests", nil, nil, nil)

@@ -20,6 +20,7 @@ func TestValidStatusesMatchConsts(t *testing.T) {
 		StatusMergeConflict: true,
 		StatusOnHold:        true,
 		StatusClosed:        true,
+		StatusCancelled:     true,
 	}
 
 	// Every entry in ValidStatuses must have a matching const.
