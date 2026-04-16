@@ -104,19 +104,19 @@ func agentStatus(agents *repo.AgentRepo, args []string) error {
 
 	switch {
 	case issueID != nil:
-		if status != "working" {
-			return fmt.Errorf("--issue requires status \"working\", got %q", status)
+		if status != repo.StatusWorking {
+			return fmt.Errorf("--issue requires status %q, got %q", repo.StatusWorking, status)
 		}
 		if err := agents.SetCurrentIssue(name, issueID); err != nil {
 			return err
 		}
-		cmdlog.Annotate("agent="+name, before, "working")
+		cmdlog.Annotate("agent="+name, before, repo.StatusWorking)
 		fmt.Printf("Agent %s → working (issue %d)\n", name, *issueID)
-	case status == "idle":
+	case status == repo.StatusIdle:
 		if err := agents.ClearCurrentIssue(name); err != nil {
 			return err
 		}
-		cmdlog.Annotate("agent="+name, before, "idle")
+		cmdlog.Annotate("agent="+name, before, repo.StatusIdle)
 		fmt.Printf("Agent %s → idle\n", name)
 	default:
 		if err := agents.UpdateStatus(name, status); err != nil {

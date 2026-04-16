@@ -289,7 +289,7 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		return fmt.Errorf("recording tmux session for %s: %w", name, err)
 	}
 
-	if err := agents.UpdateStatus(name, "idle"); err != nil {
+	if err := agents.UpdateStatus(name, repo.StatusIdle); err != nil {
 		return fmt.Errorf("updating status: %w", err)
 	}
 
@@ -304,7 +304,7 @@ func Reset(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		return err
 	}
 
-	if agent.Status != "idle" {
+	if agent.Status != repo.StatusIdle {
 		return fmt.Errorf("prole %s is %s, not idle (cannot reset)", name, agent.Status)
 	}
 
@@ -375,7 +375,7 @@ func isValidWorktreePath(path string) bool {
 func idleProlesNeedingReset(all []*repo.Agent) []*repo.Agent {
 	var out []*repo.Agent
 	for _, a := range all {
-		if a.Type != "prole" || a.Status != "idle" {
+		if a.Type != "prole" || a.Status != repo.StatusIdle {
 			continue
 		}
 		if a.CurrentIssue.Valid {
@@ -566,7 +566,7 @@ func PruneDeadWorktrees(cfg *config.Config, agents *repo.AgentRepo, logger *log.
 
 	var pruned []string
 	for _, a := range all {
-		if a.Type != "prole" || a.Status != "dead" {
+		if a.Type != "prole" || a.Status != repo.StatusDead {
 			continue
 		}
 		if !a.WorktreePath.Valid || !isValidWorktreePath(a.WorktreePath.String) {

@@ -231,7 +231,7 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 		prompt := agentStartPrompt(agent.Type, cfg.TicketPrefix)
 		sessionName := session.SessionName(agent.Name)
 
-		if err := agents.UpdateStatus(agent.Name, "idle"); err != nil {
+		if err := agents.UpdateStatus(agent.Name, repo.StatusIdle); err != nil {
 			return fmt.Errorf("updating agent status: %w", err)
 		}
 		if err := agents.SetTmuxSession(agent.Name, sessionName); err != nil {
@@ -245,7 +245,7 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 			Prompt:   prompt,
 			EnvVars:  map[string]string{"CT_AGENT_NAME": agent.Name},
 		}); err != nil {
-			agents.UpdateStatus(agent.Name, "dead") //nolint:errcheck
+			agents.UpdateStatus(agent.Name, repo.StatusDead) //nolint:errcheck
 			return fmt.Errorf("creating session for %s: %w", agent.Name, err)
 		}
 
@@ -329,7 +329,7 @@ func (d *Daemon) isAgentWorking(name string) bool {
 	if err != nil {
 		return false // agent not found — allow nudge
 	}
-	return agent.Status == "working"
+	return agent.Status == repo.StatusWorking
 }
 
 // recordNudge records the current time and ticket digest for key.
@@ -565,7 +565,7 @@ func (d *Daemon) handleIdleAssignedProles() {
 		if agent.Type != "prole" {
 			continue
 		}
-		if agent.Status != "idle" {
+		if agent.Status != repo.StatusIdle {
 			// Already working — no nudge needed.
 			continue
 		}
@@ -603,7 +603,7 @@ func (d *Daemon) handleIdleAssignedProles() {
 // skipped (or failed) the explicit `gt ticket status <id> in_progress` step —
 // leaving the ticket stuck in "open" while the agent is actively working.
 func (d *Daemon) handleWorkingOpenTickets() {
-	working, err := d.agents.ListByStatus("working")
+	working, err := d.agents.ListByStatus(repo.StatusWorking)
 	if err != nil {
 		d.logger.Printf("handleWorkingOpenTickets: listing working agents: %v", err)
 		return
@@ -783,7 +783,7 @@ func (d *Daemon) handleStuckAgents() {
 		return // Mayor not running, nowhere to escalate
 	}
 
-	agents, err := d.agents.ListByStatus("working")
+	agents, err := d.agents.ListByStatus(repo.StatusWorking)
 	if err != nil {
 		d.logger.Printf("error listing working agents: %v", err)
 		return
@@ -886,7 +886,7 @@ func (d *Daemon) handleStuckPrompts() {
 		return // Mayor not running, nowhere to escalate
 	}
 
-	agents, err := d.agents.ListByStatus("working")
+	agents, err := d.agents.ListByStatus(repo.StatusWorking)
 	if err != nil {
 		d.logger.Printf("error listing working agents for prompt check: %v", err)
 		return
@@ -1046,7 +1046,7 @@ func (d *Daemon) handleDeadSessions() {
 		sessionAlive := agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String)
 		// Skip agents with a live session unless they are already marked dead.
 		// A dead-status prole with a live session still needs to be cleaned up.
-		if sessionAlive && agent.Status != "dead" {
+		if sessionAlive && agent.Status != repo.StatusDead {
 			continue
 		}
 		if agent.Type == "prole" {
@@ -1073,12 +1073,12 @@ func (d *Daemon) handleDeadSessions() {
 			}
 			continue
 		}
-		if agent.Status == "dead" {
+		if agent.Status == repo.StatusDead {
 			continue
 		}
 		d.logger.Printf("session %s for agent %s not found — marking dead",
 			agent.TmuxSession.String, agent.Name)
-		if err := d.agents.UpdateStatus(agent.Name, "dead"); err != nil {
+		if err := d.agents.UpdateStatus(agent.Name, repo.StatusDead); err != nil {
 			d.logger.Printf("error marking agent %s dead: %v", agent.Name, err)
 		}
 	}
@@ -1108,7 +1108,7 @@ func (d *Daemon) handleDraftTickets() {
 		// Architect not running — attempt restart if enabled and off cooldown.
 		if d.restartDeadAgents && d.restartAgent != nil && d.shouldRestart("architect") {
 			architect, err := d.agents.Get("architect")
-			if err == nil && (architect.Status == "dead" || architect.Status == "idle") {
+			if err == nil && (architect.Status == repo.StatusDead || architect.Status == repo.StatusIdle) {
 				if err := d.restartAgent(architect); err != nil {
 					d.logger.Printf("error restarting architect: %v", err)
 				} else {
@@ -1234,7 +1234,7 @@ func (d *Daemon) nudgeableReviewerSessions() []string {
 	}
 	var sessions []string
 	for _, a := range allAgents {
-		if a.Type != "reviewer" || a.Status == "dead" || a.Status == "working" {
+		if a.Type != "reviewer" || a.Status == repo.StatusDead || a.Status == repo.StatusWorking {
 			continue
 		}
 		s := session.SessionName(a.Name)
@@ -1257,7 +1257,7 @@ func (d *Daemon) restartDeadReviewers() {
 		if a.Type != "reviewer" {
 			continue
 		}
-		if a.Status != "dead" && a.Status != "idle" {
+		if a.Status != repo.StatusDead && a.Status != repo.StatusIdle {
 			continue
 		}
 		s := session.SessionName(a.Name)
