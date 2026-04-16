@@ -30,7 +30,7 @@ func TestStartAgent_resetsDeadStatusWhenSessionExists(t *testing.T) {
 	if err := agents.Register("mayor", "mayor", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := agents.UpdateStatus("mayor", "dead"); err != nil {
+	if err := agents.UpdateStatus("mayor", repo.StatusDead); err != nil {
 		t.Fatalf("UpdateStatus dead: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func TestStartAgent_resetsDeadStatusWhenSessionExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agents.Get(mayor): %v", err)
 	}
-	if a.Status != "idle" {
+	if a.Status != repo.StatusIdle {
 		t.Errorf("expected status=idle after start with dead DB entry, got %q", a.Status)
 	}
 }
@@ -78,7 +78,7 @@ func TestStartAgent_doesNotOverwriteWorkingStatus(t *testing.T) {
 	if err := agents.Register("mayor", "mayor", nil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := agents.UpdateStatus("mayor", "working"); err != nil {
+	if err := agents.UpdateStatus("mayor", repo.StatusWorking); err != nil {
 		t.Fatalf("UpdateStatus working: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestStartAgent_doesNotOverwriteWorkingStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agents.Get(mayor): %v", err)
 	}
-	if a.Status != "working" {
+	if a.Status != repo.StatusWorking {
 		t.Errorf("expected status=working to be preserved, got %q", a.Status)
 	}
 }

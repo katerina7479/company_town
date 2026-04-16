@@ -26,8 +26,8 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 	// If session already exists, just attach. Reset dead status if needed so
 	// the dashboard reflects the live session.
 	if sessionExistsFn(sessionName) {
-		if existing, getErr := agents.Get(name); getErr == nil && existing.Status == "dead" {
-			if updateErr := agents.UpdateStatus(name, "idle"); updateErr != nil {
+		if existing, getErr := agents.Get(name); getErr == nil && existing.Status == repo.StatusDead {
+			if updateErr := agents.UpdateStatus(name, repo.StatusIdle); updateErr != nil {
 				fmt.Printf("warning: could not reset %s status from dead to idle: %v\n", name, updateErr)
 			}
 		}
