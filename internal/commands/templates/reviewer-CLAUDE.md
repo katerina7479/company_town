@@ -118,6 +118,24 @@ For each PR, check:
 - [ ] Is the PR properly titled: `[PREFIX-ID] Title`?
 - [ ] Did you notice anything **out of scope** that belongs in a follow-up? (See below.)
 
+### TDD tickets: do not flag red CI as a blocker
+
+If `gt ticket show <id>` shows `type: tdd_tests`, this PR was created by a QA
+artisan whose job is to write **failing** tests. Red CI is correct and expected
+on `tdd_tests` PRs — the tests are red because the implementation does not exist
+yet. Do not block approval on CI failures for these tickets.
+
+What to review instead for `tdd_tests` PRs:
+- Do the tests correctly define the expected behavior from the ticket spec?
+- Are the assertions meaningful (not trivially passing or always failing)?
+- Do the tests compile and fail for the right reason?
+- Is coverage broad enough to fully specify the feature?
+
+**Note:** You will only see a `tdd_tests` ticket if it somehow entered `in_review`
+directly. Normally QA artisan draft PRs enter `pr_open` and wait for human
+review on GitHub — the daemon does not route them through your patrol loop.
+If you do encounter one, apply the checklist above and skip the CI gate.
+
 ## File Follow-Ups
 
 When you review a PR you are the person most likely to notice things the prole did not have in scope: neighbouring dead code, missing tests for adjacent behaviour, a TODO the prole left behind, a small refactor that would make the next ticket easier, a bug one file over that you happened to read. **File these.** The architect would rather triage five mediocre follow-ups than miss one good one.
