@@ -23,17 +23,19 @@ type Client interface {
 	SendKeys(name, keys string) error
 	Kill(name string) error
 	SpawnAttach(name string) error
+	CapturePane(name string) (string, error)
 }
 
-// tmuxClient is the real Client. Fields check, exec, sleep, and spawn hold
-// the exec seams that were previously package-level variables; moving them
+// tmuxClient is the real Client. Fields check, exec, sleep, spawn, and capture
+// hold the exec seams that were previously package-level variables; moving them
 // onto the struct allows each test to create an isolated instance without
 // mutating global state.
 type tmuxClient struct {
-	check func(name string) bool                            // tmux has-session
-	exec  func(args ...string) error                        // tmux send-keys / kill-session
-	sleep func()                                            // pause inside SendKeys
-	spawn func(prog string, args ...string) ([]byte, error) // osascript etc.
+	check   func(name string) bool                            // tmux has-session
+	exec    func(args ...string) error                        // tmux send-keys / kill-session
+	sleep   func()                                            // pause inside SendKeys
+	spawn   func(prog string, args ...string) ([]byte, error) // osascript etc.
+	capture func(args ...string) ([]byte, error)              // tmux capture-pane
 }
 
 // New returns a Client backed by real tmux.
@@ -48,6 +50,9 @@ func New() Client {
 		sleep: func() { time.Sleep(150 * time.Millisecond) },
 		spawn: func(prog string, args ...string) ([]byte, error) {
 			return exec.Command(prog, args...).CombinedOutput()
+		},
+		capture: func(args ...string) ([]byte, error) {
+			return exec.Command("tmux", args...).Output()
 		},
 	}
 }
@@ -193,6 +198,22 @@ func (c *tmuxClient) Kill(name string) error {
 		return fmt.Errorf("killing session %s: %w", name, err)
 	}
 	return nil
+}
+
+// CapturePane returns the visible text content of a tmux pane as a string.
+// It uses `tmux capture-pane -p -t <name>` which writes the pane content to
+// stdout. Returns an error if the session does not exist.
+func CapturePane(name string) (string, error) { return defaultClient.CapturePane(name) }
+
+func (c *tmuxClient) CapturePane(name string) (string, error) {
+	if !c.check(name) {
+		return "", fmt.Errorf("session %s does not exist", name)
+	}
+	out, err := c.capture("capture-pane", "-p", "-t", name)
+	if err != nil {
+		return "", fmt.Errorf("capturing pane %s: %w", name, err)
+	}
+	return string(out), nil
 }
 
 // ListCompanyTown returns all tmux sessions with the ct- prefix.

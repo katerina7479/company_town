@@ -21,10 +21,11 @@ func newTestClient(check func(string) bool, exec func(...string) error) *tmuxCli
 		exec = func(...string) error { return nil }
 	}
 	return &tmuxClient{
-		check: check,
-		exec:  exec,
-		sleep: func() {},
-		spawn: func(string, ...string) ([]byte, error) { return nil, nil },
+		check:   check,
+		exec:    exec,
+		sleep:   func() {},
+		spawn:   func(string, ...string) ([]byte, error) { return nil, nil },
+		capture: func(...string) ([]byte, error) { return nil, nil },
 	}
 }
 
@@ -453,4 +454,36 @@ func TestDefaultClient_checkClosure_doesNotPanic(t *testing.T) {
 	// We are deliberately using the real defaultClient here to exercise
 	// the closure created inside New().
 	_ = Exists("ct-nc188-nonexistent-check-test")
+}
+
+// TestCapturePane_ReturnsContent verifies that CapturePane returns the output
+// of `tmux capture-pane -p -t <name>` as a string.
+func TestCapturePane_ReturnsContent(t *testing.T) {
+	const paneContent = "line1\nline2\nAre you sure? (y/n)\n"
+	c := newTestClient(nil, nil)
+	c.capture = func(args ...string) ([]byte, error) {
+		return []byte(paneContent), nil
+	}
+
+	got, err := c.CapturePane("ct-copper")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if got != paneContent {
+		t.Errorf("CapturePane = %q, want %q", got, paneContent)
+	}
+}
+
+// TestCapturePane_SessionNotFound verifies that CapturePane returns an error
+// when the session does not exist.
+func TestCapturePane_SessionNotFound(t *testing.T) {
+	c := newTestClient(func(string) bool { return false }, nil)
+
+	_, err := c.CapturePane("ct-nonexistent")
+	if err == nil {
+		t.Fatal("expected error for non-existent session, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected 'does not exist' in error, got: %v", err)
+	}
 }

@@ -58,6 +58,7 @@ type Daemon struct {
 	sendKeys            func(session, msg string) error
 	sessionExists       func(session string) bool
 	killSession         func(session string) error
+	capturePane         func(session string) (string, error)
 	lastNudged          map[string]time.Time
 	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
 	nudgeCooldown       time.Duration
@@ -137,6 +138,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		sendKeys:            session.SendKeys,
 		sessionExists:       session.Exists,
 		killSession:         session.Kill,
+		capturePane:         session.CapturePane,
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
 		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
@@ -393,6 +395,7 @@ func (d *Daemon) poll() {
 	d.handleInReviewTickets()
 	d.handlePREvents()
 	d.handleRepairCycleEscalation()
+	d.handleStuckPrompts()
 	d.handleEpicAutoClose()
 	d.handleQualityBaseline()
 
@@ -816,6 +819,120 @@ func (d *Daemon) handleStuckAgents() {
 
 		if err := d.sendKeys(mayorSession, msg); err != nil {
 			d.logger.Printf("error escalating stuck agent %s to Mayor: %v", agent.Name, err)
+		} else {
+			d.recordNudge(nudgeKey, "")
+		}
+	}
+}
+
+// stuckPromptPatterns are substrings that indicate a prole's pane is showing
+// a blocking prompt requiring human input. Matched case-insensitively against
+// the last 20 lines of the captured pane so historical prompt text that has
+// already scrolled past does not produce false positives.
+var stuckPromptPatterns = []string{
+	"do you want to",
+	"allow ",
+	"proceed? (y/n)",
+	"proceed? [y/n]",
+	"proceed? [y/n]",
+	"(y/n)",
+	"(y/n)",
+	"[y/n]",
+	"[y/n]",
+	"press enter to continue",
+	"are you sure",
+	"confirm?",
+}
+
+// detectBlockingPrompt checks the last 20 lines of a captured tmux pane for
+// known blocking-prompt patterns. Returns the matched line (trimmed) or "" if
+// no prompt is detected.
+func detectBlockingPrompt(paneContent string) string {
+	lines := strings.Split(paneContent, "\n")
+	start := len(lines) - 20
+	if start < 0 {
+		start = 0
+	}
+	for _, line := range lines[start:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		for _, pattern := range stuckPromptPatterns {
+			if strings.Contains(lower, pattern) {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+// handleStuckPrompts captures each working prole's tmux pane and checks for
+// known blocking-prompt patterns. When a prompt is detected it escalates to
+// the Mayor (rate-limited by the nudge cooldown) so a human can intervene.
+// This is complementary to handleRepairCycleEscalation: that handler catches
+// generic no-progress situations; this catches the specific frozen-on-a-prompt
+// case, typically much sooner.
+func (d *Daemon) handleStuckPrompts() {
+	if d.capturePane == nil {
+		return // not wired (e.g. old test setup)
+	}
+
+	mayorSession := session.SessionName("mayor")
+	if !d.sessionExists(mayorSession) {
+		return // Mayor not running, nowhere to escalate
+	}
+
+	agents, err := d.agents.ListByStatus("working")
+	if err != nil {
+		d.logger.Printf("error listing working agents for prompt check: %v", err)
+		return
+	}
+
+	for _, agent := range agents {
+		if agent.Type != "prole" {
+			continue // only proles are pane-captured
+		}
+		if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
+			continue
+		}
+		sess := agent.TmuxSession.String
+		if !d.sessionExists(sess) {
+			continue
+		}
+
+		content, err := d.capturePane(sess)
+		if err != nil {
+			d.logger.Printf("error capturing pane for %s: %v", agent.Name, err)
+			continue
+		}
+
+		prompt := detectBlockingPrompt(content)
+		if prompt == "" {
+			continue
+		}
+
+		nudgeKey := "prompt:" + agent.Name
+		if !d.shouldNudge(nudgeKey) {
+			continue
+		}
+
+		ticketInfo := "no assigned ticket"
+		if agent.CurrentIssue.Valid {
+			ticketInfo = fmt.Sprintf("%s-%d", d.cfg.TicketPrefix, agent.CurrentIssue.Int64)
+		}
+
+		d.logger.Printf("agent %s appears stuck on a prompt (ticket: %s): %s",
+			agent.Name, ticketInfo, prompt)
+
+		msg := fmt.Sprintf("STUCK PROMPT: Agent %s is blocked on an input prompt while working on %s. "+
+			"Prompt detected: %q. "+
+			"Please check the pane (ct attach %s) and respond to the prompt or kill the session.",
+			agent.Name, ticketInfo, prompt, agent.Name)
+
+		if err := d.sendKeys(mayorSession, msg); err != nil {
+			d.logger.Printf("error escalating stuck prompt for %s: %v", agent.Name, err)
 		} else {
 			d.recordNudge(nudgeKey, "")
 		}
