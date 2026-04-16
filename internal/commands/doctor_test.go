@@ -316,10 +316,11 @@ func TestCheckConfig_missingGithubRepo(t *testing.T) {
 
 func TestCheckConfig_gitlabPlatformNoGithubRepo(t *testing.T) {
 	cfg := &config.Config{
-		TicketPrefix: "nc",
-		ProjectRoot:  "/tmp/proj",
-		Platform:     config.PlatformGitLab,
-		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+		TicketPrefix:  "nc",
+		ProjectRoot:   "/tmp/proj",
+		Platform:      config.PlatformGitLab,
+		GitlabProject: "mygroup/myrepo",
+		Agents:        config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
 		findRoot:   func() (string, error) { return "/tmp/proj", nil },
@@ -348,6 +349,26 @@ func TestCheckConfig_missingMultipleFields(t *testing.T) {
 	}
 	if r.Fix == "" {
 		t.Error("expected Fix to be set")
+	}
+}
+
+func TestCheckConfig_gitlabMissingProject(t *testing.T) {
+	cfg := &config.Config{
+		Platform:     "gitlab",
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return cfg, nil },
+	}
+	r, _ := checkConfig(deps)
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if !strings.Contains(r.Detail, "gitlab_project") {
+		t.Errorf("detail %q should mention gitlab_project", r.Detail)
 	}
 }
 
@@ -413,10 +434,11 @@ func TestRunDoctor_allPass(t *testing.T) {
 
 func TestRunDoctor_gitlabPlatform(t *testing.T) {
 	gitlabCfg := &config.Config{
-		TicketPrefix: "nc",
-		ProjectRoot:  "/tmp/proj",
-		Platform:     config.PlatformGitLab,
-		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+		TicketPrefix:  "nc",
+		ProjectRoot:   "/tmp/proj",
+		Platform:      config.PlatformGitLab,
+		GitlabProject: "mygroup/myrepo",
+		Agents:        config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
 		runCmd: func(name string, args ...string) (string, error) {
