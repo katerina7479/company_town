@@ -16,6 +16,7 @@ func Status() error {
 	}
 	defer conn.Close()
 
+	session.SessionPrefix = cfg.SessionPrefix
 	agents := repo.NewAgentRepo(conn, nil)
 	issues := repo.NewIssueRepo(conn, nil)
 

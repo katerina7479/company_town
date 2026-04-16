@@ -51,6 +51,7 @@ func Start(args []string) error {
 	}
 	defer conn.Close()
 
+	session.SessionPrefix = cfg.SessionPrefix
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	events := eventlog.NewLogger(ctDir)
 	agents := repo.NewAgentRepo(conn, events)
@@ -235,6 +236,13 @@ func stopDaemonWithDeps(agents *repo.AgentRepo, sessionName string) error {
 func Stop(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt stop <agent-name>")
+	}
+
+	// Load config to set session.SessionPrefix before building any session name.
+	if projectRoot, findErr := db.FindProjectRoot(); findErr == nil {
+		if cfg, cfgErr := config.Load(projectRoot); cfgErr == nil {
+			session.SessionPrefix = cfg.SessionPrefix
+		}
 	}
 
 	name := args[0]

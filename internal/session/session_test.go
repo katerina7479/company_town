@@ -178,8 +178,12 @@ func TestSendKeys_sessionMissing(t *testing.T) {
 	}
 }
 
-// TestSessionName verifies that SessionName prepends the ct- prefix.
+// TestSessionName verifies that SessionName prepends the configured prefix.
 func TestSessionName(t *testing.T) {
+	orig := SessionPrefix
+	SessionPrefix = "ct-"
+	t.Cleanup(func() { SessionPrefix = orig })
+
 	cases := []struct{ in, want string }{
 		{"mayor", "ct-mayor"},
 		{"architect", "ct-architect"},
@@ -189,6 +193,17 @@ func TestSessionName(t *testing.T) {
 		if got := SessionName(tc.in); got != tc.want {
 			t.Errorf("SessionName(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestSessionName_customPrefix verifies that SessionName uses a project-configured prefix.
+func TestSessionName_customPrefix(t *testing.T) {
+	orig := SessionPrefix
+	SessionPrefix = "myproject-"
+	t.Cleanup(func() { SessionPrefix = orig })
+
+	if got := SessionName("mayor"); got != "myproject-mayor" {
+		t.Errorf("SessionName(%q) = %q, want %q", "mayor", got, "myproject-mayor")
 	}
 }
 

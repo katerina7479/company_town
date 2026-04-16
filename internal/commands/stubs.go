@@ -87,6 +87,8 @@ func Start() error {
 		return err
 	}
 
+	session.SessionPrefix = cfg.SessionPrefix
+
 	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
 	agents := repo.NewAgentRepo(conn, events)
 
@@ -154,6 +156,7 @@ func Architect() error {
 	}
 	defer conn.Close()
 
+	session.SessionPrefix = cfg.SessionPrefix
 	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
 	agents := repo.NewAgentRepo(conn, events)
 	prompt := fmt.Sprintf(
@@ -175,6 +178,8 @@ func Artisan(specialty string) error {
 		return err
 	}
 	defer conn.Close()
+
+	session.SessionPrefix = cfg.SessionPrefix
 
 	// Look up specialty in config
 	artisanCfg, ok := cfg.Agents.Artisan[specialty]
@@ -316,6 +321,17 @@ func ArchitectStop() error {
 // leaves everything else running.
 // When clean is true, worktree directories for stopped prole sessions are removed.
 func Stop(target string, clean bool) error {
+	// Load config first so session.SessionPrefix is set before ListCompanyTown.
+	projectRoot, err := db.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+	cfg, cfgErr := config.Load(projectRoot)
+	if cfgErr == nil {
+		session.SessionPrefix = cfg.SessionPrefix
+	}
+	ctDir := config.CompanyTownDir(projectRoot)
+
 	sessions, err := session.ListCompanyTown()
 	if err != nil {
 		return err
@@ -344,12 +360,6 @@ func Stop(target string, clean bool) error {
 			fmt.Println("         Agents will NOT get time to finish in-flight commits.")
 		}
 	}
-
-	projectRoot, err := db.FindProjectRoot()
-	if err != nil {
-		return err
-	}
-	ctDir := config.CompanyTownDir(projectRoot)
 
 	conn, _, connErr := db.OpenFromWorkingDir()
 	var updateStatus func(string, string) error
@@ -455,9 +465,14 @@ func Attach(name string) error {
 // target restricts the operation to a single component (see nukeCore).
 // An empty target performs the default full teardown.
 func Nuke(target string) error {
+	// Load config first so session.SessionPrefix is set before ListCompanyTown.
 	projectRoot, err := db.FindProjectRoot()
 	if err != nil {
 		return err
+	}
+	cfg, cfgErr := config.Load(projectRoot)
+	if cfgErr == nil {
+		session.SessionPrefix = cfg.SessionPrefix
 	}
 	ctDir := config.CompanyTownDir(projectRoot)
 
@@ -519,6 +534,7 @@ func Nuke(target string) error {
 //     whose name is ct-<target>, remove its worktree, and run git worktree prune.
 //     The bare clone is NOT removed in single-target mode (it is shared by all
 //     proles; removing it while other proles are running would break them).
+//
 // nukeCore returns the number of sessions actually killed. The caller uses
 // this to decide whether to print a "killed" summary line.
 func nukeCore(sessions []string, ctDir string, target string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) int {
