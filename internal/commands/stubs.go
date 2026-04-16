@@ -19,8 +19,14 @@ import (
 func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.AgentRepo, prompt string) error {
 	sessionName := session.SessionName(name)
 
-	// If session already exists, just attach
+	// If session already exists, just attach. Reset dead status if needed so
+	// the dashboard reflects the live session.
 	if session.Exists(sessionName) {
+		if existing, getErr := agents.Get(name); getErr == nil && existing.Status == "dead" {
+			if updateErr := agents.UpdateStatus(name, "idle"); updateErr != nil {
+				fmt.Printf("warning: could not reset %s status from dead to idle: %v\n", name, updateErr)
+			}
+		}
 		fmt.Printf("%s is already running, attaching...\n", name)
 		return session.Attach(sessionName)
 	}

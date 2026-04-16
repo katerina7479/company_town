@@ -559,6 +559,52 @@ func TestStart_nonDaemon_alreadyRunning(t *testing.T) {
 	}
 }
 
+// TestStart_nonDaemon_alreadyRunning_resetsDeadStatus verifies that when the tmux
+// session already exists but the DB shows the agent as dead (crash-and-restart
+// scenario), startAgentWithDeps resets the status to idle.
+func TestStart_nonDaemon_alreadyRunning_resetsDeadStatus(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot:  tmpDir,
+		TicketPrefix: "nc",
+		Agents: config.AgentsConfig{
+			Architect: config.AgentConfig{Model: "claude-test"},
+		},
+	}
+	agents := repo.NewAgentRepo(conn, nil)
+
+	// Pre-register the architect agent and mark it dead.
+	if err := agents.Register("architect", "architect", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("architect", repo.StatusDead); err != nil {
+		t.Fatalf("UpdateStatus dead: %v", err)
+	}
+
+	// Stub tmux: session is live.
+	oldTmux := tmuxExistsFn
+	defer func() { tmuxExistsFn = oldTmux }()
+	tmuxExistsFn = func(_ string) bool { return true }
+
+	if err := startAgentWithDeps(cfg, agents, "architect"); err != nil {
+		t.Fatalf("startAgentWithDeps with running dead session: %v", err)
+	}
+
+	a, err := agents.Get("architect")
+	if err != nil {
+		t.Fatalf("agents.Get(architect): %v", err)
+	}
+	if a.Status != repo.StatusIdle {
+		t.Errorf("expected status=idle after start with dead DB entry, got %q", a.Status)
+	}
+}
+
 // TestStop_nonDaemon_running verifies that Stop signals a running non-daemon agent
 // and returns nil even when the database is unavailable (DB open failure is non-fatal
 // in Stop's non-daemon path).

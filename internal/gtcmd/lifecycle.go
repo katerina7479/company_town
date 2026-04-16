@@ -162,6 +162,14 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 	sessionName := session.SessionName(name)
 
 	if tmuxExistsFn(sessionName) {
+		// Session is live. If the DB shows dead (e.g. daemon marked it dead after a
+		// crash and the user started a new session), reset to idle so gt status and
+		// the dashboard reflect reality.
+		if existing, getErr := agents.Get(name); getErr == nil && existing.Status == repo.StatusDead {
+			if updateErr := agents.UpdateStatus(name, repo.StatusIdle); updateErr != nil {
+				fmt.Printf("warning: could not reset %s status from dead to idle: %v\n", name, updateErr)
+			}
+		}
 		fmt.Printf("%s is already running (session: %s)\n", name, sessionName)
 		return nil
 	}
