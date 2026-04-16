@@ -43,6 +43,7 @@ type tickObservations struct {
 	prEventsConflictResolved int  // merge_conflict PRs moved back to pr_open
 	prEventsCIPass           int  // ci_running PRs promoted to in_review (all checks green)
 	prEventsCIFail           int  // ci_running PRs moved to repairing (CI failure)
+	prEventsTDDApproved      int  // tdd_tests PRs closed on human APPROVED review
 	epics                    int  // completable epics found
 	qualitySkip              bool // quality baseline was interval-guarded
 	repairCycleEscalations   int  // tickets moved to on_hold for exceeding repair cycle threshold
@@ -434,7 +435,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //
 // Format:
 //
-//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N/N/N/N/N repairEsc=N epics=N quality=skip|ran
+//	tick: dead=N worktrees=skip|N prBackfill=N/N drafts=N assign=N/N/N inReview=N prEvents=N/N/N/N/N/N/N/N/N repairEsc=N epics=N quality=skip|ran
 //
 // Fields:
 //
@@ -444,7 +445,7 @@ func runCmd(cmd *exec.Cmd) ([]byte, error) {
 //	drafts       — draft tickets found this tick
 //	assign       — selectable tickets / available slots / actually assigned
 //	inReview     — in_review tickets with a PR number
-//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved / ci-pass / ci-fail
+//	prEvents     — tickets with PRs / merged / moved-to-repairing / closed-without-merge / conflict / conflict-resolved / ci-pass / ci-fail / tdd-approved
 //	repairEsc    — tickets moved to on_hold for exceeding repair-cycle threshold
 //	epics        — completable epics found
 //	quality      — "ran" when baseline executed, "skip" when interval-guarded
@@ -457,7 +458,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 	if obs.qualitySkip {
 		quality = "skip"
 	}
-	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d/%d/%d/%d/%d repairEsc=%d epics=%d quality=%s",
+	logger.Printf("tick: dead=%d worktrees=%s prBackfill=%d/%d drafts=%d assign=%d/%d/%d inReview=%d prEvents=%d/%d/%d/%d/%d/%d/%d/%d/%d repairEsc=%d epics=%d quality=%s",
 		obs.dead,
 		worktrees,
 		obs.prBackfillFound, obs.prBackfillDone,
@@ -466,6 +467,7 @@ func logTickSummary(logger *log.Logger, obs tickObservations) {
 		obs.inReview,
 		obs.prEventsTotal, obs.prEventsMerged, obs.prEventsRepairing, obs.prEventsClosed,
 		obs.prEventsConflict, obs.prEventsConflictResolved, obs.prEventsCIPass, obs.prEventsCIFail,
+		obs.prEventsTDDApproved,
 		obs.repairCycleEscalations,
 		obs.epics,
 		quality,
@@ -1421,6 +1423,13 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		return
 	}
 
+	// For tdd_tests tickets, a human APPROVED review closes the ticket (clearing
+	// the dependency edge so the paired implementation ticket becomes selectable).
+	// Check for approval before the general human-comment repairing path.
+	if issue.IssueType == "tdd_tests" && d.checkForTDDTestsApproval(issue, prNum, comments) {
+		return
+	}
+
 	for _, c := range comments {
 		// Skip bot accounts and comments from the AI reviewer (sentinel prefix).
 		if c.IsBot || strings.HasPrefix(strings.TrimSpace(c.Body), "[ct-reviewer]") {
@@ -1446,6 +1455,33 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 	}
 }
 
+// checkForTDDTestsApproval closes a tdd_tests ticket when a human reviewer has
+// posted an APPROVED review on its draft PR. This clears the dependency edge so
+// the paired implementation ticket becomes selectable for assignment.
+//
+// Returns true if an approval was found and the ticket was closed (or the close
+// failed — either way the caller should not continue processing). Returns false
+// when no APPROVED human review exists.
+func (d *Daemon) checkForTDDTestsApproval(issue *repo.Issue, prNum int, comments []prComment) bool {
+	for _, c := range comments {
+		if c.IsBot || c.State != "APPROVED" {
+			continue
+		}
+		d.logger.Printf("human approval on PR #%d by %s — closing tdd_tests ticket %s-%d",
+			prNum, c.Author, d.cfg.TicketPrefix, issue.ID)
+
+		if err := d.issues.UpdateStatus(issue.ID, repo.StatusClosed); err != nil {
+			d.logger.Printf("error closing tdd_tests ticket %d: %v", issue.ID, err)
+			return true // found approval, but update failed — still stop processing
+		}
+		if d.obs != nil {
+			d.obs.prEventsTDDApproved++
+		}
+		return true
+	}
+	return false
+}
+
 // repairTransition moves a ticket to a repair-ish status (typically "repairing"
 // or "merge_conflict") and records the reason. Returns true when the status
 // update succeeded; the caller should return or skip further processing on
@@ -1468,6 +1504,7 @@ type prComment struct {
 	Author string
 	IsBot  bool
 	Body   string
+	State  string // GitHub review state: APPROVED, CHANGES_REQUESTED, COMMENTED, etc.
 }
 
 func (d *Daemon) getPRState(prNum int) (state, mergeable, checks string, failing []string, merged bool, err error) {
@@ -1571,5 +1608,6 @@ func parseReviewLine(line []byte) (prComment, bool) {
 		Author: review.Author,
 		IsBot:  review.AuthorType == "Bot",
 		Body:   review.Body,
+		State:  review.State,
 	}, true
 }
