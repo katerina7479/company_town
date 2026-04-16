@@ -81,7 +81,9 @@ type Config struct {
 	TicketPrefix                    string        `json:"ticket_prefix"`
 	SessionPrefix                   string        `json:"session_prefix"`
 	ProjectRoot                     string        `json:"project_root"`
+	Platform                        string        `json:"platform"` // "github" (default) or "gitlab"
 	GithubRepo                      string        `json:"github_repo"`
+	GitlabProject                   string        `json:"gitlab_project"`
 	Dolt                            DoltConfig    `json:"dolt"`
 	LogDir                          string        `json:"log_dir"`
 	MaxProles                       int           `json:"max_proles"`
@@ -134,6 +136,12 @@ func Load(projectRoot string) (*Config, error) {
 		cfg.SessionPrefix = "ct-"
 	}
 
+	// Backwards compatibility: configs written before the platform field was
+	// introduced default to "github".
+	if cfg.Platform == "" {
+		cfg.Platform = "github"
+	}
+
 	if err := validateAgentsWorkflow(&cfg.Agents); err != nil {
 		return nil, err
 	}
@@ -142,12 +150,25 @@ func Load(projectRoot string) (*Config, error) {
 }
 
 // ValidateForStart checks that the config is safe to use for `ct start`.
-// It rejects placeholder or missing github_repo values that would cause
-// downstream failures (e.g. gt pr create against a non-existent repo).
+// It rejects placeholder or missing repo values that would cause downstream
+// failures (e.g. gt pr create against a non-existent repo).
 // This is intentionally NOT called from Load so that ct init can write and
 // reload its own freshly-generated placeholder config without error.
 func ValidateForStart(cfg *Config) error {
-	repo := cfg.GithubRepo
+	platform := cfg.Platform
+	if platform == "" {
+		platform = "github" // backwards compat: missing field means github
+	}
+	switch platform {
+	case "gitlab":
+		return validateGitlabProject(cfg.GitlabProject)
+	default: // "github" and any unrecognised value
+		return validateGithubRepo(cfg.GithubRepo)
+	}
+}
+
+// validateGithubRepo checks that a github_repo value is in "owner/repo" form.
+func validateGithubRepo(repo string) error {
 	if repo == "" {
 		return fmt.Errorf("config: %w: unset — edit .company_town/config.json and set github_repo to \"owner/repo\" form (e.g., \"katerina7479/company_town\")", ErrInvalidGithubRepo)
 	}
@@ -159,6 +180,24 @@ func ValidateForStart(cfg *Config) error {
 	}
 	if !strings.Contains(repo, "/") {
 		return fmt.Errorf("config: %w: must be in \"owner/repo\" form (got %q)", ErrInvalidGithubRepo, repo)
+	}
+	return nil
+}
+
+// validateGitlabProject checks that a gitlab_project value is in
+// "namespace/project" form (namespace may contain nested subgroups).
+func validateGitlabProject(project string) error {
+	if project == "" {
+		return fmt.Errorf("config: %w: unset — edit .company_town/config.json and set gitlab_project to \"namespace/project\" form (e.g., \"mygroup/myrepo\")", ErrInvalidGitlabProject)
+	}
+	if project == "namespace/project" {
+		return fmt.Errorf("config: %w: still the placeholder \"namespace/project\" — edit .company_town/config.json and set it to your actual project", ErrInvalidGitlabProject)
+	}
+	if strings.HasPrefix(project, "http://") || strings.HasPrefix(project, "https://") {
+		return fmt.Errorf("config: %w: must be in \"namespace/project\" form, not a URL (got %q)", ErrInvalidGitlabProject, project)
+	}
+	if !strings.Contains(project, "/") {
+		return fmt.Errorf("config: %w: must be in \"namespace/project\" form (got %q)", ErrInvalidGitlabProject, project)
 	}
 	return nil
 }
@@ -234,6 +273,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		TicketPrefix:  "tk",
 		SessionPrefix: "ct-",
 		ProjectRoot:   projectRoot,
+		Platform:      "github",
 		GithubRepo:    githubRepo,
 		Dolt: DoltConfig{
 			Host:     "127.0.0.1",
