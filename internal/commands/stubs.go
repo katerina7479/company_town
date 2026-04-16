@@ -15,14 +15,24 @@ import (
 	"github.com/katerina7479/company_town/internal/session"
 )
 
+// Package-level vars for injection in tests.
+var sessionExistsFn func(string) bool = session.Exists
+var sessionAttachFn func(string) error = session.Attach
+
 // startAgent is the shared logic for launching any agent in a tmux session.
 func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.AgentRepo, prompt string) error {
 	sessionName := session.SessionName(name)
 
-	// If session already exists, just attach
-	if session.Exists(sessionName) {
+	// If session already exists, just attach. Reset dead status if needed so
+	// the dashboard reflects the live session.
+	if sessionExistsFn(sessionName) {
+		if existing, getErr := agents.Get(name); getErr == nil && existing.Status == repo.StatusDead {
+			if updateErr := agents.UpdateStatus(name, repo.StatusIdle); updateErr != nil {
+				fmt.Printf("warning: could not reset %s status from dead to idle: %v\n", name, updateErr)
+			}
+		}
 		fmt.Printf("%s is already running, attaching...\n", name)
-		return session.Attach(sessionName)
+		return sessionAttachFn(sessionName)
 	}
 
 	// Register in DB if not already registered
