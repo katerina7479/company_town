@@ -390,6 +390,13 @@ func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 
 	status := args[1]
 
+	// Reject direct transitions to pr_open — only the reviewer verdict path
+	// (`gt ticket review <id> approve`) may produce this status (nc-215).
+	// This guard catches both direct CLI misuse and daemon misfires.
+	if status == repo.StatusPROpen {
+		return fmt.Errorf("cannot set status to pr_open directly — use `gt ticket review %d approve` to record a reviewer verdict", id)
+	}
+
 	// For in_progress transitions enforce the two-part invariant:
 	// (a) a prole must be assigned before claiming work — an unassigned ticket
 	//     "in progress" would be a lying state with no agent doing anything;
