@@ -832,12 +832,7 @@ func (d *Daemon) handleStuckAgents() {
 var stuckPromptPatterns = []string{
 	"do you want to",
 	"allow ",
-	"proceed? (y/n)",
-	"proceed? [y/n]",
-	"proceed? [y/n]",
 	"(y/n)",
-	"(y/n)",
-	"[y/n]",
 	"[y/n]",
 	"press enter to continue",
 	"are you sure",
