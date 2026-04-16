@@ -1687,3 +1687,18 @@ func TestUpdateStatus_draftClearsRepairReason(t *testing.T) {
 		t.Errorf("expected repair_reason cleared on → draft, got %q", got.RepairReason.String)
 	}
 }
+
+func TestCreateTicket_TDDTestsType(t *testing.T) {
+	r := setupTestRepo(t)
+	id, err := r.Create("Failing auth tests", "tdd_tests", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create with tdd_tests type: %v", err)
+	}
+	issue, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.IssueType != "tdd_tests" {
+		t.Errorf("IssueType = %q, want %q", issue.IssueType, "tdd_tests")
+	}
+}
