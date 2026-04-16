@@ -31,7 +31,7 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 			return fmt.Errorf("registering %s: %w", name, regErr)
 		}
 	}
-	if err := agents.UpdateStatus(name, "working"); err != nil {
+	if err := agents.UpdateStatus(name, repo.StatusWorking); err != nil {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
 	if err := agents.SetTmuxSession(name, sessionName); err != nil {
@@ -94,12 +94,12 @@ func Start() error {
 		if err := startDaemon(cfg); err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
 		}
-		if err := agents.UpdateStatus("daemon", "working"); err != nil {
+		if err := agents.UpdateStatus("daemon", repo.StatusWorking); err != nil {
 			return fmt.Errorf("updating daemon status: %w", err)
 		}
 	} else {
 		fmt.Println("Daemon already running.")
-		if err := agents.UpdateStatus("daemon", "working"); err != nil {
+		if err := agents.UpdateStatus("daemon", repo.StatusWorking); err != nil {
 			return fmt.Errorf("updating daemon status: %w", err)
 		}
 	}
@@ -212,7 +212,7 @@ func Artisan(specialty string) error {
 		return session.Attach(sessionName)
 	}
 
-	if err := agents.UpdateStatus(name, "working"); err != nil {
+	if err := agents.UpdateStatus(name, repo.StatusWorking); err != nil {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
 	if err := agents.SetTmuxSession(name, sessionName); err != nil {
@@ -387,7 +387,7 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 			} else {
 				fmt.Printf("  stopped: %s\n", s)
 				if updateStatus != nil {
-					updateStatus("daemon", "dead") //nolint:errcheck // best-effort status update during shutdown
+					updateStatus("daemon", repo.StatusDead) //nolint:errcheck // best-effort status update during shutdown
 				}
 			}
 			continue
@@ -418,7 +418,7 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 
 		fmt.Printf("  signaled: %s\n", s)
 		if updateStatus != nil {
-			updateStatus(agentName, "idle") //nolint:errcheck // best-effort status update during shutdown
+			updateStatus(agentName, repo.StatusIdle) //nolint:errcheck // best-effort status update during shutdown
 		}
 	}
 
@@ -570,7 +570,7 @@ func nukeCore(sessions []string, ctDir string, target string, killFn func(string
 		}
 
 		if updateStatus != nil {
-			updateStatus(agentName, "dead") //nolint:errcheck // best-effort status update during shutdown
+			updateStatus(agentName, repo.StatusDead) //nolint:errcheck // best-effort status update during shutdown
 		}
 	}
 
