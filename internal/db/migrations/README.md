@@ -17,12 +17,13 @@ Follow these patterns:
 | Operation | Safe form |
 |-----------|-----------|
 | `CREATE TABLE` | `CREATE TABLE IF NOT EXISTS` |
-| `ADD COLUMN` | `ALTER TABLE t ADD COLUMN col …` (plain — Dolt rejects `IF NOT EXISTS` on `ALTER TABLE`) |
-| `DROP COLUMN` | `ALTER TABLE t DROP COLUMN IF EXISTS col` |
+| `ADD COLUMN` | `ALTER TABLE t ADD COLUMN col …` — guard with a schema check if needed |
+| `DROP COLUMN` | `ALTER TABLE t DROP COLUMN col` — guard with a schema check if needed |
 | `CREATE INDEX` | `CREATE INDEX IF NOT EXISTS` |
 | Seed `INSERT` | `INSERT IGNORE …` or `INSERT … ON DUPLICATE KEY UPDATE` |
 
-**Note:** Dolt does not support `ADD COLUMN IF NOT EXISTS` on `ALTER TABLE` (syntax error on
-1.83+). The `schema_migrations` tracker prevents double-application under normal operation, so
-plain `ADD COLUMN` is safe. For `CREATE TABLE` and `CREATE INDEX`, `IF NOT EXISTS` works as
-expected.
+**Note:** Dolt does NOT support `IF NOT EXISTS` / `IF EXISTS` on `ALTER TABLE` (tested on
+Dolt 1.83). Both `ADD COLUMN IF NOT EXISTS` and `DROP COLUMN IF EXISTS` produce a parse
+error. Standard MySQL also does not support these forms. Use plain `ADD COLUMN` /
+`DROP COLUMN` and, if true idempotency is required, gate the statement on an explicit
+schema check (e.g. query `INFORMATION_SCHEMA.COLUMNS` before running the migration).
