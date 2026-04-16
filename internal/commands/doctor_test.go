@@ -133,18 +133,19 @@ func TestCheckTmux(t *testing.T) {
 	}
 }
 
-// --- checkGH ---
+// --- checkVCSCLI ---
 
-func TestCheckGH(t *testing.T) {
+func TestCheckVCSCLI_GitHub(t *testing.T) {
 	cases := []struct {
 		name     string
 		ghErr    error
 		authErr  error
 		wantStat string
+		wantName string
 	}{
-		{"ok", nil, nil, "ok"},
-		{"not found", errors.New("not found"), nil, "fail"},
-		{"not authenticated", nil, errors.New("not logged in"), "fail"},
+		{"ok", nil, nil, "ok", "gh"},
+		{"not found", errors.New("not found"), nil, "fail", "gh"},
+		{"not authenticated", nil, errors.New("not logged in"), "fail", "gh"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,9 +157,48 @@ func TestCheckGH(t *testing.T) {
 					return "gh version 2.0.0", tc.ghErr
 				},
 			}
-			r := checkGH(deps)
+			r := checkVCSCLI(deps, "github")
 			if r.Status != tc.wantStat {
 				t.Errorf("status=%q want=%q detail=%q", r.Status, tc.wantStat, r.Detail)
+			}
+			if r.Name != tc.wantName {
+				t.Errorf("name=%q want=%q", r.Name, tc.wantName)
+			}
+		})
+	}
+}
+
+func TestCheckVCSCLI_GitLab(t *testing.T) {
+	cases := []struct {
+		name     string
+		glabErr  error
+		authErr  error
+		wantStat string
+		wantName string
+	}{
+		{"ok", nil, nil, "ok", "glab"},
+		{"not found", errors.New("not found"), nil, "fail", "glab"},
+		{"not authenticated", nil, errors.New("not logged in"), "fail", "glab"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := doctorDeps{
+				runCmd: func(name string, args ...string) (string, error) {
+					if len(args) > 0 && args[0] == "auth" {
+						return "", tc.authErr
+					}
+					return "glab version 1.50.0 (2024-12-01)", tc.glabErr
+				},
+			}
+			r := checkVCSCLI(deps, "gitlab")
+			if r.Status != tc.wantStat {
+				t.Errorf("status=%q want=%q detail=%q", r.Status, tc.wantStat, r.Detail)
+			}
+			if r.Name != tc.wantName {
+				t.Errorf("name=%q want=%q", r.Name, tc.wantName)
+			}
+			if tc.wantStat == "fail" && r.Fix == "" {
+				t.Error("expected Fix to be set on fail")
 			}
 		})
 	}
@@ -274,6 +314,23 @@ func TestCheckConfig_missingGithubRepo(t *testing.T) {
 	}
 }
 
+func TestCheckConfig_gitlabPlatformNoGithubRepo(t *testing.T) {
+	cfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Platform:     config.PlatformGitLab,
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return cfg, nil },
+	}
+	r, _ := checkConfig(deps)
+	if r.Status != "ok" {
+		t.Errorf("gitlab platform should not require github_repo: status=%q detail=%q", r.Status, r.Detail)
+	}
+}
+
 func TestCheckConfig_missingMultipleFields(t *testing.T) {
 	cfg := &config.Config{} // all empty
 	deps := doctorDeps{
@@ -351,6 +408,55 @@ func TestRunDoctor_allPass(t *testing.T) {
 	}
 	if len(results) == 0 {
 		t.Error("expected results")
+	}
+}
+
+func TestRunDoctor_gitlabPlatform(t *testing.T) {
+	gitlabCfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Platform:     config.PlatformGitLab,
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			switch name {
+			case "dolt":
+				return "dolt version 1.50.1", nil
+			case "tmux":
+				return "tmux 3.4", nil
+			case "glab":
+				return "glab version 1.50.0", nil
+			case "git":
+				return "git version 2.47.0", nil
+			}
+			return "", nil
+		},
+		findRoot:      func() (string, error) { return "/tmp/proj", nil },
+		loadConfig:    func(root string) (*config.Config, error) { return gitlabCfg, nil },
+		sessionExists: func(name string) bool { return true },
+	}
+	results, anyFail := runDoctor(deps)
+	if anyFail {
+		for _, r := range results {
+			if r.Status == "fail" {
+				t.Logf("fail: %s — %s", r.Name, r.Detail)
+			}
+		}
+		t.Error("expected no failures for gitlab platform")
+	}
+	var names []string
+	for _, r := range results {
+		names = append(names, r.Name)
+	}
+	found := false
+	for _, n := range names {
+		if n == "glab" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected glab check in results, got %v", names)
 	}
 }
 

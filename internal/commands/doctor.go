@@ -134,7 +134,31 @@ func checkTmux(deps doctorDeps) checkResult {
 	return checkResult{Name: "tmux", Status: "ok", Detail: ver}
 }
 
-func checkGH(deps doctorDeps) checkResult {
+// checkVCSCLI checks that the platform's CLI tool is installed and authenticated.
+// platform must be config.PlatformGitHub or config.PlatformGitLab.
+func checkVCSCLI(deps doctorDeps, platform string) checkResult {
+	if platform == config.PlatformGitLab {
+		_, err := deps.runCmd("glab", "--version")
+		if err != nil {
+			return checkResult{
+				Name:   "glab",
+				Status: "fail",
+				Detail: "not found",
+				Fix:    "brew install glab",
+			}
+		}
+		_, authErr := deps.runCmd("glab", "auth", "status")
+		if authErr != nil {
+			return checkResult{
+				Name:   "glab",
+				Status: "fail",
+				Detail: "not authenticated",
+				Fix:    "glab auth login",
+			}
+		}
+		return checkResult{Name: "glab", Status: "ok", Detail: "authenticated"}
+	}
+
 	_, err := deps.runCmd("gh", "--version")
 	if err != nil {
 		return checkResult{
@@ -209,7 +233,7 @@ func checkConfig(deps doctorDeps) (checkResult, *config.Config) {
 	if cfg.ProjectRoot == "" {
 		missing = append(missing, "project_root")
 	}
-	if cfg.GithubRepo == "" {
+	if cfg.EffectivePlatform() == config.PlatformGitHub && cfg.GithubRepo == "" {
 		missing = append(missing, "github_repo")
 	}
 	if cfg.Agents.Mayor.Model == "" {
@@ -244,11 +268,16 @@ func runDoctor(deps doctorDeps) ([]checkResult, bool) {
 	results := []checkResult{
 		checkDolt(deps),
 		checkTmux(deps),
-		checkGH(deps),
 		checkGit(deps),
 	}
 
 	cfgResult, cfg := checkConfig(deps)
+
+	platform := config.PlatformGitHub
+	if cfg != nil {
+		platform = cfg.EffectivePlatform()
+	}
+	results = append(results, checkVCSCLI(deps, platform))
 	results = append(results, cfgResult)
 
 	// Only check daemon if we're inside a project.

@@ -11,6 +11,9 @@ import (
 const (
 	DirName    = ".company_town"
 	ConfigFile = "config.json"
+
+	PlatformGitHub = "github"
+	PlatformGitLab = "gitlab"
 )
 
 type AgentConfig struct {
@@ -81,6 +84,7 @@ type Config struct {
 	TicketPrefix                    string        `json:"ticket_prefix"`
 	SessionPrefix                   string        `json:"session_prefix"`
 	ProjectRoot                     string        `json:"project_root"`
+	Platform                        string        `json:"platform,omitempty"`
 	GithubRepo                      string        `json:"github_repo"`
 	Dolt                            DoltConfig    `json:"dolt"`
 	LogDir                          string        `json:"log_dir"`
@@ -100,6 +104,14 @@ type Config struct {
 	ReviewerFollowUpNReviews        int           `json:"reviewer_follow_up_n_reviews"`
 	TDD                             bool          `json:"tdd"`
 	Quality                         QualityConfig `json:"quality"`
+}
+
+// EffectivePlatform returns the configured platform, defaulting to PlatformGitHub.
+func (c *Config) EffectivePlatform() string {
+	if c.Platform == PlatformGitLab {
+		return PlatformGitLab
+	}
+	return PlatformGitHub
 }
 
 // CompanyTownDir returns the .company_town directory path for a project root.
@@ -234,6 +246,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		TicketPrefix:  "tk",
 		SessionPrefix: "ct-",
 		ProjectRoot:   projectRoot,
+		Platform:      PlatformGitHub,
 		GithubRepo:    githubRepo,
 		Dolt: DoltConfig{
 			Host:     "127.0.0.1",
