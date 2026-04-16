@@ -36,7 +36,7 @@ func CheckDrift(agents *AgentRepo, issues *IssueRepo, prefix string) ([]DriftEnt
 		ticketRef := fmt.Sprintf("%s-%d", prefix, id)
 
 		// Category (a): idle agent with non-null issue pointer.
-		if a.Status == "idle" {
+		if a.Status == StatusIdle {
 			entries = append(entries, DriftEntry{
 				AgentName: a.Name,
 				Reason:    fmt.Sprintf("%s is idle but still references %s — run 'gt agent release'", a.Name, ticketRef),
