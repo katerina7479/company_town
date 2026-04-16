@@ -99,6 +99,12 @@ type Daemon struct {
 	// Repair-cycle escalation
 	repairCycleThreshold int
 
+	// Reviewer follow-up reminder
+	followUpInterval     time.Duration
+	followUpNReviews     int
+	reviewsSinceFollowUp int
+	lastFollowUpNudge    time.Time
+
 	// Review comment fetching (injectable for tests)
 	getReviewCommentsFn func(prNum int) ([]prComment, error)
 
@@ -167,6 +173,8 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		lastRestartedAt:      make(map[string]time.Time),
 		restartAgent:         makeRestartFn(cfg, agentRepo, logger),
 		repairCycleThreshold: cfg.RepairCycleThreshold,
+		followUpInterval:     time.Duration(cfg.ReviewerFollowUpIntervalSeconds) * time.Second,
+		followUpNReviews:     cfg.ReviewerFollowUpNReviews,
 		tickFile:             filepath.Join(ctDir, "run", "daemon-tick"),
 	}, nil
 }
@@ -228,7 +236,7 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 		prompt := agentStartPrompt(agent.Type, cfg.TicketPrefix)
 		sessionName := session.SessionName(agent.Name)
 
-		if err := agents.UpdateStatus(agent.Name, "idle"); err != nil {
+		if err := agents.UpdateStatus(agent.Name, repo.StatusIdle); err != nil {
 			return fmt.Errorf("updating agent status: %w", err)
 		}
 		if err := agents.SetTmuxSession(agent.Name, sessionName); err != nil {
@@ -242,7 +250,7 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 			Prompt:   prompt,
 			EnvVars:  map[string]string{"CT_AGENT_NAME": agent.Name},
 		}); err != nil {
-			agents.UpdateStatus(agent.Name, "dead") //nolint:errcheck
+			agents.UpdateStatus(agent.Name, repo.StatusDead) //nolint:errcheck
 			return fmt.Errorf("creating session for %s: %w", agent.Name, err)
 		}
 
@@ -326,7 +334,7 @@ func (d *Daemon) isAgentWorking(name string) bool {
 	if err != nil {
 		return false // agent not found — allow nudge
 	}
-	return agent.Status == "working"
+	return agent.Status == repo.StatusWorking
 }
 
 // recordNudge records the current time and ticket digest for key.
@@ -391,6 +399,7 @@ func (d *Daemon) poll() {
 	d.handleIdleAssignedProles()
 	d.handleWorkingOpenTickets()
 	d.handleInReviewTickets()
+	d.handleFollowUpReminder()
 	d.handlePREvents()
 	d.handleRepairCycleEscalation()
 	d.handleStuckPrompts()
@@ -562,7 +571,7 @@ func (d *Daemon) handleIdleAssignedProles() {
 		if agent.Type != "prole" {
 			continue
 		}
-		if agent.Status != "idle" {
+		if agent.Status != repo.StatusIdle {
 			// Already working — no nudge needed.
 			continue
 		}
@@ -600,7 +609,7 @@ func (d *Daemon) handleIdleAssignedProles() {
 // skipped (or failed) the explicit `gt ticket status <id> in_progress` step —
 // leaving the ticket stuck in "open" while the agent is actively working.
 func (d *Daemon) handleWorkingOpenTickets() {
-	working, err := d.agents.ListByStatus("working")
+	working, err := d.agents.ListByStatus(repo.StatusWorking)
 	if err != nil {
 		d.logger.Printf("handleWorkingOpenTickets: listing working agents: %v", err)
 		return
@@ -780,7 +789,7 @@ func (d *Daemon) handleStuckAgents() {
 		return // Mayor not running, nowhere to escalate
 	}
 
-	agents, err := d.agents.ListByStatus("working")
+	agents, err := d.agents.ListByStatus(repo.StatusWorking)
 	if err != nil {
 		d.logger.Printf("error listing working agents: %v", err)
 		return
@@ -831,12 +840,7 @@ func (d *Daemon) handleStuckAgents() {
 var stuckPromptPatterns = []string{
 	"do you want to",
 	"allow ",
-	"proceed? (y/n)",
-	"proceed? [y/n]",
-	"proceed? [y/n]",
 	"(y/n)",
-	"(y/n)",
-	"[y/n]",
 	"[y/n]",
 	"press enter to continue",
 	"are you sure",
@@ -883,7 +887,7 @@ func (d *Daemon) handleStuckPrompts() {
 		return // Mayor not running, nowhere to escalate
 	}
 
-	agents, err := d.agents.ListByStatus("working")
+	agents, err := d.agents.ListByStatus(repo.StatusWorking)
 	if err != nil {
 		d.logger.Printf("error listing working agents for prompt check: %v", err)
 		return
@@ -1043,7 +1047,7 @@ func (d *Daemon) handleDeadSessions() {
 		sessionAlive := agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.session.Exists(agent.TmuxSession.String)
 		// Skip agents with a live session unless they are already marked dead.
 		// A dead-status prole with a live session still needs to be cleaned up.
-		if sessionAlive && agent.Status != "dead" {
+		if sessionAlive && agent.Status != repo.StatusDead {
 			continue
 		}
 		if agent.Type == "prole" {
@@ -1070,12 +1074,12 @@ func (d *Daemon) handleDeadSessions() {
 			}
 			continue
 		}
-		if agent.Status == "dead" {
+		if agent.Status == repo.StatusDead {
 			continue
 		}
 		d.logger.Printf("session %s for agent %s not found — marking dead",
 			agent.TmuxSession.String, agent.Name)
-		if err := d.agents.UpdateStatus(agent.Name, "dead"); err != nil {
+		if err := d.agents.UpdateStatus(agent.Name, repo.StatusDead); err != nil {
 			d.logger.Printf("error marking agent %s dead: %v", agent.Name, err)
 		}
 	}
@@ -1105,7 +1109,7 @@ func (d *Daemon) handleDraftTickets() {
 		// Architect not running — attempt restart if enabled and off cooldown.
 		if d.restartDeadAgents && d.restartAgent != nil && d.shouldRestart("architect") {
 			architect, err := d.agents.Get("architect")
-			if err == nil && (architect.Status == "dead" || architect.Status == "idle") {
+			if err == nil && (architect.Status == repo.StatusDead || architect.Status == repo.StatusIdle) {
 				if err := d.restartAgent(architect); err != nil {
 					d.logger.Printf("error restarting architect: %v", err)
 				} else {
@@ -1221,6 +1225,50 @@ func (d *Daemon) handleInReviewTickets() {
 	}
 }
 
+// handleFollowUpReminder sends a periodic reminder to active reviewer sessions
+// to file follow-up tickets for non-blocking notes from recent reviews.
+//
+// It fires when either of two conditions is met (whichever comes first):
+//   - reviewsSinceFollowUp has reached followUpNReviews (count-based trigger)
+//   - followUpInterval has elapsed since the last reminder (time-based trigger)
+//
+// After firing, the review counter is reset and the nudge timestamp updated so
+// both triggers are re-armed together.
+func (d *Daemon) handleFollowUpReminder() {
+	sessions := d.nudgeableReviewerSessions()
+	if len(sessions) == 0 {
+		return
+	}
+
+	nReached := d.followUpNReviews > 0 && d.reviewsSinceFollowUp >= d.followUpNReviews
+	var timeElapsed bool
+	if d.followUpInterval > 0 {
+		timeElapsed = d.nowFn().Sub(d.lastFollowUpNudge) >= d.followUpInterval
+	} else {
+		// Zero interval means disabled — only the count trigger fires.
+		timeElapsed = false
+	}
+
+	if !nReached && !timeElapsed {
+		return
+	}
+
+	msg := "Reminder: file follow-up tickets for any non-blocking notes from recent reviews."
+	nudged := 0
+	for _, s := range sessions {
+		if err := d.sendKeys(s, msg); err != nil {
+			d.logger.Printf("error sending follow-up reminder to reviewer %s: %v", s, err)
+		} else {
+			nudged++
+		}
+	}
+	if nudged > 0 {
+		d.logger.Printf("sent follow-up reminder to %d reviewer(s) (reviews since last nudge: %d)", nudged, d.reviewsSinceFollowUp)
+		d.lastFollowUpNudge = d.nowFn()
+		d.reviewsSinceFollowUp = 0
+	}
+}
+
 // nudgeableReviewerSessions returns session names for reviewer agents that are
 // alive, have an active tmux session, and are NOT already working.
 func (d *Daemon) nudgeableReviewerSessions() []string {
@@ -1231,7 +1279,7 @@ func (d *Daemon) nudgeableReviewerSessions() []string {
 	}
 	var sessions []string
 	for _, a := range allAgents {
-		if a.Type != "reviewer" || a.Status == "dead" || a.Status == "working" {
+		if a.Type != "reviewer" || a.Status == repo.StatusDead || a.Status == repo.StatusWorking {
 			continue
 		}
 		s := session.SessionName(a.Name)
@@ -1254,7 +1302,7 @@ func (d *Daemon) restartDeadReviewers() {
 		if a.Type != "reviewer" {
 			continue
 		}
-		if a.Status != "dead" && a.Status != "idle" {
+		if a.Status != repo.StatusDead && a.Status != repo.StatusIdle {
 			continue
 		}
 		s := session.SessionName(a.Name)
@@ -1357,6 +1405,7 @@ func (d *Daemon) handleCIPass(issue *repo.Issue, prNum int) {
 	if d.obs != nil {
 		d.obs.prEventsCIPass++
 	}
+	d.reviewsSinceFollowUp++
 }
 
 // handleCIFailure moves a ci_running ticket to repairing and nudges the assigned

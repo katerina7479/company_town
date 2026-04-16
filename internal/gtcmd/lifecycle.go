@@ -135,7 +135,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string,
 			return fmt.Errorf("starting daemon: %w", err)
 		}
 
-		if err := agents.UpdateStatus("daemon", "working"); err != nil {
+		if err := agents.UpdateStatus("daemon", repo.StatusWorking); err != nil {
 			return fmt.Errorf("updating daemon status: %w", err)
 		}
 
@@ -175,7 +175,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string,
 		}
 	}
 
-	if err := agents.UpdateStatus(name, "idle"); err != nil {
+	if err := agents.UpdateStatus(name, repo.StatusIdle); err != nil {
 		return fmt.Errorf("updating %s status: %w", name, err)
 	}
 
@@ -207,7 +207,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string,
 
 // stopDaemonWithDeps is the injectable core of the daemon stop path. Extracted for testability.
 func stopDaemonWithDeps(agents *repo.AgentRepo, sessionName string, sess session.Client) error {
-	if err := agents.UpdateStatus("daemon", "idle"); err != nil {
+	if err := agents.UpdateStatus("daemon", repo.StatusIdle); err != nil {
 		fmt.Printf("warning: could not update daemon status: %v\n", err)
 	}
 
@@ -282,7 +282,7 @@ func stopWithClient(args []string, sess session.Client) error {
 		defer conn.Close()
 		stopEvents := eventlog.NewLogger(config.CompanyTownDir(stopCfg.ProjectRoot))
 		agents := repo.NewAgentRepo(conn, stopEvents)
-		if err := agents.UpdateStatus(name, "idle"); err != nil {
+		if err := agents.UpdateStatus(name, repo.StatusIdle); err != nil {
 			fmt.Printf("warning: could not update agent status: %v\n", err)
 		}
 	}

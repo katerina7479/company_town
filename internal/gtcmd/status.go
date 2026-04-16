@@ -87,7 +87,7 @@ func reconcileDeadAgents(agents *repo.AgentRepo, sessionExists func(string) bool
 			}
 			continue
 		}
-		if a.Status == "dead" {
+		if a.Status == repo.StatusDead {
 			continue
 		}
 		if a.CurrentIssue.Valid {
@@ -95,7 +95,7 @@ func reconcileDeadAgents(agents *repo.AgentRepo, sessionExists func(string) bool
 				return fmt.Errorf("clearing current issue for %s: %w", a.Name, err)
 			}
 		}
-		if err := agents.UpdateStatus(a.Name, "dead"); err != nil {
+		if err := agents.UpdateStatus(a.Name, repo.StatusDead); err != nil {
 			return fmt.Errorf("marking agent %s dead: %w", a.Name, err)
 		}
 	}

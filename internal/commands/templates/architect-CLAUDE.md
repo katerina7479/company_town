@@ -142,7 +142,7 @@ You spec, emit the pair, and move on.
      --parent <epic-id-if-any> \
      --specialty <same-as-original> \
      --priority <same-as-parent> \
-     --description "Implement per spec at .company_town/ticket_specs/<PREFIX>-<id>.md. A QA artisan will write failing tests first (see dependency). Your job: make the tests pass, then gt pr create."
+     --description "Implement per spec at .company_town/ticket_specs/<PREFIX>-<id>.md. A QA artisan will write failing tests first (see dependency). Your job: make the tests pass."
    ```
 
 3. **Wire the dependency** (impl depends on tests being done first):

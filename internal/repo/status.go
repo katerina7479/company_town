@@ -17,3 +17,10 @@ const (
 	StatusOnHold        = "on_hold"
 	StatusClosed        = "closed"
 )
+
+// Agent status constants. Use these instead of raw string literals.
+const (
+	StatusWorking = "working"
+	StatusIdle    = "idle"
+	StatusDead    = "dead"
+)
