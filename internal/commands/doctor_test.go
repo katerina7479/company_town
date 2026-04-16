@@ -294,6 +294,26 @@ func TestCheckConfig_missingMultipleFields(t *testing.T) {
 	}
 }
 
+func TestCheckConfig_gitlabMissingProject(t *testing.T) {
+	cfg := &config.Config{
+		Platform:     "gitlab",
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return cfg, nil },
+	}
+	r, _ := checkConfig(deps)
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if !strings.Contains(r.Detail, "gitlab_project") {
+		t.Errorf("detail %q should mention gitlab_project", r.Detail)
+	}
+}
+
 // --- checkDaemon ---
 
 func TestCheckDaemon(t *testing.T) {

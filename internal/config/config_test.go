@@ -373,6 +373,75 @@ func TestValidateForStart_noSlash(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_PlatformIsGithub(t *testing.T) {
+	cfg := DefaultConfig("/tmp", "owner/repo")
+	if cfg.Platform != "github" {
+		t.Errorf("DefaultConfig.Platform = %q, want %q", cfg.Platform, "github")
+	}
+}
+
+func TestLoad_missingPlatformDefaultsToGithub(t *testing.T) {
+	dir := writeConfig(t, `{"mayor":{"model":"claude-opus-4-6"},"prole":{"model":"claude-sonnet-4-6"}}`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Platform != "github" {
+		t.Errorf("Platform = %q, want %q (backwards compat)", cfg.Platform, "github")
+	}
+}
+
+func TestValidateForStart_gitlabValid(t *testing.T) {
+	cfg := &Config{Platform: "gitlab", GitlabProject: "mygroup/myrepo"}
+	if err := ValidateForStart(cfg); err != nil {
+		t.Errorf("expected no error for valid gitlab_project, got: %v", err)
+	}
+}
+
+func TestValidateForStart_gitlabEmptyProject(t *testing.T) {
+	cfg := &Config{Platform: "gitlab", GitlabProject: ""}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty gitlab_project, got nil")
+	}
+	if !errors.Is(err, ErrInvalidGitlabProject) {
+		t.Errorf("expected ErrInvalidGitlabProject, got: %v", err)
+	}
+}
+
+func TestValidateForStart_gitlabPlaceholder(t *testing.T) {
+	cfg := &Config{Platform: "gitlab", GitlabProject: "namespace/project"}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for placeholder gitlab_project, got nil")
+	}
+	if !errors.Is(err, ErrInvalidGitlabProject) {
+		t.Errorf("expected ErrInvalidGitlabProject, got: %v", err)
+	}
+}
+
+func TestValidateForStart_gitlabURLForm(t *testing.T) {
+	cfg := &Config{Platform: "gitlab", GitlabProject: "https://gitlab.com/mygroup/myrepo"}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for URL-form gitlab_project, got nil")
+	}
+	if !errors.Is(err, ErrInvalidGitlabProject) {
+		t.Errorf("expected ErrInvalidGitlabProject, got: %v", err)
+	}
+}
+
+func TestValidateForStart_gitlabNoSlash(t *testing.T) {
+	cfg := &Config{Platform: "gitlab", GitlabProject: "justrepo"}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for gitlab_project with no slash, got nil")
+	}
+	if !errors.Is(err, ErrInvalidGitlabProject) {
+		t.Errorf("expected ErrInvalidGitlabProject, got: %v", err)
+	}
+}
+
 func TestConfig_TDD_DefaultsFalse(t *testing.T) {
 	dir := writeConfig(t, `{"mayor":{"model":"claude-opus-4-6"},"prole":{"model":"claude-sonnet-4-6"}}`)
 	cfg, err := Load(dir)
