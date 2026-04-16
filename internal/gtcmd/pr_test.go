@@ -204,7 +204,7 @@ func TestPRCreate_SetsCIRunning(t *testing.T) {
 	})
 	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
 	gitPushFn = func(_ string, args ...string) error { return nil }
-	ghPRCreateFn = func(title, body string) (string, error) {
+	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
 		return "https://github.com/x/y/pull/42", nil
 	}
 	stubBranchFns(t, "prole/iron/1")
@@ -479,7 +479,7 @@ func TestPRCreate_PushProceedsWhenCommitsExist(t *testing.T) {
 	gitCommitCountFn = func(_ string) (int, error) { return 3, nil }
 	pushCalled := false
 	gitPushFn = func(_ string, args ...string) error { pushCalled = true; return nil }
-	ghPRCreateFn = func(title, body string) (string, error) {
+	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
 		return "https://github.com/x/y/pull/99", nil
 	}
 	stubBranchFns(t, "prole/iron/1")
@@ -594,7 +594,7 @@ func TestPRCreate_WorkDirPassedToGitFns(t *testing.T) {
 		gotPushDir = workDir
 		return nil
 	}
-	ghPRCreateFn = func(title, body string) (string, error) {
+	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
 		return "https://github.com/x/y/pull/7", nil
 	}
 	stubBranchFns(t, "prole/tin/1")
@@ -644,7 +644,7 @@ func TestPRCreate_refusesDetachedHEAD(t *testing.T) {
 	origPush, origGH := gitPushFn, ghPRCreateFn
 	t.Cleanup(func() { gitPushFn = origPush; ghPRCreateFn = origGH })
 	gitPushFn = func(_ string, _ ...string) error { pushCalled = true; return nil }
-	ghPRCreateFn = func(_, _ string) (string, error) { ghCalled = true; return "", nil }
+	ghPRCreateFn = func(_, _ string, _ bool) (string, error) { ghCalled = true; return "", nil }
 
 	err := prCreate(issues, testCfg(), "/tmp", []string{ticketID})
 	if err == nil {
@@ -717,7 +717,7 @@ func TestPRCreate_allowsMatchingBranch(t *testing.T) {
 	origPush, origGH := gitPushFn, ghPRCreateFn
 	t.Cleanup(func() { gitPushFn = origPush; ghPRCreateFn = origGH })
 	gitPushFn = func(_ string, _ ...string) error { return nil }
-	ghPRCreateFn = func(_, _ string) (string, error) {
+	ghPRCreateFn = func(_, _ string, _ bool) (string, error) {
 		ghCalled = true
 		return "https://github.com/x/y/pull/10", nil
 	}
@@ -864,7 +864,7 @@ func TestPRCreate_ghCreateError(t *testing.T) {
 	})
 	gitCommitCountFn = func(_ string) (int, error) { return 2, nil }
 	gitPushFn = func(_ string, _ ...string) error { return nil }
-	ghPRCreateFn = func(_, _ string) (string, error) {
+	ghPRCreateFn = func(_, _ string, _ bool) (string, error) {
 		return "", fmt.Errorf("gh: rate limited")
 	}
 	stubBranchFns(t, "prole/iron/1")
@@ -875,6 +875,86 @@ func TestPRCreate_ghCreateError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "creating PR") {
 		t.Errorf("expected 'creating PR' in error, got: %v", err)
+	}
+}
+
+// TestPRCreate_DraftFlag_TDDTests verifies that a tdd_tests ticket filed with
+// --draft goes directly to pr_open (skipping ci_running).
+func TestPRCreate_DraftFlag_TDDTests(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, err := issues.Create("Failing auth tests", "tdd_tests", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create tdd_tests ticket: %v", err)
+	}
+	branch := fmt.Sprintf("prole/qa/%d", id)
+	if err := issues.Assign(id, "qa", branch); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	origCount := gitCommitCountFn
+	origPush := gitPushFn
+	origGH := ghPRCreateFn
+	t.Cleanup(func() {
+		gitCommitCountFn = origCount
+		gitPushFn = origPush
+		ghPRCreateFn = origGH
+	})
+	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
+	gitPushFn = func(_ string, _ ...string) error { return nil }
+
+	var gotDraft bool
+	ghPRCreateFn = func(_, _ string, draft bool) (string, error) {
+		gotDraft = draft
+		return "https://github.com/x/y/pull/55", nil
+	}
+	stubBranchFns(t, branch)
+
+	if err := prCreate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id), "--draft"}); err != nil {
+		t.Fatalf("prCreate with --draft on tdd_tests: %v", err)
+	}
+	if !gotDraft {
+		t.Error("expected ghPRCreateFn to receive draft=true")
+	}
+	got, _ := issues.Get(id)
+	if got.Status != "pr_open" {
+		t.Errorf("expected status=pr_open for tdd_tests draft, got %q", got.Status)
+	}
+}
+
+// TestPRCreate_DraftFlag_RegularTask verifies that a regular task filed with
+// --draft still transitions to ci_running (not pr_open).
+func TestPRCreate_DraftFlag_RegularTask(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	id, err := issues.Create("Add config flag", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create task ticket: %v", err)
+	}
+	branch := fmt.Sprintf("prole/copper/%d", id)
+	if err := issues.Assign(id, "copper", branch); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	origCount := gitCommitCountFn
+	origPush := gitPushFn
+	origGH := ghPRCreateFn
+	t.Cleanup(func() {
+		gitCommitCountFn = origCount
+		gitPushFn = origPush
+		ghPRCreateFn = origGH
+	})
+	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
+	gitPushFn = func(_ string, _ ...string) error { return nil }
+	ghPRCreateFn = func(_, _ string, _ bool) (string, error) {
+		return "https://github.com/x/y/pull/56", nil
+	}
+	stubBranchFns(t, branch)
+
+	if err := prCreate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id), "--draft"}); err != nil {
+		t.Fatalf("prCreate with --draft on task: %v", err)
+	}
+	got, _ := issues.Get(id)
+	if got.Status != "ci_running" {
+		t.Errorf("expected status=ci_running for task draft, got %q", got.Status)
 	}
 }
 

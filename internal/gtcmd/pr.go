@@ -105,8 +105,12 @@ var (
 		return n, nil
 	}
 
-	ghPRCreateFn = func(title, body string) (string, error) {
-		cmd := exec.Command("gh", "pr", "create", "--title", title, "--body", body)
+	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
+		ghArgs := []string{"pr", "create", "--title", title, "--body", body}
+		if draft {
+			ghArgs = append(ghArgs, "--draft")
+		}
+		cmd := exec.Command("gh", ghArgs...)
 		cmd.Stderr = os.Stderr
 		out, err := cmd.Output()
 		if err != nil {
@@ -335,11 +339,20 @@ func assertBranchReadyForPR(dir, ticketBranch string) error {
 }
 
 func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: gt pr create <ticket_id>")
+	var draft bool
+	var filtered []string
+	for _, a := range args {
+		if a == "--draft" {
+			draft = true
+		} else {
+			filtered = append(filtered, a)
+		}
+	}
+	if len(filtered) < 1 {
+		return fmt.Errorf("usage: gt pr create <ticket_id> [--draft]")
 	}
 
-	id, err := parseTicketID(args[0])
+	id, err := parseTicketID(filtered[0])
 	if err != nil {
 		return err
 	}
@@ -385,7 +398,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 
 	prBody := strings.Join(bodyParts, "\n")
 
-	prURL, err := ghPRCreateFn(prTitle, prBody)
+	prURL, err := ghPRCreateFn(prTitle, prBody, draft)
 	if err != nil {
 		return fmt.Errorf("creating PR: %w", err)
 	}
@@ -401,14 +414,20 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 		}
 	}
 
-	// Move ticket to ci_running. The prole stays assigned — if CI fails they
-	// are still responsible for fixing it. The daemon promotes to in_review
-	// (and clears the assignee) once all checks pass.
-	if err := issues.UpdateStatus(id, repo.StatusCIRunning); err != nil {
-		return fmt.Errorf("updating ticket status: %w", err)
+	// TDD tests tickets filed as draft PRs skip ci_running and go straight to
+	// pr_open — CI failure is expected until a prole makes the tests green.
+	// All other PRs (including non-TDD drafts) go through the normal ci_running path.
+	if draft && issue.IssueType == "tdd_tests" {
+		if err := issues.UpdateStatus(id, repo.StatusPROpen); err != nil {
+			return fmt.Errorf("updating ticket status: %w", err)
+		}
+		fmt.Printf("Ticket %s-%d → pr_open (draft, tdd_tests)\n", cfg.TicketPrefix, id)
+	} else {
+		if err := issues.UpdateStatus(id, repo.StatusCIRunning); err != nil {
+			return fmt.Errorf("updating ticket status: %w", err)
+		}
+		fmt.Printf("Ticket %s-%d → ci_running\n", cfg.TicketPrefix, id)
 	}
-
-	fmt.Printf("Ticket %s-%d → ci_running\n", cfg.TicketPrefix, id)
 	return nil
 }
 
