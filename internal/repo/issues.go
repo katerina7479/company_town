@@ -423,7 +423,7 @@ func (r *IssueRepo) GetDependents(dependsOnID int) ([]*Issue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("getting dependents: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var issues []*Issue
 	for rows.Next() {
