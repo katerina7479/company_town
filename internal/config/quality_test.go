@@ -14,33 +14,13 @@ func TestDefaultConfig_quality(t *testing.T) {
 	if cfg.Quality.Checks == nil {
 		t.Error("expected Quality.Checks to be non-nil by default")
 	}
-	// DefaultConfig seeds go_test_coverage + 6 numeric metric checks = 7 total.
-	if len(cfg.Quality.Checks) != 7 {
-		t.Errorf("expected 7 default checks, got %d", len(cfg.Quality.Checks))
+	// DefaultConfig seeds only the language-agnostic check (open_ticket_count).
+	// Language-specific checks are applied at init time via QualityChecksForPreset.
+	if len(cfg.Quality.Checks) != 1 {
+		t.Errorf("expected 1 default check (agnostic only), got %d", len(cfg.Quality.Checks))
 	}
-
-	// Verify go_test_coverage thresholds bracket today's ~53% reality.
-	var cov *QualityCheckConfig
-	for i := range cfg.Quality.Checks {
-		if cfg.Quality.Checks[i].Name == "go_test_coverage" {
-			cov = &cfg.Quality.Checks[i]
-			break
-		}
-	}
-	if cov == nil {
-		t.Fatal("go_test_coverage check not found")
-	}
-	if cov.Type != "metric" {
-		t.Errorf("expected type=metric, got %q", cov.Type)
-	}
-	if cov.Threshold != 60.0 {
-		t.Errorf("expected threshold=60.0, got %v", cov.Threshold)
-	}
-	if cov.WarnThreshold != 50.0 {
-		t.Errorf("expected warn_threshold=50.0, got %v", cov.WarnThreshold)
-	}
-	if !cov.Enabled {
-		t.Error("expected go_test_coverage enabled=true")
+	if cfg.Quality.Checks[0].Name != "open_ticket_count" {
+		t.Errorf("expected default check to be open_ticket_count, got %q", cfg.Quality.Checks[0].Name)
 	}
 }
 
@@ -51,17 +31,13 @@ func TestDefaultConfig_quality_newChecks(t *testing.T) {
 	for _, c := range cfg.Quality.Checks {
 		names[c.Name] = true
 	}
-	for _, want := range []string{
-		"go_test_coverage",
-		"lint_warning_count",
-		"loc_total",
-		"todo_count",
-		"test_count",
-		"dependency_count",
-		"open_ticket_count",
-	} {
-		if !names[want] {
-			t.Errorf("expected check %q in DefaultConfig quality checks", want)
+	if !names["open_ticket_count"] {
+		t.Error("expected open_ticket_count in DefaultConfig quality checks")
+	}
+	// Go-specific checks must NOT be in the base default.
+	for _, goOnly := range []string{"go_test_coverage", "lint_warning_count", "dependency_count"} {
+		if names[goOnly] {
+			t.Errorf("Go-specific check %q must not be in DefaultConfig base checks", goOnly)
 		}
 	}
 }
@@ -69,18 +45,9 @@ func TestDefaultConfig_quality_newChecks(t *testing.T) {
 func TestDefaultConfig_quality_lowerDirectionChecks(t *testing.T) {
 	cfg := DefaultConfig("/tmp/test", "owner/repo")
 
-	lowerExpected := map[string]bool{
-		"lint_warning_count": true,
-		"todo_count":         true,
-		"dependency_count":   true,
-		"open_ticket_count":  true,
-	}
 	for _, c := range cfg.Quality.Checks {
-		if lowerExpected[c.Name] && c.Direction != "lower" {
-			t.Errorf("check %q: expected direction=lower, got %q", c.Name, c.Direction)
-		}
-		if !lowerExpected[c.Name] && c.Direction == "lower" {
-			t.Errorf("check %q: unexpected direction=lower", c.Name)
+		if c.Name == "open_ticket_count" && c.Direction != "lower" {
+			t.Errorf("open_ticket_count: expected direction=lower, got %q", c.Direction)
 		}
 	}
 }
