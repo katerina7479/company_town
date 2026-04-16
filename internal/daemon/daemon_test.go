@@ -66,6 +66,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
+		capturePane:             func(string) (string, error) { return "", nil },
 		runQualityBaseline:      func() error { return nil },
 		pruneStaleWorktrees:     func() (int, error) { return 0, nil },
 		resetIdleProleWorktrees: func() error { return nil },
@@ -3665,5 +3666,137 @@ func TestHandleWorkingOpenTickets_multipleAgents(t *testing.T) {
 		if updated.Status != "in_progress" {
 			t.Errorf("ticket %d: expected in_progress, got %q", id, updated.Status)
 		}
+	}
+}
+
+// --- detectBlockingPrompt tests ---
+
+func TestDetectBlockingPrompt_MatchesYN(t *testing.T) {
+	pane := "some output\nDo you want to proceed? (y/n)"
+	got := detectBlockingPrompt(pane)
+	if got == "" {
+		t.Error("expected a match for (y/n) prompt, got empty string")
+	}
+}
+
+func TestDetectBlockingPrompt_MatchesAllowPrompt(t *testing.T) {
+	pane := "running tool\nAllow access to /tmp/foo? [Y/n]"
+	got := detectBlockingPrompt(pane)
+	if got == "" {
+		t.Error("expected a match for Allow prompt, got empty string")
+	}
+}
+
+func TestDetectBlockingPrompt_NoPrompt(t *testing.T) {
+	pane := "--- PASS: TestFoo (0.00s)\ncoverage: 82.3% of statements\nok  github.com/x/y\n"
+	got := detectBlockingPrompt(pane)
+	if got != "" {
+		t.Errorf("expected no match for clean test output, got %q", got)
+	}
+}
+
+func TestDetectBlockingPrompt_PromptInHistory(t *testing.T) {
+	// Prompt-like text in line 5 of a 100-line pane; last 20 lines are clean.
+	var lines []string
+	lines = append(lines, "Are you sure? (y/n)") // line 1 — old, should be ignored
+	for i := 0; i < 99; i++ {
+		lines = append(lines, fmt.Sprintf("compilation output line %d", i))
+	}
+	pane := strings.Join(lines, "\n")
+	got := detectBlockingPrompt(pane)
+	if got != "" {
+		t.Errorf("expected no match when prompt is outside last 20 lines, got %q", got)
+	}
+}
+
+// --- handleStuckPrompts tests ---
+
+func TestHandleStuckPrompts_EscalatesToMayor(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-copper"})
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("copper", "working"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := agents.SetTmuxSession("copper", "ct-copper"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+
+	d.capturePane = func(string) (string, error) {
+		return "running tool\nAre you sure? (y/n)", nil
+	}
+
+	d.handleStuckPrompts()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 message to Mayor, got %d", len(*sent))
+	}
+	msg := (*sent)[0]
+	if msg.session != "ct-mayor" {
+		t.Errorf("expected message to ct-mayor, got %q", msg.session)
+	}
+	if !strings.Contains(msg.msg, "copper") {
+		t.Errorf("expected agent name in escalation message, got: %q", msg.msg)
+	}
+	if !strings.Contains(msg.msg, "STUCK PROMPT") {
+		t.Errorf("expected STUCK PROMPT in message, got: %q", msg.msg)
+	}
+}
+
+func TestHandleStuckPrompts_SkipsNonProles(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-architect"})
+
+	if err := agents.Register("architect", "architect", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("architect", "working"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := agents.SetTmuxSession("architect", "ct-architect"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+
+	var paneCaptureCalled bool
+	d.capturePane = func(string) (string, error) {
+		paneCaptureCalled = true
+		return "Are you sure? (y/n)", nil
+	}
+
+	d.handleStuckPrompts()
+
+	if paneCaptureCalled {
+		t.Error("capturePane must not be called for non-prole agents")
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no messages for non-prole, got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckPrompts_RespectsCooldown(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-iron"})
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("iron", "working"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := agents.SetTmuxSession("iron", "ct-iron"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+	d.nudgeCooldown = 5 * time.Minute
+	d.capturePane = func(string) (string, error) {
+		return "Are you sure? (y/n)", nil
+	}
+
+	// First call — should escalate.
+	d.handleStuckPrompts()
+	// Second call immediately — should be suppressed by cooldown.
+	d.handleStuckPrompts()
+
+	if len(*sent) != 1 {
+		t.Errorf("expected exactly 1 escalation despite two calls, got %d", len(*sent))
 	}
 }
