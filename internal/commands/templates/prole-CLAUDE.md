@@ -124,9 +124,10 @@ A direct `dolt sql` call from your worktree silently reads stale or empty data.
 
 ## Startup Protocol
 
-1. **Find your ticket.** Run `gt ticket show <id>` on the ticket you were nudged about. Note two fields:
+1. **Find your ticket.** Run `gt ticket show <id>` on the ticket you were nudged about. Note three fields:
    - **status** — `open`, `in_progress`, or `repairing`
-   - **branch** — the exact branch name recorded on the ticket (e.g. `prole/{{NAME}}/{{TICKET_PREFIX}}-42`)
+   - **branch** — the exact branch name recorded on the ticket
+   - **pr** — if a PR number is shown, a draft PR already exists (TDD handoff — see step 4)
 
 2. **Accept the assignment**: `gt agent accept <id>`. Do this BEFORE any git
    operation so your agent status flips to `working` immediately. If you
@@ -140,7 +141,7 @@ A direct `dolt sql` call from your worktree silently reads stale or empty data.
    is a drift condition — the daemon will correct it, but the clean path is
    to do it explicitly here.
 
-4. **Get on the right branch — THIS STEP IS STATUS-DEPENDENT.**
+4. **Get on the right branch — THIS STEP IS ASSIGNMENT-TYPE-DEPENDENT.**
 
    **If ticket status is `repairing`**: the branch already exists and has prior commits on `origin`. The daemon will have pre-switched your worktree to that branch at assignment time — verify you are already on it with `git branch --show-current`. If not (e.g. session was restarted), check it out manually:
 
@@ -152,7 +153,18 @@ A direct `dolt sql` call from your worktree silently reads stale or empty data.
 
    If `git checkout` fails with "pathspec did not match", the branch only exists on `origin` — use `git checkout -b <branch> origin/<branch>` to track it. If THAT fails, the branch is genuinely missing on the remote; stop and escalate — do NOT create an empty branch of the same name, that will silently lose prior work.
 
-   **If ticket status is `open` or `in_progress`**: this is new work. Create a fresh branch from `main`:
+   **If ticket status is `open` or `in_progress` AND a `pr:` field is shown**: this is a **TDD handoff**. A QA artisan wrote failing tests on this branch and filed a draft PR. **Do NOT create a new branch.** Check out the existing branch:
+
+   ```bash
+   git fetch origin
+   git checkout -b <branch> origin/<branch>
+   ```
+
+   Your job is to make those failing tests pass (and add edge-case coverage),
+   then run `gt pr ready <ticket_id>` to convert the draft and enter CI.
+   See **TDD Implementation** section below.
+
+   **If ticket status is `open` or `in_progress` AND no `pr:` field**: this is new work. Create a fresh branch from `main`:
 
    ```bash
    git fetch origin main
@@ -163,7 +175,42 @@ A direct `dolt sql` call from your worktree silently reads stale or empty data.
 
 6. **If NO assigned ticket**: signal idle (`gt agent status {{NAME}} idle`) and wait to be nudged.
 
-**Why this matters.** Repairing tickets already have real work on their branch — that's the whole point of sending a PR back instead of closing it. Creating a new branch with the same name (or working on the wrong branch) throws that work away. The reviewer's feedback refers to commits that exist on `origin/<branch>`; you must be on that branch to see them.
+**Why this matters.** Both repairing tickets and TDD handoffs already have real work on their branch. Creating a new branch or working on the wrong one destroys that work. Read the branch and pr fields from `gt ticket show` every time before touching git.
+
+## TDD Implementation
+
+When you receive a TDD handoff (ticket has an existing branch + draft PR):
+
+1. The branch was created by a QA artisan who wrote failing tests. The tests
+   define the expected behavior — they are the spec in executable form.
+2. Run the tests to see what is failing: `go test ./...`
+3. Implement the production code to make the failing tests pass. Do not modify
+   the existing tests — if they test the wrong thing, that is the QA artisan's
+   problem, not yours. File a follow-up ticket if needed.
+4. Add edge-case coverage where the tests leave gaps, but only for the feature
+   you are implementing — not for unrelated code.
+5. Once all tests are green, run quality gates:
+   ```bash
+   go test ./... && go vet ./...
+   gt check run
+   ```
+6. Commit and push:
+   ```bash
+   git add <files>
+   git commit -m "feat: implement <feature> to pass TDD tests ({{TICKET_PREFIX}}-<id>)"
+   git push origin HEAD
+   ```
+7. Mark the draft PR ready and enter CI:
+   ```bash
+   gt pr ready <ticket_id>
+   ```
+   This pushes latest commits, converts the draft to a real PR, and
+   transitions the ticket to `ci_running`. The normal CI → review → merge
+   flow takes over from here.
+8. Signal done: `gt agent status {{NAME}} idle`
+
+**Key difference from normal work**: you do NOT run `gt pr create`. The PR
+already exists as a draft. You run `gt pr ready` instead.
 
 ## Key Commands
 
@@ -174,6 +221,7 @@ gt ticket status <id> <status>       # Update ticket status
 # PRs
 gt pr create <ticket_id>             # File PR: [PREFIX-ID] Title
 gt pr update <ticket_id>             # Push repairs and move repairing → in_review
+gt pr ready <ticket_id>              # Convert TDD draft PR → ready, enter CI (ci_running)
 
 # Quality gates
 gt check run                         # Run all configured checks (exits non-zero on fail)

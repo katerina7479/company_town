@@ -17,7 +17,7 @@ import (
 // PR dispatches gt pr subcommands.
 func PR(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: gt pr <create|update|show> ...")
+		fmt.Fprintln(os.Stderr, "usage: gt pr <create|update|ready|show> ...")
 		os.Exit(1)
 	}
 
@@ -37,6 +37,8 @@ func PR(args []string) error {
 		return prCreate(issues, cfg, workDir, args[1:])
 	case "update":
 		return prUpdate(issues, cfg, workDir, args[1:])
+	case "ready":
+		return prReady(issues, cfg, workDir, args[1:])
 	case "show":
 		return prShow(issues, cfg, args[1:])
 	default:
@@ -165,6 +167,15 @@ var (
 		}
 		s := strings.TrimSpace(string(out))
 		return strings.TrimPrefix(s, "origin/"), nil
+	}
+
+	// ghPRReadyFn converts a draft PR to ready-for-review via the GitHub CLI.
+	ghPRReadyFn = func(prNum int, projectRoot string) error {
+		cmd := exec.Command("gh", "pr", "ready", strconv.Itoa(prNum))
+		cmd.Dir = projectRoot
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
 	}
 )
 
@@ -511,6 +522,61 @@ func prShow(issues *repo.IssueRepo, cfg *config.Config, args []string) error {
 		}
 	}
 
+	return nil
+}
+
+// prReady implements `gt pr ready <ticket_id>`.
+// It pushes latest commits, marks the draft PR as ready for review, and
+// transitions the ticket to ci_running. Used by proles after TDD implementation
+// work — the QA artisan filed a draft PR with failing tests; once the prole
+// makes the tests pass, prReady converts the draft to a real PR and enters the
+// normal CI → review → merge flow.
+func prReady(issues *repo.IssueRepo, cfg *config.Config, workDir string, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt pr ready <ticket_id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if !issue.PRNumber.Valid {
+		return fmt.Errorf("ticket %s-%d: %w — run `gt pr create` first to file a draft PR",
+			cfg.TicketPrefix, id, ErrNoPRSet)
+	}
+	prNum := int(issue.PRNumber.Int64)
+
+	if !issue.Branch.Valid || issue.Branch.String == "" {
+		return fmt.Errorf("ticket %d: %w", id, ErrNoBranchSet)
+	}
+
+	if err := assertBranchReadyForPR(workDir, issue.Branch.String); err != nil {
+		return err
+	}
+
+	// Push latest commits so the ready PR contains the passing implementation.
+	if err := gitPushFn(workDir, "origin", "HEAD"); err != nil {
+		return fmt.Errorf("pushing branch: %w", err)
+	}
+
+	// Convert the draft PR to ready-for-review.
+	if err := ghPRReadyFn(prNum, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("marking PR #%d ready: %w", prNum, err)
+	}
+
+	// Transition ticket to ci_running — same as after gt pr create.
+	if err := issues.UpdateStatus(id, repo.StatusCIRunning); err != nil {
+		return fmt.Errorf("updating ticket status: %w", err)
+	}
+
+	fmt.Printf("PR #%d marked ready\n", prNum)
+	fmt.Printf("Ticket %s-%d → ci_running\n", cfg.TicketPrefix, id)
 	return nil
 }
 
