@@ -372,3 +372,36 @@ func TestValidateForStart_noSlash(t *testing.T) {
 		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
 	}
 }
+
+func TestConfig_TDD_DefaultsFalse(t *testing.T) {
+	dir := writeConfig(t, `{"mayor":{"model":"claude-opus-4-6"},"prole":{"model":"claude-sonnet-4-6"}}`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TDD {
+		t.Error("TDD should default to false when absent from config JSON")
+	}
+}
+
+func TestConfig_TDD_RoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	original := DefaultConfig(dir, "owner/repo")
+	original.TDD = true
+
+	if err := Write(dir, original); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !loaded.TDD {
+		t.Error("TDD should round-trip as true after Write+Load")
+	}
+}

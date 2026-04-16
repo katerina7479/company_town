@@ -40,7 +40,7 @@ var ValidStatuses = []string{
 }
 
 // Valid issue types.
-var ValidTypes = []string{"task", "epic", "bug", "refactor"}
+var ValidTypes = []string{"task", "epic", "bug", "refactor", "tdd_tests"}
 
 type IssueRepo struct {
 	db     *sql.DB

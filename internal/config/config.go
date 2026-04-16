@@ -95,6 +95,7 @@ type Config struct {
 	RestartDeadAgents            bool          `json:"restart_dead_agents"`
 	RestartCooldownSeconds       int           `json:"restart_cooldown_seconds"`
 	RepairCycleThreshold         int           `json:"repair_cycle_threshold"`
+	TDD                          bool          `json:"tdd"`
 	Quality                      QualityConfig `json:"quality"`
 }
 
