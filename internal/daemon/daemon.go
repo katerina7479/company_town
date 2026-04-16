@@ -1256,7 +1256,7 @@ func (d *Daemon) handleFollowUpReminder() {
 	msg := "Reminder: file follow-up tickets for any non-blocking notes from recent reviews."
 	nudged := 0
 	for _, s := range sessions {
-		if err := d.sendKeys(s, msg); err != nil {
+		if err := d.session.SendKeys(s, msg); err != nil {
 			d.logger.Printf("error sending follow-up reminder to reviewer %s: %v", s, err)
 		} else {
 			nudged++
