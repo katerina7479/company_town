@@ -387,7 +387,7 @@ func TestConfig_TDD_DefaultsFalse(t *testing.T) {
 func TestConfig_TDD_RoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	ctDir := filepath.Join(dir, DirName)
-	if err := os.MkdirAll(ctDir, 0755); err != nil {
+	if err := os.MkdirAll(ctDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
