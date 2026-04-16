@@ -15,6 +15,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/vcs"
 )
 
 type sentMessage struct {
@@ -67,6 +68,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			return nil
 		},
 		capturePane:             func(string) (string, error) { return "", nil },
+		vcsProvider:             &vcs.MockProvider{},
 		ghPRCloseFn:             func(int) error { return nil },
 		gitDeleteBranchFn:       func(string, string) error { return nil },
 		runQualityBaseline:      func() error { return nil },
