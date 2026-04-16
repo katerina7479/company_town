@@ -2,6 +2,8 @@ package gtcmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +139,20 @@ func TestMiddleware_exemptCommandsSuppressed(t *testing.T) {
 	t.Log("WarnDriftOnStdErr(true) returns before drift check — no output possible")
 }
 
+// TestWarnDriftOnStdErr_skipCmd: skipCmd=true must return before writing anything.
+// This tests the package-level function's guard directly.
+func TestWarnDriftOnStdErr_skipCmd(t *testing.T) {
+	// Even with CT_AGENT_NAME set, skipCmd=true should be a no-op.
+	t.Setenv("CT_AGENT_NAME", "copper")
+	WarnDriftOnStdErr(true) // must not panic or error; no assertions needed
+}
+
+// TestWarnDriftOnStdErr_noAgentName: CT_AGENT_NAME="" must return immediately.
+func TestWarnDriftOnStdErr_noAgentName(t *testing.T) {
+	t.Setenv("CT_AGENT_NAME", "")
+	WarnDriftOnStdErr(false) // must not panic; returns after agentName check
+}
+
 // TestShouldEmitDriftWarning_firstTime: no prior record → always emit.
 func TestShouldEmitDriftWarning_firstTime(t *testing.T) {
 	runDir := t.TempDir()
@@ -205,5 +221,23 @@ func TestWarnDriftToWriter_onlyWarnsAboutCaller(t *testing.T) {
 
 	if buf.String() != "" {
 		t.Errorf("expected no warning for iron (copper is the drifted agent), got: %q", buf.String())
+	}
+}
+
+// TestShouldEmitDriftWarning_malformedFile: a rate-limit file that contains
+// non-numeric content must be treated as no prior record (emit = true).
+func TestShouldEmitDriftWarning_malformedFile(t *testing.T) {
+	runDir := t.TempDir()
+	// Write a malformed (non-numeric) timestamp into the rate-limit file.
+	path := driftWarnPath(runDir, "iron", "some reason")
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("not-a-unix-timestamp"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if !shouldEmitDriftWarning(runDir, "iron", "some reason", time.Now) {
+		t.Error("expected true for malformed rate-limit file (should emit)")
 	}
 }

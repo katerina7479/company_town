@@ -15,21 +15,56 @@ const (
 	SessionPrefix = "ct-"
 )
 
+// Client abstracts the tmux operations that callers need. The real
+// implementation calls tmux; test implementations substitute controlled
+// behaviour without swapping package-level variables.
+type Client interface {
+	Exists(name string) bool
+	SendKeys(name, keys string) error
+	Kill(name string) error
+	SpawnAttach(name string) error
+}
+
+// tmuxClient is the real Client. Fields check, exec, sleep, and spawn hold
+// the exec seams that were previously package-level variables; moving them
+// onto the struct allows each test to create an isolated instance without
+// mutating global state.
+type tmuxClient struct {
+	check func(name string) bool                            // tmux has-session
+	exec  func(args ...string) error                        // tmux send-keys / kill-session
+	sleep func()                                            // pause inside SendKeys
+	spawn func(prog string, args ...string) ([]byte, error) // osascript etc.
+}
+
+// New returns a Client backed by real tmux.
+func New() Client {
+	return &tmuxClient{
+		check: func(name string) bool {
+			return exec.Command("tmux", "has-session", "-t", name).Run() == nil
+		},
+		exec: func(args ...string) error {
+			return exec.Command("tmux", args...).Run()
+		},
+		sleep: func() { time.Sleep(150 * time.Millisecond) },
+		spawn: func(prog string, args ...string) ([]byte, error) {
+			return exec.Command(prog, args...).CombinedOutput()
+		},
+	}
+}
+
+// defaultClient is used by the package-level functions so that callers that
+// have not yet migrated to injecting a Client continue to work unchanged.
+var defaultClient = New()
+
 // SessionName returns the tmux session name for an agent.
 func SessionName(agentName string) string {
 	return SessionPrefix + agentName
 }
 
-// existsFn is the exec seam for Exists. Tests swap this to control session
-// presence without requiring a real tmux process.
-var existsFn = func(name string) bool {
-	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
-}
-
 // Exists checks if a tmux session exists.
-func Exists(name string) bool {
-	return existsFn(name)
-}
+func Exists(name string) bool { return defaultClient.Exists(name) }
+
+func (c *tmuxClient) Exists(name string) bool { return c.check(name) }
 
 // AgentSessionConfig holds everything needed to launch an agent session.
 type AgentSessionConfig struct {
@@ -101,7 +136,7 @@ func CreateInteractive(cfg AgentSessionConfig) error {
 func provisionClaudeSettings(agentDir string) error {
 	claudeDir := filepath.Join(agentDir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return err
+		return fmt.Errorf("creating .claude dir %s: %w", claudeDir, err)
 	}
 
 	settingsPath := filepath.Join(claudeDir, "settings.json")
@@ -123,10 +158,13 @@ func provisionClaudeSettings(agentDir string) error {
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshalling claude settings: %w", err)
 	}
 
-	return os.WriteFile(settingsPath, data, 0644)
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("writing claude settings to %s: %w", settingsPath, err)
+	}
+	return nil
 }
 
 // Attach attaches the current terminal to a tmux session.
@@ -145,13 +183,13 @@ func Attach(name string) error {
 }
 
 // Kill destroys a tmux session.
-func Kill(name string) error {
-	if !Exists(name) {
+func Kill(name string) error { return defaultClient.Kill(name) }
+
+func (c *tmuxClient) Kill(name string) error {
+	if !c.check(name) {
 		return nil // already gone
 	}
-
-	cmd := exec.Command("tmux", "kill-session", "-t", name)
-	if err := cmd.Run(); err != nil {
+	if err := c.exec("kill-session", "-t", name); err != nil {
 		return fmt.Errorf("killing session %s: %w", name, err)
 	}
 	return nil
@@ -174,16 +212,6 @@ func ListCompanyTown() ([]string, error) {
 	return sessions, nil
 }
 
-// tmuxSendExec is the exec seam for SendKeys. Tests swap this to capture
-// send-keys calls without spawning a real tmux process.
-var tmuxSendExec = func(args ...string) error {
-	return exec.Command("tmux", args...).Run()
-}
-
-// sendKeySleepFn is the sleep seam between the literal-text send and the Enter
-// keystroke. Tests swap this to a no-op to avoid the 150 ms delay.
-var sendKeySleepFn = func() { time.Sleep(150 * time.Millisecond) }
-
 // SendKeys sends keystrokes to a tmux session.
 //
 // It first sends C-u (readline kill-line) to clear any accumulated input in
@@ -197,8 +225,10 @@ var sendKeySleepFn = func() { time.Sleep(150 * time.Millisecond) }
 // paste to Claude Code's input handler, causing the trailing Enter to be
 // consumed as a literal newline rather than a submit keypress when the pane is
 // mid-response (nc-153).
-func SendKeys(name, keys string) error {
-	if !Exists(name) {
+func SendKeys(name, keys string) error { return defaultClient.SendKeys(name, keys) }
+
+func (c *tmuxClient) SendKeys(name, keys string) error {
+	if !c.check(name) {
 		return fmt.Errorf("session %s does not exist", name)
 	}
 
@@ -207,24 +237,27 @@ func SendKeys(name, keys string) error {
 	// sending SIGINT, so it does not interrupt a running tool call. C-c would
 	// abort the current operation in Claude Code — wrong behaviour when the
 	// agent is mid-response (nc-162). Non-fatal if this fails.
-	_ = tmuxSendExec("send-keys", "-t", name, "C-u")
+	_ = c.exec("send-keys", "-t", name, "C-u")
 
 	// Send the message text using the -l (literal) flag so each character is
 	// injected individually rather than interpreted as tmux key names or treated
 	// as a bracketed-paste sequence.
-	if err := tmuxSendExec("send-keys", "-t", name, "-l", keys); err != nil {
-		return err
+	if err := c.exec("send-keys", "-t", name, "-l", keys); err != nil {
+		return fmt.Errorf("sending keys to session %s: %w", name, err)
 	}
 
 	// Brief pause so the input handler can settle after receiving the text.
 	// Without this, the Enter arrives while the paste event is still being
 	// processed and is swallowed as a literal newline instead of triggering
 	// submit.
-	sendKeySleepFn()
+	c.sleep()
 
 	// Send Enter as its own call so Claude Code's input handler sees it as a
 	// distinct keystroke, not a continuation of the pasted text.
-	return tmuxSendExec("send-keys", "-t", name, "Enter")
+	if err := c.exec("send-keys", "-t", name, "Enter"); err != nil {
+		return fmt.Errorf("sending enter to session %s: %w", name, err)
+	}
+	return nil
 }
 
 func shellQuote(s string) string {
@@ -236,25 +269,20 @@ func shellQuote(s string) string {
 // unrecognized. Callers should fall back to in-place tmux attach.
 var ErrUnknownTerminal = fmt.Errorf("unrecognized TERM_PROGRAM; falling back to in-place attach")
 
-// spawnAttachExec is the exec seam for terminal spawn functions.
-// Tests swap this to capture argv and stub outputs.
-var spawnAttachExec = func(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	return cmd.CombinedOutput()
-}
-
 // SpawnAttach opens a new terminal window running tmux attach -t sessionName.
 // The calling process keeps running. Supported: Ghostty, iTerm2, Terminal.app.
 // Returns ErrUnknownTerminal for unrecognized $TERM_PROGRAM.
-func SpawnAttach(sessionName string) error {
+func SpawnAttach(sessionName string) error { return defaultClient.SpawnAttach(sessionName) }
+
+func (c *tmuxClient) SpawnAttach(sessionName string) error {
 	termProg := strings.TrimSpace(os.Getenv("TERM_PROGRAM"))
 	switch termProg {
 	case "ghostty":
-		return spawnGhostty(sessionName)
+		return c.spawnGhostty(sessionName)
 	case "iTerm.app":
-		return spawnITerm(sessionName)
+		return c.spawnITerm(sessionName)
 	case "Apple_Terminal":
-		return spawnAppleTerminal(sessionName)
+		return c.spawnAppleTerminal(sessionName)
 	default:
 		return ErrUnknownTerminal
 	}
@@ -271,7 +299,7 @@ func osascriptQuote(s string) string {
 	return `"` + escaped + `"`
 }
 
-func spawnGhostty(sessionName string) error {
+func (c *tmuxClient) spawnGhostty(sessionName string) error {
 	script := fmt.Sprintf(`
 tell application "Ghostty"
 	activate
@@ -284,14 +312,14 @@ tell application "Ghostty"
 		end tell
 	end tell
 end tell`, osascriptQuote(attachArgv(sessionName)))
-	out, err := spawnAttachExec("osascript", "-e", script)
+	out, err := c.spawn("osascript", "-e", script)
 	if err != nil {
 		return fmt.Errorf("ghostty osascript: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func spawnITerm(sessionName string) error {
+func (c *tmuxClient) spawnITerm(sessionName string) error {
 	script := fmt.Sprintf(`
 tell application "iTerm"
 	activate
@@ -300,20 +328,20 @@ tell application "iTerm"
 		write text %s
 	end tell
 end tell`, osascriptQuote(attachArgv(sessionName)))
-	out, err := spawnAttachExec("osascript", "-e", script)
+	out, err := c.spawn("osascript", "-e", script)
 	if err != nil {
 		return fmt.Errorf("iTerm osascript: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func spawnAppleTerminal(sessionName string) error {
+func (c *tmuxClient) spawnAppleTerminal(sessionName string) error {
 	script := fmt.Sprintf(`
 tell application "Terminal"
 	activate
 	do script %s
 end tell`, osascriptQuote(attachArgv(sessionName)))
-	out, err := spawnAttachExec("osascript", "-e", script)
+	out, err := c.spawn("osascript", "-e", script)
 	if err != nil {
 		return fmt.Errorf("Terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
 	}

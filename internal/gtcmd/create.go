@@ -44,7 +44,7 @@ func createReviewerWithDeps(name string, cfg *config.Config, agents *repo.AgentR
 	sessionName := session.SessionName(name)
 
 	if tmuxExistsFn(sessionName) {
-		return fmt.Errorf("session %s already exists", sessionName)
+		return fmt.Errorf("%w: %s", ErrSessionAlreadyExists, sessionName)
 	}
 
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)

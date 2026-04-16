@@ -139,16 +139,16 @@ func Load(projectRoot string) (*Config, error) {
 func ValidateForStart(cfg *Config) error {
 	repo := cfg.GithubRepo
 	if repo == "" {
-		return fmt.Errorf("config: github_repo is unset — edit .company_town/config.json and set github_repo to \"owner/repo\" form (e.g., \"katerina7479/company_town\")")
+		return fmt.Errorf("config: %w: unset — edit .company_town/config.json and set github_repo to \"owner/repo\" form (e.g., \"katerina7479/company_town\")", ErrInvalidGithubRepo)
 	}
 	if repo == "owner/repo" {
-		return fmt.Errorf("config: github_repo is still the placeholder \"owner/repo\" — edit .company_town/config.json and set it to your actual repository")
+		return fmt.Errorf("config: %w: still the placeholder \"owner/repo\" — edit .company_town/config.json and set it to your actual repository", ErrInvalidGithubRepo)
 	}
 	if strings.HasPrefix(repo, "http://") || strings.HasPrefix(repo, "https://") {
-		return fmt.Errorf("config: github_repo must be in \"owner/repo\" form, not a URL (got %q)", repo)
+		return fmt.Errorf("config: %w: must be in \"owner/repo\" form, not a URL (got %q)", ErrInvalidGithubRepo, repo)
 	}
 	if !strings.Contains(repo, "/") {
-		return fmt.Errorf("config: github_repo must be in \"owner/repo\" form (got %q)", repo)
+		return fmt.Errorf("config: %w: must be in \"owner/repo\" form (got %q)", ErrInvalidGithubRepo, repo)
 	}
 	return nil
 }
@@ -209,10 +209,10 @@ func validateTransition(path string, tt *TicketTransition) error {
 		return nil
 	}
 	if tt.From == "" || tt.To == "" {
-		return fmt.Errorf("config: %s.ticket_transition: from and to must be non-empty and different", path)
+		return fmt.Errorf("config: %s.ticket_transition: %w: from and to must be non-empty and different", path, ErrInvalidTicketTransition)
 	}
 	if tt.From == tt.To {
-		return fmt.Errorf("config: %s.ticket_transition: from and to must be non-empty and different", path)
+		return fmt.Errorf("config: %s.ticket_transition: %w: from and to must be non-empty and different", path, ErrInvalidTicketTransition)
 	}
 	return nil
 }

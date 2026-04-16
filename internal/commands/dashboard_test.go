@@ -16,6 +16,15 @@ import (
 	"github.com/katerina7479/company_town/internal/repo"
 )
 
+// blankModel returns a dashboardModel with only the theme initialised, suitable
+// for calling render methods that need no database or session state.
+func blankModel() dashboardModel {
+	return dashboardModel{
+		theme:    DefaultTheme(),
+		expanded: make(map[int]bool),
+	}
+}
+
 // makeNode builds an IssueNode with the given status and optional ClosedAt.
 func makeNode(status string, closedAt *time.Time, children ...*repo.IssueNode) *repo.IssueNode {
 	issue := &repo.Issue{Status: status}
@@ -1045,7 +1054,7 @@ func makeDetailNode(description, assignee, branch string, prNumber int64) *repo.
 
 func TestRenderTicketDetails_descriptionShown(t *testing.T) {
 	node := makeDetailNode("Some description text", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "Some description text") {
 		t.Errorf("expected description in output, got:\n%s", out)
 	}
@@ -1053,7 +1062,7 @@ func TestRenderTicketDetails_descriptionShown(t *testing.T) {
 
 func TestRenderTicketDetails_noDescriptionOmitted(t *testing.T) {
 	node := makeDetailNode("", "alice", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	// There should be an assignee line but no empty description line.
 	if !containsAll(out, "assignee:") {
 		t.Errorf("expected assignee line in output, got:\n%s", out)
@@ -1062,7 +1071,7 @@ func TestRenderTicketDetails_noDescriptionOmitted(t *testing.T) {
 
 func TestRenderTicketDetails_assigneeShown(t *testing.T) {
 	node := makeDetailNode("", "copper", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "assignee:", "copper") {
 		t.Errorf("expected assignee in output, got:\n%s", out)
 	}
@@ -1070,7 +1079,7 @@ func TestRenderTicketDetails_assigneeShown(t *testing.T) {
 
 func TestRenderTicketDetails_noAssigneeOmitted(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if containsAll(out, "assignee:") {
 		t.Errorf("expected no assignee line when assignee is null, got:\n%s", out)
 	}
@@ -1078,7 +1087,7 @@ func TestRenderTicketDetails_noAssigneeOmitted(t *testing.T) {
 
 func TestRenderTicketDetails_prNumberShown(t *testing.T) {
 	node := makeDetailNode("", "", "", 42)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "PR:", "#42") {
 		t.Errorf("expected PR number in output, got:\n%s", out)
 	}
@@ -1086,7 +1095,7 @@ func TestRenderTicketDetails_prNumberShown(t *testing.T) {
 
 func TestRenderTicketDetails_noPROmitted(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if containsAll(out, "PR:") {
 		t.Errorf("expected no PR line when PR is null, got:\n%s", out)
 	}
@@ -1094,7 +1103,7 @@ func TestRenderTicketDetails_noPROmitted(t *testing.T) {
 
 func TestRenderTicketDetails_branchShown(t *testing.T) {
 	node := makeDetailNode("", "", "prole/fig/10", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "branch:", "prole/fig/10") {
 		t.Errorf("expected branch in output, got:\n%s", out)
 	}
@@ -1102,7 +1111,7 @@ func TestRenderTicketDetails_branchShown(t *testing.T) {
 
 func TestRenderTicketDetails_timestampsAlwaysPresent(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !containsAll(out, "created:", "updated:") {
 		t.Errorf("expected timestamps in output, got:\n%s", out)
 	}
@@ -1110,8 +1119,8 @@ func TestRenderTicketDetails_timestampsAlwaysPresent(t *testing.T) {
 
 func TestRenderTicketDetails_depthAffectsIndentation(t *testing.T) {
 	node := makeDetailNode("", "alice", "", 0)
-	depth0 := renderTicketDetails(node, 0, 80)
-	depth1 := renderTicketDetails(node, 1, 80)
+	depth0 := blankModel().renderTicketDetails(node, 0, 80)
+	depth1 := blankModel().renderTicketDetails(node, 1, 80)
 	// Depth 1 should have more leading spaces than depth 0.
 	if len(depth1) <= len(depth0) {
 		t.Errorf("expected deeper indent at depth=1 to produce longer output")
@@ -1354,7 +1363,7 @@ func TestRenderIssueRow_fitsContentWidth(t *testing.T) {
 
 	for _, status := range statuses {
 		node := makeFullNode(status, longTitle)
-		row := renderIssueRow(node, 0, contentWidth)
+		row := blankModel().renderIssueRow(node, 0, contentWidth)
 		// lipgloss.Width strips ANSI codes and returns the visual cell width.
 		got := lipgloss.Width(row)
 		if got > contentWidth {
@@ -1365,13 +1374,13 @@ func TestRenderIssueRow_fitsContentWidth(t *testing.T) {
 }
 
 func TestRenderIssueRow_selectedRowDoesNotWrap(t *testing.T) {
-	// Regression test for NC-45: selectedStyle.Width(innerWidth) must not cause
+	// Regression test for NC-45: blankModel().theme.Selected.Width(innerWidth) must not cause
 	// the selected row to wrap to a second line inside the panel content area.
 	contentWidth := 100
 	node := makeFullNode("open", strings.Repeat("B", 200))
 
-	row := renderIssueRow(node, 0, contentWidth)
-	rendered := selectedStyle.Width(contentWidth).Render(row)
+	row := blankModel().renderIssueRow(node, 0, contentWidth)
+	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
 
 	// If wrapping occurs, lipgloss.Height > 1.
 	if h := lipgloss.Height(rendered); h != 1 {
@@ -1386,8 +1395,8 @@ func TestRenderIssueRow_selectedRowDoesNotWrapShortStatus(t *testing.T) {
 	contentWidth := 80
 	node := makeFullNode("open", strings.Repeat("C", 200))
 
-	row := renderIssueRow(node, 0, contentWidth)
-	rendered := selectedStyle.Width(contentWidth).Render(row)
+	row := blankModel().renderIssueRow(node, 0, contentWidth)
+	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
 
 	if h := lipgloss.Height(rendered); h != 1 {
 		t.Errorf("selected 'open' row wrapped to %d lines (expected 1); content width=%d",
@@ -1398,46 +1407,46 @@ func TestRenderIssueRow_selectedRowDoesNotWrapShortStatus(t *testing.T) {
 // --- NC-47: ticket type indicator ---
 
 func TestTypeCell_taskIsBlank(t *testing.T) {
-	cell := typeCell("task")
+	cell := blankModel().theme.TypeCell("task")
 	if cell != " " {
-		t.Errorf("typeCell('task') should return a single space, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('task') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_unknownEmptyIsBlank(t *testing.T) {
-	cell := typeCell("")
+	cell := blankModel().theme.TypeCell("")
 	if cell != " " {
-		t.Errorf("typeCell('') should return a single space, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_unknownStringIsBlank(t *testing.T) {
 	// Future/unknown types must silently return blank — not panic, not print garbage.
-	cell := typeCell("research")
+	cell := blankModel().theme.TypeCell("research")
 	if cell != " " {
-		t.Errorf("typeCell('research') should return a single space, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('research') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_epicIsE(t *testing.T) {
-	cell := typeCell("epic")
+	cell := blankModel().theme.TypeCell("epic")
 	// Strip ANSI codes — the visible content should end with a space and contain "E".
 	if !strings.Contains(cell, "E") {
-		t.Errorf("typeCell('epic') should contain 'E', got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('epic') should contain 'E', got %q", cell)
 	}
 }
 
 func TestTypeCell_bugIsB(t *testing.T) {
-	cell := typeCell("bug")
+	cell := blankModel().theme.TypeCell("bug")
 	if !strings.Contains(cell, "B") {
-		t.Errorf("typeCell('bug') should contain 'B', got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('bug') should contain 'B', got %q", cell)
 	}
 }
 
 func TestTypeCell_refactorIsR(t *testing.T) {
-	cell := typeCell("refactor")
+	cell := blankModel().theme.TypeCell("refactor")
 	if !strings.Contains(cell, "R") {
-		t.Errorf("typeCell('refactor') should contain 'R', got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('refactor') should contain 'R', got %q", cell)
 	}
 }
 
@@ -1451,7 +1460,7 @@ func TestRenderIssueRow_typeIndicatorPresent(t *testing.T) {
 			Title:     "Something broken",
 		},
 	}
-	row := renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, 120)
 	if !strings.Contains(row, "B") {
 		t.Errorf("renderIssueRow for bug ticket should contain 'B' type indicator, got: %q", row)
 	}
@@ -1461,9 +1470,9 @@ func TestRenderIssueRow_taskTypeIndicatorAbsent(t *testing.T) {
 	// A task ticket row must NOT contain a type letter (type cell is blank).
 	// We verify by checking the row contains the title but no stray type letter
 	// adjacent to the id/status region. We do this by checking typeCell directly.
-	cell := typeCell("task")
+	cell := blankModel().theme.TypeCell("task")
 	if strings.ContainsAny(cell, "EBRTS") {
-		t.Errorf("typeCell('task') should not contain a type letter, got %q", cell)
+		t.Errorf("blankModel().theme.TypeCell('task') should not contain a type letter, got %q", cell)
 	}
 }
 
@@ -1478,7 +1487,7 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 			Title:     "Child epic",
 		},
 	}
-	row := renderIssueRow(node, 1, 120)
+	row := blankModel().renderIssueRow(node, 1, 120)
 	if !strings.Contains(row, "◦") {
 		t.Errorf("renderIssueRow for depth=1 should contain child bullet ◦, got: %q", row)
 	}
@@ -1490,7 +1499,7 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 // --- priorityCell tests ---
 
 func TestPriorityCell_nullIsSpaces(t *testing.T) {
-	got := priorityCell(sql.NullString{})
+	got := blankModel().theme.PriorityCell(sql.NullString{})
 	if got != "     " {
 		t.Errorf("expected 5 spaces for NULL priority, got %q", got)
 	}
@@ -1501,20 +1510,20 @@ func TestPriorityCell_nullIsSpaces(t *testing.T) {
 
 func TestPriorityCell_width5(t *testing.T) {
 	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
-		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true})
 		// In test mode lipgloss renders plain text (no TTY), so len == visible width.
 		if len(cell) != 5 {
-			t.Errorf("priorityCell(%q): expected len 5, got %d (%q)", p, len(cell), cell)
+			t.Errorf("blankModel().theme.PriorityCell(%q): expected len 5, got %d (%q)", p, len(cell), cell)
 		}
 	}
 }
 
 func TestPriorityCell_containsLabel(t *testing.T) {
 	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
-		cell := priorityCell(sql.NullString{String: p, Valid: true})
+		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true})
 		want := fmt.Sprintf("[%s]", p)
 		if !strings.Contains(cell, want) {
-			t.Errorf("priorityCell(%q): expected cell to contain %q, got %q", p, want, cell)
+			t.Errorf("blankModel().theme.PriorityCell(%q): expected cell to contain %q, got %q", p, want, cell)
 		}
 	}
 }
@@ -1524,10 +1533,10 @@ func TestPriorityCell_p3NotStyled(t *testing.T) {
 	// Without a style entry it renders via the fallthrough fmt.Sprintf branch,
 	// which produces no ANSI escape sequences (the load-bearing assertion for
 	// the symmetric-around-neutral design).
-	if _, ok := priorityStyles["P3"]; ok {
-		t.Error("P3 must not be in priorityStyles — it should render with default terminal foreground")
+	if _, ok := blankModel().theme.Priority["P3"]; ok {
+		t.Error("P3 must not be in theme.Priority — it should render with default terminal foreground")
 	}
-	cell := priorityCell(sql.NullString{String: "P3", Valid: true})
+	cell := blankModel().theme.PriorityCell(sql.NullString{String: "P3", Valid: true})
 	if strings.Contains(cell, "\x1b[") || strings.Contains(cell, "[") {
 		t.Errorf("P3 cell must have no ANSI escape codes, got %q", cell)
 	}
@@ -1544,7 +1553,7 @@ func TestRenderIssueRow_assigneeShownWhenSet(t *testing.T) {
 			Assignee: sql.NullString{String: "copper", Valid: true},
 		},
 	}
-	row := renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, 120)
 	if !strings.Contains(row, "copper") {
 		t.Errorf("renderIssueRow for assigned ticket should contain assignee name, got: %q", row)
 	}
@@ -1568,8 +1577,8 @@ func TestRenderIssueRow_assigneeBlankWhenUnset(t *testing.T) {
 			Title:  "Same title here",
 		},
 	}
-	rowA := renderIssueRow(assigned, 0, 120)
-	rowU := renderIssueRow(unassigned, 0, 120)
+	rowA := blankModel().renderIssueRow(assigned, 0, 120)
+	rowU := blankModel().renderIssueRow(unassigned, 0, 120)
 
 	// Unassigned row must not contain a stray agent name.
 	if strings.Contains(rowU, "iron") {
@@ -1594,7 +1603,7 @@ func TestRenderIssueRow_assigneeTruncatedAt8Chars(t *testing.T) {
 			Assignee: sql.NullString{String: "verylongname", Valid: true},
 		},
 	}
-	row := renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, 120)
 	// Must contain the first 8 chars of the name.
 	if !strings.Contains(row, "verylong") {
 		t.Errorf("renderIssueRow should contain truncated assignee 'verylong', got: %q", row)
@@ -1609,18 +1618,18 @@ func TestColorStatus_mergeConflict(t *testing.T) {
 	// merge_conflict must render as a non-empty styled string distinct from
 	// the repairing style, so the dashboard operator can visually distinguish
 	// "needs conflict resolution" from "prole is fixing reviewer feedback".
-	mc := colorStatus("merge_conflict")
+	mc := blankModel().theme.ColorStatus("merge_conflict")
 	if mc == "" {
-		t.Fatal("colorStatus(merge_conflict) returned empty string")
+		t.Fatal("blankModel().theme.ColorStatus(merge_conflict) returned empty string")
 	}
 	// The rendered output must contain the status text.
 	if !strings.Contains(mc, "merge_conflict") {
-		t.Errorf("colorStatus(merge_conflict) output %q does not contain status text", mc)
+		t.Errorf("blankModel().theme.ColorStatus(merge_conflict) output %q does not contain status text", mc)
 	}
 	// It must differ from the repairing style.
-	rep := colorStatus("repairing")
+	rep := blankModel().theme.ColorStatus("repairing")
 	if mc == rep {
-		t.Errorf("colorStatus(merge_conflict) == colorStatus(repairing): expected distinct styles")
+		t.Errorf("blankModel().theme.ColorStatus(merge_conflict) == blankModel().theme.ColorStatus(repairing): expected distinct styles")
 	}
 }
 
@@ -1852,7 +1861,7 @@ func TestDashboard_attachAgent_emptyTmuxSession_statusMsg(t *testing.T) {
 func TestRenderTicketDetails_repairReasonShownWhenSet(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
 	node.RepairReason = sql.NullString{String: "CI: lint, test", Valid: true}
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if !strings.Contains(out, "repair:") || !strings.Contains(out, "CI: lint, test") {
 		t.Errorf("expected repair_reason in output, got:\n%s", out)
 	}
@@ -1860,7 +1869,7 @@ func TestRenderTicketDetails_repairReasonShownWhenSet(t *testing.T) {
 
 func TestRenderTicketDetails_repairReasonOmittedWhenNull(t *testing.T) {
 	node := makeDetailNode("", "", "", 0)
-	out := renderTicketDetails(node, 0, 80)
+	out := blankModel().renderTicketDetails(node, 0, 80)
 	if strings.Contains(out, "repair:") {
 		t.Errorf("expected no repair line when repair_reason is null, got:\n%s", out)
 	}
@@ -2041,5 +2050,595 @@ func TestDashboard_EditRepairReason_enabledForOnHold(t *testing.T) {
 
 	if !dm.inputMode {
 		t.Fatal("expected inputMode=true for on_hold ticket")
+	}
+}
+
+// --- renderAgents tests ---
+
+func TestRenderAgents_empty(t *testing.T) {
+	m := blankModel()
+	m.width = 120
+	m.height = 40
+	// data.agents is nil → should render "(none registered)"
+	out := m.renderAgents(40, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "none registered") {
+		t.Errorf("expected '(none registered)' for empty agents, got %q", plain)
+	}
+}
+
+func TestRenderAgents_withAgents(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.data.agents = []*repo.Agent{
+		{
+			Name:   "copper",
+			Status: "working",
+		},
+		{
+			Name:   "tin",
+			Status: "idle",
+		},
+	}
+	out := m.renderAgents(50, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "copper") {
+		t.Errorf("expected 'copper' in agents panel, got %q", plain)
+	}
+	if !strings.Contains(plain, "tin") {
+		t.Errorf("expected 'tin' in agents panel, got %q", plain)
+	}
+}
+
+func TestRenderAgents_withCurrentIssue(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.data.agents = []*repo.Agent{
+		{
+			Name:         "copper",
+			Status:       "working",
+			CurrentIssue: sql.NullInt64{Int64: 42, Valid: true},
+		},
+	}
+	out := m.renderAgents(50, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "42") {
+		t.Errorf("expected issue number '42' in agent row, got %q", plain)
+	}
+}
+
+func TestRenderAgents_focusedWithCursor(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.focusedPanel = 0
+	m.agentCursor = 0
+	m.data.agents = []*repo.Agent{
+		{Name: "copper", Status: "working"},
+	}
+	out := m.renderAgents(50, 30)
+	// Should render without panic and include the agent name
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "copper") {
+		t.Errorf("expected 'copper' in focused agent panel, got %q", plain)
+	}
+}
+
+func TestRenderAgents_withStatusAge(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	ago := time.Now().Add(-30 * time.Minute)
+	m.data.agents = []*repo.Agent{
+		{
+			Name:            "copper",
+			Status:          "working",
+			StatusChangedAt: sql.NullTime{Time: ago, Valid: true},
+		},
+	}
+	out := m.renderAgents(50, 30)
+	plain := stripANSI(out)
+	// Should include a duration like "30m" or "29m"
+	if !strings.Contains(plain, "m") {
+		t.Errorf("expected duration string in agent row, got %q", plain)
+	}
+}
+
+// --- renderTickets tests ---
+
+func TestRenderTickets_empty(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	// data.roots is nil → flatTickets returns nothing
+	out := m.renderTickets(80, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "no tickets") {
+		t.Errorf("expected '(no tickets)' for empty tickets, got %q", plain)
+	}
+}
+
+func TestRenderTickets_withTickets(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	issue := &repo.Issue{ID: 1, Status: "open", Title: "Fix the bug"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	out := m.renderTickets(80, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "open") {
+		t.Errorf("expected status 'open' in ticket row, got %q", plain)
+	}
+}
+
+func TestRenderTickets_focusedWithCursor(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.focusedPanel = 1
+	m.ticketCursor = 0
+	issue := &repo.Issue{ID: 1, Status: "in_progress", Title: "Add feature"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	out := m.renderTickets(80, 30)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "in_progress") {
+		t.Errorf("expected status 'in_progress' in ticket row, got %q", plain)
+	}
+}
+
+func TestRenderTickets_expandedShowsDetails(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	issue := &repo.Issue{ID: 5, Status: "open", Title: "Expanded ticket"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	m.expanded[5] = true
+	out := m.renderTickets(80, 30)
+	// renderTicketDetails will be called; just ensure no panic
+	if out == "" {
+		t.Error("expected non-empty output for expanded ticket")
+	}
+}
+
+// --- View tests ---
+
+func TestView_loading(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	// width=0 → "Loading…"
+	got := m.View()
+	if got != "Loading…" {
+		t.Errorf("expected 'Loading…' for zero-width model, got %q", got)
+	}
+}
+
+func TestView_error(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.data.err = fmt.Errorf("database connection refused")
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "error") {
+		t.Errorf("expected 'error' in view output, got %q", plain)
+	}
+}
+
+func TestView_normal(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.ticketPrefix = "nc"
+	// Normal rendering with no agents or tickets
+	got := m.View()
+	plain := stripANSI(got)
+	// Footer hint should appear
+	if !strings.Contains(plain, "quit") {
+		t.Errorf("expected key hint 'quit' in footer, got %q", plain)
+	}
+}
+
+func TestView_inputModeNudge(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.inputMode = true
+	m.inputAction = "nudge"
+	m.inputTarget = "copper"
+	m.inputBuffer = "please do X"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "nudge copper") {
+		t.Errorf("expected 'nudge copper' in input mode footer, got %q", plain)
+	}
+}
+
+func TestView_inputModeCreateTicket(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.inputMode = true
+	m.inputAction = "create_ticket"
+	m.inputBuffer = "New ticket title"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "new ticket title") {
+		t.Errorf("expected 'new ticket title' label in input mode, got %q", plain)
+	}
+}
+
+func TestView_inputModeStatus(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.ticketPrefix = "nc"
+	m.inputMode = true
+	m.inputAction = "status"
+	m.inputTarget = "42"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "status nc-42") {
+		t.Errorf("expected 'status nc-42' in input footer, got %q", plain)
+	}
+}
+
+func TestView_inputModeRepairReason(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.ticketPrefix = "nc"
+	m.inputMode = true
+	m.inputAction = "repair_reason"
+	m.inputTarget = "42"
+	got := m.View()
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "repair_reason nc-42") {
+		t.Errorf("expected 'repair_reason nc-42' in input footer, got %q", plain)
+	}
+}
+
+func TestView_ticketsPanelFocused(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.focusedPanel = 1 // tickets panel
+	got := m.View()
+	plain := stripANSI(got)
+	// Ticket panel hints should appear
+	if !strings.Contains(plain, "filter") {
+		t.Errorf("expected 'filter' hint in tickets panel footer, got %q", plain)
+	}
+}
+
+func TestView_showClosed(t *testing.T) {
+	m := blankModel()
+	m.theme = DefaultTheme()
+	m.width = 120
+	m.height = 40
+	m.focusedPanel = 1
+	m.showClosed = true
+	got := m.View()
+	plain := stripANSI(got)
+	// showClosed=true shows * in filter hint
+	if !strings.Contains(plain, "f[*]") {
+		t.Errorf("expected 'f[*]filter closed' hint, got %q", plain)
+	}
+}
+
+// --- formatDuration tests ---
+
+func TestFormatDuration_negative(t *testing.T) {
+	// negative durations clamp to 0 → "<1m"
+	got := formatDuration(-5 * time.Minute)
+	if got != "<1m" {
+		t.Errorf("expected '<1m' for negative duration, got %q", got)
+	}
+}
+
+func TestFormatDuration_lessThanOneMinute(t *testing.T) {
+	got := formatDuration(30 * time.Second)
+	if got != "<1m" {
+		t.Errorf("expected '<1m' for 30s, got %q", got)
+	}
+}
+
+func TestFormatDuration_minutes(t *testing.T) {
+	got := formatDuration(25 * time.Minute)
+	if got != "25m" {
+		t.Errorf("expected '25m', got %q", got)
+	}
+}
+
+func TestFormatDuration_hours(t *testing.T) {
+	got := formatDuration(2*time.Hour + 30*time.Minute)
+	if got != "2h 30m" {
+		t.Errorf("expected '2h 30m', got %q", got)
+	}
+}
+
+func TestFormatDuration_days(t *testing.T) {
+	got := formatDuration(2*24*time.Hour + 3*time.Hour)
+	if got != "2d 3h" {
+		t.Errorf("expected '2d 3h', got %q", got)
+	}
+}
+
+// --- ColorStatus coverage ---
+
+func TestColorStatus_unknownStatus(t *testing.T) {
+	theme := DefaultTheme()
+	// "unknown_status" is not registered → returns the status string unchanged
+	got := theme.ColorStatus("totally_unknown_xyz")
+	if got != "totally_unknown_xyz" {
+		t.Errorf("expected status unchanged for unknown status, got %q", got)
+	}
+}
+
+func TestColorStatus_allKnownStatuses(t *testing.T) {
+	theme := DefaultTheme()
+	known := []string{"idle", "working", "dead", "on_hold", "open", "closed", "in_progress"}
+	for _, s := range known {
+		got := theme.ColorStatus(s)
+		if got == "" {
+			t.Errorf("ColorStatus(%q) returned empty string", s)
+		}
+	}
+}
+
+// --- agentWorktreePath coverage ---
+
+// --- Update message handling tests ---
+
+func TestUpdate_windowSizeMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	dm := updated.(dashboardModel)
+	if dm.width != 120 || dm.height != 40 {
+		t.Errorf("expected width=120 height=40, got %d %d", dm.width, dm.height)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd for WindowSizeMsg")
+	}
+}
+
+func TestUpdate_tickMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	_, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Error("expected non-nil cmd from tickMsg")
+	}
+}
+
+func TestUpdate_secondTickMsg(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	_, cmd := m.Update(secondTickMsg(time.Now()))
+	if cmd == nil {
+		t.Error("expected non-nil cmd from secondTickMsg")
+	}
+}
+
+func TestUpdate_actionResultMsg_error(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, cmd := m.Update(actionResultMsg{err: fmt.Errorf("something failed")})
+	dm := updated.(dashboardModel)
+	if !strings.Contains(dm.statusMsg, "Error") {
+		t.Errorf("expected 'Error' in statusMsg, got %q", dm.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected fetch cmd after actionResultMsg")
+	}
+}
+
+func TestUpdate_actionResultMsg_success(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, cmd := m.Update(actionResultMsg{text: "done!"})
+	dm := updated.(dashboardModel)
+	if dm.statusMsg != "done!" {
+		t.Errorf("expected statusMsg='done!', got %q", dm.statusMsg)
+	}
+	if cmd == nil {
+		t.Error("expected fetch cmd after actionResultMsg")
+	}
+}
+
+func TestUpdate_tabSwitchesPanels(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 0
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	dm := updated.(dashboardModel)
+	if dm.focusedPanel != 1 {
+		t.Errorf("expected focusedPanel=1 after tab, got %d", dm.focusedPanel)
+	}
+	updated, _ = dm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	dm = updated.(dashboardModel)
+	if dm.focusedPanel != 0 {
+		t.Errorf("expected focusedPanel=0 after second tab, got %d", dm.focusedPanel)
+	}
+}
+
+func TestUpdate_fTogglesShowClosed(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm := updated.(dashboardModel)
+	if !dm.showClosed {
+		t.Error("expected showClosed=true after f")
+	}
+	updated, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("f")})
+	dm = updated.(dashboardModel)
+	if dm.showClosed {
+		t.Error("expected showClosed=false after second f")
+	}
+}
+
+func TestUpdate_CEntersCreateTicketMode(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("C")})
+	dm := updated.(dashboardModel)
+	if !dm.inputMode {
+		t.Error("expected inputMode=true after C")
+	}
+	if dm.inputAction != "create_ticket" {
+		t.Errorf("expected inputAction=create_ticket, got %q", dm.inputAction)
+	}
+}
+
+func TestUpdate_inputMode_esc(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.inputMode = true
+	m.inputAction = "create_ticket"
+	m.inputBuffer = "some text"
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	dm := updated.(dashboardModel)
+	if dm.inputMode {
+		t.Error("expected inputMode=false after esc")
+	}
+	if dm.inputBuffer != "" {
+		t.Errorf("expected empty inputBuffer after esc, got %q", dm.inputBuffer)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd after esc")
+	}
+}
+
+func TestUpdate_inputMode_typeChar(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.inputMode = true
+	m.inputAction = "create_ticket"
+	m.inputBuffer = ""
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("a")})
+	dm := updated.(dashboardModel)
+	if dm.inputBuffer != "a" {
+		t.Errorf("expected inputBuffer='a' after typing 'a', got %q", dm.inputBuffer)
+	}
+}
+
+func TestUpdate_jkNavigation_ticketsPanel(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+	issue1 := &repo.Issue{ID: 1, Status: "open"}
+	issue2 := &repo.Issue{ID: 2, Status: "open"}
+	m.data.roots = []*repo.IssueNode{
+		{Issue: issue1},
+		{Issue: issue2},
+	}
+	m.ticketCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("j")})
+	dm := updated.(dashboardModel)
+	if dm.ticketCursor != 1 {
+		t.Errorf("expected ticketCursor=1 after j, got %d", dm.ticketCursor)
+	}
+
+	updated, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("k")})
+	dm = updated.(dashboardModel)
+	if dm.ticketCursor != 0 {
+		t.Errorf("expected ticketCursor=0 after k, got %d", dm.ticketCursor)
+	}
+}
+
+func TestUpdate_enterExpandsTicket(t *testing.T) {
+	m, _ := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	m.focusedPanel = 1
+	issue := &repo.Issue{ID: 7, Status: "open"}
+	m.data.roots = []*repo.IssueNode{{Issue: issue}}
+	m.ticketCursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm := updated.(dashboardModel)
+	if !dm.expanded[7] {
+		t.Error("expected ticket 7 expanded after enter")
+	}
+
+	// Enter again collapses
+	updated, _ = dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = updated.(dashboardModel)
+	if dm.expanded[7] {
+		t.Error("expected ticket 7 collapsed after second enter")
+	}
+}
+
+func TestAgentWorktreePath_allCases(t *testing.T) {
+	ctDir := "/tmp/ct"
+	cases := []struct {
+		name     string
+		contains string
+	}{
+		{"architect", "agents/architect/worktree"},
+		{"mayor", "agents/mayor/worktree"},
+		{"reviewer", "agents/reviewer/worktree"},
+		{"artisan-legal", "artisan/legal/worktree"},
+		{"prole", ""},
+	}
+	for _, c := range cases {
+		got := agentWorktreePath(ctDir, c.name)
+		if c.contains == "" {
+			if got != "" {
+				t.Errorf("agentWorktreePath(%q) = %q, expected empty", c.name, got)
+			}
+		} else if !strings.Contains(filepath.ToSlash(got), c.contains) {
+			t.Errorf("agentWorktreePath(%q) = %q, expected to contain %q", c.name, got, c.contains)
+		}
 	}
 }

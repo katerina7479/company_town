@@ -2510,7 +2510,7 @@ func TestHandlePRConflict_noSpam(t *testing.T) {
 	}
 }
 
-func TestHandlePRConflictResolved_movesMergeConflictToPROpen(t *testing.T) {
+func TestHandlePRConflictResolved_passingCI_movesMergeConflictToPROpen(t *testing.T) {
 	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
@@ -2518,11 +2518,27 @@ func TestHandlePRConflictResolved_movesMergeConflictToPROpen(t *testing.T) {
 	issues.SetPR(id, 77)
 
 	issue, _ := issues.Get(id)
-	d.handlePRConflictResolved(issue, 77)
+	d.handlePRConflictResolved(issue, 77, "passing")
 
 	updated, _ := issues.Get(id)
 	if updated.Status != "pr_open" {
-		t.Errorf("expected status=pr_open, got %q", updated.Status)
+		t.Errorf("expected status=pr_open when checks=passing, got %q", updated.Status)
+	}
+}
+
+func TestHandlePRConflictResolved_pendingCI_movesMergeConflictToCIRunning(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 78)
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflictResolved(issue, 78, "pending")
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "ci_running" {
+		t.Errorf("expected status=ci_running when checks=pending, got %q", updated.Status)
 	}
 }
 
@@ -2552,7 +2568,7 @@ func TestHandlePREvents_conflictingOpenPR_movesToMergeConflict(t *testing.T) {
 	}
 }
 
-func TestHandlePREvents_mergeableAfterConflict_movesToPROpen(t *testing.T) {
+func TestHandlePREvents_mergeableAfterConflict_passingCI_movesToPROpen(t *testing.T) {
 	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
@@ -2567,7 +2583,28 @@ func TestHandlePREvents_mergeableAfterConflict_movesToPROpen(t *testing.T) {
 
 	updated, _ := issues.Get(id)
 	if updated.Status != "pr_open" {
-		t.Errorf("expected status=pr_open after conflict resolved, got %q", updated.Status)
+		t.Errorf("expected status=pr_open when checks=passing after conflict resolved, got %q", updated.Status)
+	}
+}
+
+func TestHandlePREvents_mergeableAfterConflict_pendingCI_movesToCIRunning(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "merge_conflict")
+	issues.SetPR(id, 100)
+
+	// Simulates the common case: conflict is resolved, a new commit is pushed,
+	// and CI re-triggers — GitHub returns MERGEABLE + pending checks.
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		return "OPEN", "MERGEABLE", "pending", nil, false, nil
+	}
+
+	d.handlePREvents()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "ci_running" {
+		t.Errorf("expected status=ci_running when checks=pending after conflict resolved, got %q", updated.Status)
 	}
 }
 
@@ -3512,5 +3549,121 @@ func TestHandlePRConflict_setsRepairReason(t *testing.T) {
 	if !updated.RepairReason.Valid || updated.RepairReason.String != "merge conflict with main" {
 		t.Errorf("expected repair_reason=%q, got valid=%v value=%q",
 			"merge conflict with main", updated.RepairReason.Valid, updated.RepairReason.String)
+	}
+}
+
+// TestHandleWorkingOpenTickets_flipsOpenToInProgress verifies that a working
+// agent whose current_issue is still "open" gets its ticket flipped to "in_progress".
+func TestHandleWorkingOpenTickets_flipsOpenToInProgress(t *testing.T) {
+	d, issues, agents := newTestDaemon(t)
+
+	id, err := issues.Create("Drift ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "open"); err != nil {
+		t.Fatalf("UpdateStatus to open: %v", err)
+	}
+	// Ticket stays in "open" — simulates prole skipping gt ticket status in_progress.
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("iron", "working"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := agents.SetCurrentIssue("iron", &id); err != nil {
+		t.Fatalf("SetCurrentIssue: %v", err)
+	}
+
+	d.handleWorkingOpenTickets()
+
+	updated, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get after reconcile: %v", err)
+	}
+	if updated.Status != "in_progress" {
+		t.Errorf("expected status=in_progress, got %q", updated.Status)
+	}
+}
+
+// TestHandleWorkingOpenTickets_noopIfAlreadyInProgress verifies that tickets
+// already in a non-open status are left untouched.
+func TestHandleWorkingOpenTickets_noopIfAlreadyInProgress(t *testing.T) {
+	d, issues, agents := newTestDaemon(t)
+
+	id, _ := issues.Create("In-progress ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+
+	agents.Register("iron", "prole", nil)
+	agents.UpdateStatus("iron", "working")
+	agents.SetCurrentIssue("iron", &id)
+
+	d.handleWorkingOpenTickets()
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "in_progress" {
+		t.Errorf("expected status unchanged at in_progress, got %q", updated.Status)
+	}
+}
+
+// TestHandleWorkingOpenTickets_noopIfNoCurrentIssue verifies that working agents
+// without a current_issue set are silently skipped.
+func TestHandleWorkingOpenTickets_noopIfNoCurrentIssue(t *testing.T) {
+	d, _, agents := newTestDaemon(t)
+
+	agents.Register("iron", "prole", nil)
+	agents.UpdateStatus("iron", "working")
+	// No SetCurrentIssue call.
+
+	// Should not panic or error.
+	d.handleWorkingOpenTickets()
+}
+
+// TestHandleWorkingOpenTickets_noopIfNoWorkingAgents verifies that when no
+// agents are in "working" status, open tickets are left untouched.
+func TestHandleWorkingOpenTickets_noopIfNoWorkingAgents(t *testing.T) {
+	d, issues, agents := newTestDaemon(t)
+
+	id, _ := issues.Create("Open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "open")
+
+	// Register an idle agent — no SetCurrentIssue so status stays idle.
+	agents.Register("iron", "prole", nil)
+
+	d.handleWorkingOpenTickets()
+
+	// Ticket should NOT be flipped — no working agents.
+	updated, _ := issues.Get(id)
+	if updated.Status != "open" {
+		t.Errorf("expected status unchanged at open, got %q", updated.Status)
+	}
+}
+
+// TestHandleWorkingOpenTickets_multipleAgents verifies that all working agents
+// with open tickets are corrected in a single call.
+func TestHandleWorkingOpenTickets_multipleAgents(t *testing.T) {
+	d, issues, agents := newTestDaemon(t)
+
+	id1, _ := issues.Create("Ticket 1", "task", nil, nil, nil)
+	issues.UpdateStatus(id1, "open")
+	id2, _ := issues.Create("Ticket 2", "task", nil, nil, nil)
+	issues.UpdateStatus(id2, "open")
+
+	agents.Register("copper", "prole", nil)
+	agents.UpdateStatus("copper", "working")
+	agents.SetCurrentIssue("copper", &id1)
+
+	agents.Register("tin", "prole", nil)
+	agents.UpdateStatus("tin", "working")
+	agents.SetCurrentIssue("tin", &id2)
+
+	d.handleWorkingOpenTickets()
+
+	for _, id := range []int{id1, id2} {
+		updated, _ := issues.Get(id)
+		if updated.Status != "in_progress" {
+			t.Errorf("ticket %d: expected in_progress, got %q", id, updated.Status)
+		}
 	}
 }

@@ -389,6 +389,7 @@ func (d *Daemon) poll() {
 	d.handleDraftTickets()
 	d.handleAssignments()
 	d.handleIdleAssignedProles()
+	d.handleWorkingOpenTickets()
 	d.handleInReviewTickets()
 	d.handlePREvents()
 	d.handleRepairCycleEscalation()
@@ -539,7 +540,7 @@ func (d *Daemon) handleIdleProleWorktrees() {
 // Nudge key: "prole-resume:<name>:<ticket-id>" — per (prole, ticket) so a new
 // assignment re-primes immediately while a stuck prole is not spammed.
 func (d *Daemon) handleIdleAssignedProles() {
-	candidates, err := d.issues.ListAssignedInStatuses("open", "in_progress", "repairing")
+	candidates, err := d.issues.ListAssignedInStatuses(repo.StatusOpen, repo.StatusInProgress, repo.StatusRepairing)
 	if err != nil {
 		d.logger.Printf("handleIdleAssignedProles: listing candidates: %v", err)
 		return
@@ -588,6 +589,38 @@ func (d *Daemon) handleIdleAssignedProles() {
 		}
 		d.logger.Printf("nudged idle prole %s to resume %s-%d", agentName, d.cfg.TicketPrefix, issue.ID)
 		d.recordNudge(nudgeKey, "")
+	}
+}
+
+// handleWorkingOpenTickets scans agents in "working" status whose current_issue
+// ticket is still in "open" status, and flips the ticket to "in_progress".
+// This reconciles the drift case where a prole called `gt agent accept` but
+// skipped (or failed) the explicit `gt ticket status <id> in_progress` step —
+// leaving the ticket stuck in "open" while the agent is actively working.
+func (d *Daemon) handleWorkingOpenTickets() {
+	working, err := d.agents.ListByStatus("working")
+	if err != nil {
+		d.logger.Printf("handleWorkingOpenTickets: listing working agents: %v", err)
+		return
+	}
+	for _, agent := range working {
+		if !agent.CurrentIssue.Valid {
+			continue
+		}
+		id := int(agent.CurrentIssue.Int64)
+		issue, err := d.issues.Get(id)
+		if err != nil {
+			d.logger.Printf("handleWorkingOpenTickets: get ticket %d: %v", id, err)
+			continue
+		}
+		if issue.Status != "open" {
+			continue
+		}
+		if err := d.issues.UpdateStatus(id, "in_progress"); err != nil {
+			d.logger.Printf("handleWorkingOpenTickets: flip ticket %d to in_progress: %v", id, err)
+			continue
+		}
+		d.logger.Printf("handleWorkingOpenTickets: ticket %d flipped to in_progress (agent %s working on open ticket)", id, agent.Name)
 	}
 }
 
@@ -717,7 +750,7 @@ func (d *Daemon) handleEpicAutoClose() {
 		d.logger.Printf("auto-closing epic %s-%d (%s): all sub-tasks closed",
 			d.cfg.TicketPrefix, epic.ID, epic.Title)
 
-		if err := d.issues.UpdateStatus(epic.ID, "closed"); err != nil {
+		if err := d.issues.UpdateStatus(epic.ID, repo.StatusClosed); err != nil {
 			d.logger.Printf("error closing epic %d: %v", epic.ID, err)
 			continue
 		}
@@ -804,7 +837,7 @@ func (d *Daemon) handleRepairCycleEscalation() {
 		return // Mayor not running, nowhere to escalate
 	}
 
-	repairing, err := d.issues.List("repairing")
+	repairing, err := d.issues.List(repo.StatusRepairing)
 	if err != nil {
 		d.logger.Printf("error listing repairing tickets: %v", err)
 		return
@@ -827,7 +860,7 @@ func (d *Daemon) handleRepairCycleEscalation() {
 		d.logger.Printf("ticket %s-%d has bounced %d times (threshold %d) — moving to on_hold",
 			d.cfg.TicketPrefix, issue.ID, issue.RepairCycleCount, d.repairCycleThreshold)
 
-		if err := d.issues.UpdateStatus(issue.ID, "on_hold"); err != nil {
+		if err := d.issues.UpdateStatus(issue.ID, repo.StatusOnHold); err != nil {
 			d.logger.Printf("error moving ticket %d to on_hold: %v", issue.ID, err)
 			continue
 		}
@@ -937,7 +970,7 @@ func (d *Daemon) handleDeadSessions() {
 
 // handleDraftTickets prompts the Architect to pick up draft tickets.
 func (d *Daemon) handleDraftTickets() {
-	drafts, err := d.issues.List("draft")
+	drafts, err := d.issues.List(repo.StatusDraft)
 	if err != nil {
 		d.logger.Printf("error listing draft tickets: %v", err)
 		return
@@ -977,7 +1010,7 @@ func (d *Daemon) handleDraftTickets() {
 	}
 	digest := ticketDigest(draftIDs)
 
-	if !d.digestChanged("draft", digest) || !d.shouldNudge("draft") {
+	if !d.digestChanged(repo.StatusDraft, digest) || !d.shouldNudge(repo.StatusDraft) {
 		return
 	}
 
@@ -994,13 +1027,13 @@ func (d *Daemon) handleDraftTickets() {
 		d.logger.Printf("error nudging architect: %v", err)
 	} else {
 		d.logger.Printf("nudged architect: %d draft ticket(s)", len(drafts))
-		d.recordNudge("draft", digest)
+		d.recordNudge(repo.StatusDraft, digest)
 	}
 }
 
 // handleInReviewTickets distributes in_review tickets across all active reviewer agents.
 func (d *Daemon) handleInReviewTickets() {
-	reviews, err := d.issues.List("in_review")
+	reviews, err := d.issues.List(repo.StatusInReview)
 	if err != nil {
 		d.logger.Printf("error listing in_review tickets: %v", err)
 		return
@@ -1040,7 +1073,7 @@ func (d *Daemon) handleInReviewTickets() {
 	}
 	digest := ticketDigest(reviewIDs)
 
-	if !d.digestChanged("in_review", digest) || !d.shouldNudge("in_review") {
+	if !d.digestChanged(repo.StatusInReview, digest) || !d.shouldNudge(repo.StatusInReview) {
 		return
 	}
 
@@ -1068,7 +1101,7 @@ func (d *Daemon) handleInReviewTickets() {
 	}
 	if nudged > 0 {
 		d.logger.Printf("nudged %d reviewer(s): %d in_review ticket(s)", nudged, len(withPR))
-		d.recordNudge("in_review", digest)
+		d.recordNudge(repo.StatusInReview, digest)
 	}
 }
 
@@ -1177,13 +1210,13 @@ func (d *Daemon) handlePREvents() {
 // in that state and the daemon must not grab it even if the branch is dirty.
 func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable, checks string, failing []string) {
 	switch {
-	case mergeable == "CONFLICTING" && (issue.Status == "pr_open" || issue.Status == "ci_running"):
+	case mergeable == "CONFLICTING" && (issue.Status == repo.StatusPROpen || issue.Status == repo.StatusCIRunning):
 		d.handlePRConflict(issue, prNum)
-	case mergeable == "MERGEABLE" && issue.Status == "merge_conflict":
-		d.handlePRConflictResolved(issue, prNum)
-	case (issue.Status == "ci_running" || issue.Status == "pr_open") && checks == "failing":
+	case mergeable == "MERGEABLE" && issue.Status == repo.StatusMergeConflict:
+		d.handlePRConflictResolved(issue, prNum, checks)
+	case (issue.Status == repo.StatusCIRunning || issue.Status == repo.StatusPROpen) && checks == "failing":
 		d.handleCIFailure(issue, prNum, failing)
-	case issue.Status == "ci_running" && checks == "passing":
+	case issue.Status == repo.StatusCIRunning && checks == "passing":
 		d.handleCIPass(issue, prNum)
 	// ci_running + pending: no-op, wait for checks to complete.
 	default:
@@ -1198,7 +1231,7 @@ func (d *Daemon) handleCIPass(issue *repo.Issue, prNum int) {
 	d.logger.Printf("CI passed on PR #%d for ticket %s-%d — promoting to in_review",
 		prNum, d.cfg.TicketPrefix, issue.ID)
 
-	if err := d.issues.UpdateStatus(issue.ID, "in_review"); err != nil {
+	if err := d.issues.UpdateStatus(issue.ID, repo.StatusInReview); err != nil {
 		d.logger.Printf("error moving ticket %d to in_review: %v", issue.ID, err)
 		return
 	}
@@ -1217,7 +1250,7 @@ func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []str
 		prNum, d.cfg.TicketPrefix, issue.ID)
 
 	reason := "CI: " + strings.Join(failedNames, ", ")
-	if !d.repairTransition(issue.ID, "repairing", reason) {
+	if !d.repairTransition(issue.ID, repo.StatusRepairing, reason) {
 		return
 	}
 	if d.obs != nil {
@@ -1259,14 +1292,14 @@ func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []str
 // `gt agent status idle` in their Completion Protocol, and worktree hygiene
 // is handled by the resetIdleProleWorktrees reconciler tick. See NC-53.
 func (d *Daemon) handlePRMerged(issue *repo.Issue) {
-	if issue.Status == "closed" {
+	if issue.Status == repo.StatusClosed {
 		return // already handled
 	}
 
 	d.logger.Printf("PR #%d merged for ticket %s-%d",
 		issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID)
 
-	if err := d.issues.UpdateStatus(issue.ID, "closed"); err != nil {
+	if err := d.issues.UpdateStatus(issue.ID, repo.StatusClosed); err != nil {
 		d.logger.Printf("error closing ticket %d: %v", issue.ID, err)
 		return
 	}
@@ -1284,7 +1317,7 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 }
 
 func (d *Daemon) handlePRClosed(issue *repo.Issue) {
-	if issue.Status == "closed" {
+	if issue.Status == repo.StatusClosed {
 		return
 	}
 
@@ -1321,7 +1354,7 @@ func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 	d.logger.Printf("PR #%d has merge conflict for ticket %s-%d — moving to merge_conflict",
 		prNum, d.cfg.TicketPrefix, issue.ID)
 
-	if !d.repairTransition(issue.ID, "merge_conflict", "merge conflict with main") {
+	if !d.repairTransition(issue.ID, repo.StatusMergeConflict, "merge conflict with main") {
 		return
 	}
 	if d.obs != nil {
@@ -1351,13 +1384,22 @@ func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 	}
 }
 
-// handlePRConflictResolved moves a merge_conflict ticket back to pr_open when the conflict clears.
-func (d *Daemon) handlePRConflictResolved(issue *repo.Issue, prNum int) {
-	d.logger.Printf("PR #%d conflict resolved for ticket %s-%d — moving back to pr_open",
-		prNum, d.cfg.TicketPrefix, issue.ID)
+// handlePRConflictResolved moves a merge_conflict ticket forward when the conflict clears.
+// If CI checks are pending (the common case after a conflict-fix push that re-triggers CI)
+// the ticket advances to ci_running so the daemon can track the new run and promote to
+// in_review on pass. If checks are already passing (e.g. no CI configured) the ticket
+// moves back to pr_open.
+func (d *Daemon) handlePRConflictResolved(issue *repo.Issue, prNum int, checks string) {
+	nextStatus := repo.StatusPROpen
+	if checks == "pending" {
+		nextStatus = repo.StatusCIRunning
+	}
 
-	if err := d.issues.UpdateStatus(issue.ID, "pr_open"); err != nil {
-		d.logger.Printf("error moving ticket %d back to pr_open: %v", issue.ID, err)
+	d.logger.Printf("PR #%d conflict resolved for ticket %s-%d — moving to %s",
+		prNum, d.cfg.TicketPrefix, issue.ID, nextStatus)
+
+	if err := d.issues.UpdateStatus(issue.ID, nextStatus); err != nil {
+		d.logger.Printf("error moving ticket %d to %s: %v", issue.ID, nextStatus, err)
 		return
 	}
 
@@ -1369,7 +1411,7 @@ func (d *Daemon) handlePRConflictResolved(issue *repo.Issue, prNum int) {
 func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 	// Only act when the ticket is in pr_open. During under_review the AI reviewer
 	// owns the ticket — any review posted in that window is its own work.
-	if issue.Status != "pr_open" {
+	if issue.Status != repo.StatusPROpen {
 		return
 	}
 
@@ -1393,7 +1435,7 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 			excerpt = string(runes[:120]) + "…"
 		}
 		reason := fmt.Sprintf("review: %s: %s", c.Author, excerpt)
-		if !d.repairTransition(issue.ID, "repairing", reason) {
+		if !d.repairTransition(issue.ID, repo.StatusRepairing, reason) {
 			return
 		}
 		if d.obs != nil {
