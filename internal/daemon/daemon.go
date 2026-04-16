@@ -1456,8 +1456,10 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 }
 
 // checkForTDDTestsApproval closes a tdd_tests ticket when a human reviewer has
-// posted an APPROVED review on its draft PR. This clears the dependency edge so
-// the paired implementation ticket becomes selectable for assignment.
+// posted an APPROVED review on its draft PR. After closing, it copies the
+// ticket's branch and PR number to any open implementation tickets that depend
+// on it, so assign.Execute can switch the prole's worktree to the existing
+// branch without manual setup.
 //
 // Returns true if an approval was found and the ticket was closed (or the close
 // failed — either way the caller should not continue processing). Returns false
@@ -1477,9 +1479,45 @@ func (d *Daemon) checkForTDDTestsApproval(issue *repo.Issue, prNum int, comments
 		if d.obs != nil {
 			d.obs.prEventsTDDApproved++
 		}
+
+		// Copy branch and PR to dependent implementation tickets so they inherit
+		// the existing branch/PR when assigned to a prole.
+		d.handoffBranchToImplementation(issue, prNum)
+
 		return true
 	}
 	return false
+}
+
+// handoffBranchToImplementation copies the branch and PR number from a closed
+// tdd_tests ticket to any open implementation tickets that depend on it. This
+// ensures the prole assigned to the implementation ticket starts on the same
+// branch and can push to the existing draft PR without manual setup.
+func (d *Daemon) handoffBranchToImplementation(testsTicket *repo.Issue, prNum int) {
+	dependents, err := d.issues.GetDependents(testsTicket.ID)
+	if err != nil {
+		d.logger.Printf("tdd handoff: error finding dependents of ticket %d: %v", testsTicket.ID, err)
+		return
+	}
+
+	branch := testsTicket.Branch.String
+	if !testsTicket.Branch.Valid || branch == "" {
+		d.logger.Printf("tdd handoff: ticket %d has no branch set; skipping handoff", testsTicket.ID)
+		return
+	}
+
+	for _, impl := range dependents {
+		if err := d.issues.SetBranch(impl.ID, branch); err != nil {
+			d.logger.Printf("tdd handoff: error setting branch on ticket %d: %v", impl.ID, err)
+			continue
+		}
+		if err := d.issues.SetPR(impl.ID, prNum); err != nil {
+			d.logger.Printf("tdd handoff: error setting PR on ticket %d: %v", impl.ID, err)
+			continue
+		}
+		d.logger.Printf("tdd handoff: copied branch %q and PR #%d from tests ticket %s-%d to impl ticket %s-%d",
+			branch, prNum, d.cfg.TicketPrefix, testsTicket.ID, d.cfg.TicketPrefix, impl.ID)
+	}
 }
 
 // repairTransition moves a ticket to a repair-ish status (typically "repairing"

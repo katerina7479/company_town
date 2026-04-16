@@ -397,6 +397,45 @@ func (r *IssueRepo) Close(id int) error {
 	return r.UpdateStatus(id, StatusClosed)
 }
 
+// SetBranch sets the branch field on an issue.
+func (r *IssueRepo) SetBranch(id int, branch string) error {
+	_, err := r.db.Exec(
+		`UPDATE issues SET branch = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		branch, id,
+	)
+	return err
+}
+
+// GetDependents returns issues whose work depends on the given issue ID — that
+// is, issues where a row exists in issue_dependencies with depends_on_id equal
+// to the given ID. Only open (non-closed) dependents are returned.
+func (r *IssueRepo) GetDependents(dependsOnID int) ([]*Issue, error) {
+	rows, err := r.db.Query(
+		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
+		        i.branch, i.pr_number, i.assignee, i.parent_id, i.priority,
+		        i.created_at, i.updated_at, i.closed_at, i.repair_cycle_count, i.repair_reason
+		 FROM issues i
+		 JOIN issue_dependencies d ON d.issue_id = i.id
+		 WHERE d.depends_on_id = ? AND i.status != 'closed'
+		 ORDER BY i.id`,
+		dependsOnID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("getting dependents: %w", err)
+	}
+	defer rows.Close()
+
+	var issues []*Issue
+	for rows.Next() {
+		issue, err := scanIssueRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
 // AddDependency records that issueID depends on dependsOnID.
 func (r *IssueRepo) AddDependency(issueID, dependsOnID int) error {
 	_, err := r.db.Exec(

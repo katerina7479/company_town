@@ -429,3 +429,135 @@ func TestCheckForTDDTestsApproval_ViaHandlePREvents(t *testing.T) {
 		t.Errorf("expected tdd_tests ticket to be closed on human approval; got %q", updated.Status)
 	}
 }
+
+// --- Branch/PR handoff tests ---
+
+func TestHandoffBranchToImplementation_CopiesBranchAndPR(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	// Create tdd_tests ticket with branch and PR
+	testsID, _ := d.issues.Create("TDD tests", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	d.issues.SetBranch(testsID, "prole/tin/nc-99")
+	d.issues.SetPR(testsID, 123)
+
+	// Create implementation ticket that depends on tests
+	implID, _ := d.issues.Create("Implementation", "task", nil, nil, nil)
+	d.issues.AddDependency(implID, testsID)
+
+	testsTicket, _ := d.issues.Get(testsID)
+	d.handoffBranchToImplementation(testsTicket, 123)
+
+	impl, _ := d.issues.Get(implID)
+	if !impl.Branch.Valid || impl.Branch.String != "prole/tin/nc-99" {
+		t.Errorf("Branch: got valid=%v value=%q, want valid=true value=%q",
+			impl.Branch.Valid, impl.Branch.String, "prole/tin/nc-99")
+	}
+	if !impl.PRNumber.Valid || impl.PRNumber.Int64 != 123 {
+		t.Errorf("PRNumber: got valid=%v value=%d, want valid=true value=123",
+			impl.PRNumber.Valid, impl.PRNumber.Int64)
+	}
+}
+
+func TestHandoffBranchToImplementation_NoBranch_Skips(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	// tdd_tests ticket with no branch set
+	testsID, _ := d.issues.Create("TDD tests", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	// No SetBranch call
+
+	implID, _ := d.issues.Create("Implementation", "task", nil, nil, nil)
+	d.issues.AddDependency(implID, testsID)
+
+	testsTicket, _ := d.issues.Get(testsID)
+	d.handoffBranchToImplementation(testsTicket, 42)
+
+	impl, _ := d.issues.Get(implID)
+	// Branch and PR should remain unset
+	if impl.Branch.Valid {
+		t.Errorf("expected Branch to remain unset, got %q", impl.Branch.String)
+	}
+	if impl.PRNumber.Valid {
+		t.Errorf("expected PRNumber to remain unset, got %d", impl.PRNumber.Int64)
+	}
+}
+
+func TestHandoffBranchToImplementation_NoDependents_NoOp(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	// tdd_tests ticket with no dependent tickets
+	testsID, _ := d.issues.Create("TDD tests (no impl)", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	d.issues.SetBranch(testsID, "prole/tin/nc-77")
+	d.issues.SetPR(testsID, 77)
+
+	testsTicket, _ := d.issues.Get(testsID)
+	// Should not panic or error
+	d.handoffBranchToImplementation(testsTicket, 77)
+}
+
+func TestHandoffBranchToImplementation_ClosedDependentsExcluded(t *testing.T) {
+	d, _, _ := newTestDaemon(t)
+
+	testsID, _ := d.issues.Create("TDD tests", "task", nil, nil, nil)
+	d.issues.UpdateType(testsID, "tdd_tests")
+	d.issues.SetBranch(testsID, "prole/tin/nc-88")
+	d.issues.SetPR(testsID, 88)
+
+	// Closed impl should not receive the branch/PR
+	closedImplID, _ := d.issues.Create("Closed impl", "task", nil, nil, nil)
+	d.issues.AddDependency(closedImplID, testsID)
+	d.issues.UpdateStatus(closedImplID, "closed")
+
+	testsTicket, _ := d.issues.Get(testsID)
+	d.handoffBranchToImplementation(testsTicket, 88)
+
+	closed, _ := d.issues.Get(closedImplID)
+	if closed.Branch.Valid {
+		t.Errorf("closed dependent should not receive branch handoff, got %q", closed.Branch.String)
+	}
+}
+
+func TestCheckForTDDTestsApproval_HandoffsOnApproval(t *testing.T) {
+	// Full integration: approval closes tests ticket AND copies branch/PR to impl.
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+	d.obs = &tickObservations{}
+
+	// Set up tests ticket with branch + PR
+	testsID, _ := issues.Create("TDD tests", "task", nil, nil, nil)
+	issues.UpdateType(testsID, "tdd_tests")
+	issues.UpdateStatus(testsID, "pr_open")
+	issues.SetBranch(testsID, "prole/tin/nc-100")
+	issues.SetPR(testsID, 100)
+
+	// Set up impl ticket that depends on tests
+	implID, _ := issues.Create("Implementation", "task", nil, nil, nil)
+	issues.AddDependency(implID, testsID)
+
+	d.getReviewCommentsFn = func(_ int) ([]prComment, error) {
+		return []prComment{
+			{Author: "katerina7479", IsBot: false, State: "APPROVED", Body: "LGTM"},
+		}, nil
+	}
+
+	testsTicket, _ := issues.Get(testsID)
+	d.checkForHumanComments(testsTicket, 100)
+
+	// Tests ticket closed
+	tests, _ := issues.Get(testsID)
+	if tests.Status != "closed" {
+		t.Errorf("tests ticket: got status %q, want \"closed\"", tests.Status)
+	}
+
+	// Impl ticket received branch and PR
+	impl, _ := issues.Get(implID)
+	if !impl.Branch.Valid || impl.Branch.String != "prole/tin/nc-100" {
+		t.Errorf("impl Branch: got valid=%v value=%q, want valid=true value=%q",
+			impl.Branch.Valid, impl.Branch.String, "prole/tin/nc-100")
+	}
+	if !impl.PRNumber.Valid || impl.PRNumber.Int64 != 100 {
+		t.Errorf("impl PRNumber: got valid=%v value=%d, want valid=true value=100",
+			impl.PRNumber.Valid, impl.PRNumber.Int64)
+	}
+}
