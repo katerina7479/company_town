@@ -70,7 +70,7 @@ curl -L https://github.com/katerina7479/company_town/releases/download/vX.Y.Z/co
 ./gt --version
 ```
 
-Both commands must print `vX.Y.Z` exactly. If either prints `dev`, blank, or a different version, the build embedded the wrong version string — investigate the goreleaser config before calling the release good.
+Both commands must print `X.Y.Z` exactly (no `v` prefix — goreleaser strips it when embedding via `{{.Version}}`). If either prints `dev`, blank, or a different version, the build embedded the wrong version string — investigate the goreleaser config before calling the release good.
 
 ## Step 7 — Post-release
 
