@@ -56,10 +56,8 @@ type Daemon struct {
 	agents              *repo.AgentRepo
 	logger              *log.Logger
 	stop                chan struct{}
-	sendKeys            func(session, msg string) error
-	sessionExists       func(session string) bool
-	killSession         func(session string) error
-	capturePane         func(session string) (string, error)
+	session             session.Client
+	capturePane         func(s string) (string, error)
 	lastNudged          map[string]time.Time
 	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
 	nudgeCooldown       time.Duration
@@ -129,6 +127,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	logger := log.New(f, "[DAEMON] ", log.LstdFlags)
 	events := eventlog.NewLogger(ctDir)
 	agentRepo := repo.NewAgentRepo(db, events)
+	sessClient := session.New()
 
 	return &Daemon{
 		cfg:                 cfg,
@@ -136,10 +135,8 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		agents:              agentRepo,
 		logger:              logger,
 		stop:                make(chan struct{}),
-		sendKeys:            session.SendKeys,
-		sessionExists:       session.Exists,
-		killSession:         session.Kill,
-		capturePane:         session.CapturePane,
+		session:             sessClient,
+		capturePane:         sessClient.CapturePane,
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
 		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
@@ -573,7 +570,7 @@ func (d *Daemon) handleIdleAssignedProles() {
 		if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
 			continue
 		}
-		if !d.sessionExists(agent.TmuxSession.String) {
+		if !d.session.Exists(agent.TmuxSession.String) {
 			// handleDeadSessions owns the cleanup path for dead sessions.
 			continue
 		}
@@ -588,7 +585,7 @@ func (d *Daemon) handleIdleAssignedProles() {
 				"Please run 'gt ticket show %d', begin work on it per your startup protocol, and push when ready.",
 			d.cfg.TicketPrefix, issue.ID, issue.Status, issue.ID,
 		)
-		if err := d.sendKeys(agent.TmuxSession.String, msg); err != nil {
+		if err := d.session.SendKeys(agent.TmuxSession.String, msg); err != nil {
 			d.logger.Printf("error nudging idle prole %s: %v", agentName, err)
 			continue
 		}
@@ -761,10 +758,10 @@ func (d *Daemon) handleEpicAutoClose() {
 		}
 
 		mayorSession := session.SessionName("mayor")
-		if d.sessionExists(mayorSession) {
+		if d.session.Exists(mayorSession) {
 			msg := fmt.Sprintf("Epic %s-%d (%s) auto-closed: all sub-tasks are complete.",
 				d.cfg.TicketPrefix, epic.ID, epic.Title)
-			if err := d.sendKeys(mayorSession, msg); err != nil {
+			if err := d.session.SendKeys(mayorSession, msg); err != nil {
 				d.logger.Printf("error notifying Mayor of epic %d closure: %v", epic.ID, err)
 			}
 		}
@@ -779,7 +776,7 @@ func (d *Daemon) handleStuckAgents() {
 	}
 
 	mayorSession := session.SessionName("mayor")
-	if !d.sessionExists(mayorSession) {
+	if !d.session.Exists(mayorSession) {
 		return // Mayor not running, nowhere to escalate
 	}
 
@@ -819,7 +816,7 @@ func (d *Daemon) handleStuckAgents() {
 			"Please investigate whether the agent is stuck.",
 			agent.Name, elapsed.Round(time.Minute), ticketInfo)
 
-		if err := d.sendKeys(mayorSession, msg); err != nil {
+		if err := d.session.SendKeys(mayorSession, msg); err != nil {
 			d.logger.Printf("error escalating stuck agent %s to Mayor: %v", agent.Name, err)
 		} else {
 			d.recordNudge(nudgeKey, "")
@@ -882,7 +879,7 @@ func (d *Daemon) handleStuckPrompts() {
 	}
 
 	mayorSession := session.SessionName("mayor")
-	if !d.sessionExists(mayorSession) {
+	if !d.session.Exists(mayorSession) {
 		return // Mayor not running, nowhere to escalate
 	}
 
@@ -900,7 +897,7 @@ func (d *Daemon) handleStuckPrompts() {
 			continue
 		}
 		sess := agent.TmuxSession.String
-		if !d.sessionExists(sess) {
+		if !d.session.Exists(sess) {
 			continue
 		}
 
@@ -933,7 +930,7 @@ func (d *Daemon) handleStuckPrompts() {
 			"Please check the pane (ct attach %s) and respond to the prompt or kill the session.",
 			agent.Name, ticketInfo, prompt, agent.Name)
 
-		if err := d.sendKeys(mayorSession, msg); err != nil {
+		if err := d.session.SendKeys(mayorSession, msg); err != nil {
 			d.logger.Printf("error escalating stuck prompt for %s: %v", agent.Name, err)
 		} else {
 			d.recordNudge(nudgeKey, "")
@@ -952,7 +949,7 @@ func (d *Daemon) handleRepairCycleEscalation() {
 	}
 
 	mayorSession := session.SessionName("mayor")
-	if !d.sessionExists(mayorSession) {
+	if !d.session.Exists(mayorSession) {
 		return // Mayor not running, nowhere to escalate
 	}
 
@@ -995,7 +992,7 @@ func (d *Daemon) handleRepairCycleEscalation() {
 				"Please review the PR and decide whether to close, reassign, or unblock it manually.",
 			d.cfg.TicketPrefix, issue.ID, issue.Title, issue.RepairCycleCount,
 		)
-		if err := d.sendKeys(mayorSession, msg); err != nil {
+		if err := d.session.SendKeys(mayorSession, msg); err != nil {
 			d.logger.Printf("error notifying Mayor of repair-cycle escalation for ticket %d: %v", issue.ID, err)
 		} else {
 			d.recordNudge(nudgeKey, nudgeDigest)
@@ -1043,7 +1040,7 @@ func (d *Daemon) handleDeadSessions() {
 
 	deleted := 0
 	for _, agent := range agents {
-		sessionAlive := agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.sessionExists(agent.TmuxSession.String)
+		sessionAlive := agent.TmuxSession.Valid && agent.TmuxSession.String != "" && d.session.Exists(agent.TmuxSession.String)
 		// Skip agents with a live session unless they are already marked dead.
 		// A dead-status prole with a live session still needs to be cleaned up.
 		if sessionAlive && agent.Status != "dead" {
@@ -1052,7 +1049,7 @@ func (d *Daemon) handleDeadSessions() {
 		if agent.Type == "prole" {
 			if sessionAlive {
 				// Zombie: row is dead but tmux session is still running — kill it.
-				if err := d.killSession(agent.TmuxSession.String); err != nil {
+				if err := d.session.Kill(agent.TmuxSession.String); err != nil {
 					d.logger.Printf("error killing zombie session %s for %s: %v",
 						agent.TmuxSession.String, agent.Name, err)
 				} else {
@@ -1104,7 +1101,7 @@ func (d *Daemon) handleDraftTickets() {
 	}
 
 	architectSession := session.SessionName("architect")
-	if !d.sessionExists(architectSession) {
+	if !d.session.Exists(architectSession) {
 		// Architect not running — attempt restart if enabled and off cooldown.
 		if d.restartDeadAgents && d.restartAgent != nil && d.shouldRestart("architect") {
 			architect, err := d.agents.Get("architect")
@@ -1142,7 +1139,7 @@ func (d *Daemon) handleDraftTickets() {
 		"Run `gt ticket show <id>` on each and begin specification.",
 		len(drafts), strings.Join(ids, "; "))
 
-	if err := d.sendKeys(architectSession, msg); err != nil {
+	if err := d.session.SendKeys(architectSession, msg); err != nil {
 		d.logger.Printf("error nudging architect: %v", err)
 	} else {
 		d.logger.Printf("nudged architect: %d draft ticket(s)", len(drafts))
@@ -1212,7 +1209,7 @@ func (d *Daemon) handleInReviewTickets() {
 		msg := fmt.Sprintf("%d ticket(s) ready for review: %s. "+
 			"Review each PR and file comments.",
 			len(perReviewer[i]), strings.Join(perReviewer[i], ", "))
-		if err := d.sendKeys(reviewerSession, msg); err != nil {
+		if err := d.session.SendKeys(reviewerSession, msg); err != nil {
 			d.logger.Printf("error nudging reviewer %s: %v", reviewerSession, err)
 		} else {
 			nudged++
@@ -1238,7 +1235,7 @@ func (d *Daemon) nudgeableReviewerSessions() []string {
 			continue
 		}
 		s := session.SessionName(a.Name)
-		if d.sessionExists(s) {
+		if d.session.Exists(s) {
 			sessions = append(sessions, s)
 		}
 	}
@@ -1261,7 +1258,7 @@ func (d *Daemon) restartDeadReviewers() {
 			continue
 		}
 		s := session.SessionName(a.Name)
-		if d.sessionExists(s) {
+		if d.session.Exists(s) {
 			continue // session alive, no restart needed
 		}
 		if !d.shouldRestart(a.Name) {
@@ -1387,7 +1384,7 @@ func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []str
 	}
 
 	proleSession := session.SessionName(issue.Assignee.String)
-	if !d.sessionExists(proleSession) {
+	if !d.session.Exists(proleSession) {
 		return
 	}
 
@@ -1395,7 +1392,7 @@ func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []str
 		"Please fix the failures and push a corrected branch.",
 		prNum, d.cfg.TicketPrefix, issue.ID, issue.Title, strings.Join(failedNames, ", "))
 
-	if err := d.sendKeys(proleSession, msg); err != nil {
+	if err := d.session.SendKeys(proleSession, msg); err != nil {
 		d.logger.Printf("error nudging prole %s about CI failure on ticket %d: %v",
 			issue.Assignee.String, issue.ID, err)
 	} else {
@@ -1428,10 +1425,10 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 	}
 
 	mayorSession := session.SessionName("mayor")
-	if d.sessionExists(mayorSession) {
+	if d.session.Exists(mayorSession) {
 		msg := fmt.Sprintf("PR #%d merged. Ticket %s-%d (%s) is now closed.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
-		d.sendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
+		d.session.SendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
 	}
 }
 
@@ -1459,11 +1456,11 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 
 	// Escalate to Mayor
 	mayorSession := session.SessionName("mayor")
-	if d.sessionExists(mayorSession) {
+	if d.session.Exists(mayorSession) {
 		msg := fmt.Sprintf("ESCALATION: PR #%d for ticket %s-%d (%s) was closed without merging. "+
 			"Please decide next action.",
 			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
-		d.sendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
+		d.session.SendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
 	}
 	d.recordNudge(nudgeKey, digest)
 }
@@ -1481,7 +1478,7 @@ func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 	}
 
 	architectSession := session.SessionName("architect")
-	if !d.sessionExists(architectSession) {
+	if !d.session.Exists(architectSession) {
 		return
 	}
 
@@ -1495,7 +1492,7 @@ func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 		"Please resolve the conflict and push a fixed branch.",
 		prNum, d.cfg.TicketPrefix, issue.ID, issue.Title)
 
-	if err := d.sendKeys(architectSession, msg); err != nil {
+	if err := d.session.SendKeys(architectSession, msg); err != nil {
 		d.logger.Printf("error nudging architect about merge conflict on ticket %d: %v", issue.ID, err)
 	} else {
 		d.logger.Printf("nudged architect: merge conflict on ticket %s-%d", d.cfg.TicketPrefix, issue.ID)

@@ -14,7 +14,41 @@ import (
 
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
 )
+
+// fakeDashSession is a session.Client stub for dashboard tests.
+type fakeDashSession struct {
+	killFn     func(string) error
+	existsFn   func(string) bool
+	sendKeysFn func(string, string) error
+}
+
+func (f *fakeDashSession) Kill(name string) error {
+	if f.killFn != nil {
+		return f.killFn(name)
+	}
+	return nil
+}
+func (f *fakeDashSession) Exists(name string) bool {
+	if f.existsFn != nil {
+		return f.existsFn(name)
+	}
+	return false
+}
+func (f *fakeDashSession) SendKeys(name, keys string) error {
+	if f.sendKeysFn != nil {
+		return f.sendKeysFn(name, keys)
+	}
+	return nil
+}
+func (f *fakeDashSession) SpawnAttach(name string) error { return nil }
+func (f *fakeDashSession) CapturePane(name string) (string, error) {
+	return "", nil
+}
+
+// ensure fakeDashSession satisfies session.Client at compile time.
+var _ session.Client = (*fakeDashSession)(nil)
 
 // blankModel returns a dashboardModel with only the theme initialised, suitable
 // for calling render methods that need no database or session state.
@@ -207,16 +241,14 @@ func newTestModel(t *testing.T, killFn func(string) error, existsFn func(string)
 
 	agents := repo.NewAgentRepo(conn, nil)
 	m := &dashboardModel{
-		conn:          conn,
-		agents:        agents,
-		issues:        repo.NewIssueRepo(conn, nil),
-		killSession:   killFn,
-		sessionExists: existsFn,
-		sendKeys:      sendKeysFn,
-		restartAgent:  restartFn,
-		openPRFn:      func(int) error { return nil }, // no-op default
-		sleepFn:       func(time.Duration) {},         // no-op in tests
-		expanded:      make(map[int]bool),
+		conn:         conn,
+		agents:       agents,
+		issues:       repo.NewIssueRepo(conn, nil),
+		session:      &fakeDashSession{killFn: killFn, existsFn: existsFn, sendKeysFn: sendKeysFn},
+		restartAgent: restartFn,
+		openPRFn:     func(int) error { return nil }, // no-op default
+		sleepFn:      func(time.Duration) {},         // no-op in tests
+		expanded:     make(map[int]bool),
 	}
 	return m, agents
 }

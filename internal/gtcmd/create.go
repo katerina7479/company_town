@@ -32,18 +32,18 @@ func Create(args []string) error {
 		if len(args) < 2 {
 			return fmt.Errorf("usage: gt create reviewer <name>")
 		}
-		return createReviewerWithDeps(args[1], cfg, agents)
+		return createReviewerWithDeps(args[1], cfg, agents, session.New())
 	default:
 		return fmt.Errorf("unknown create noun: %s", args[0])
 	}
 }
 
 // createReviewerWithDeps creates a named reviewer agent and starts its tmux session.
-// It uses the package-level createInteractiveFn and tmuxExistsFn vars so tests can inject stubs.
-func createReviewerWithDeps(name string, cfg *config.Config, agents *repo.AgentRepo) error {
+// It uses the package-level createInteractiveFn var and the injected sess for existence checks.
+func createReviewerWithDeps(name string, cfg *config.Config, agents *repo.AgentRepo, sess session.Client) error {
 	sessionName := session.SessionName(name)
 
-	if tmuxExistsFn(sessionName) {
+	if sess.Exists(sessionName) {
 		return fmt.Errorf("%w: %s", ErrSessionAlreadyExists, sessionName)
 	}
 

@@ -15,11 +15,6 @@ import (
 	"github.com/katerina7479/company_town/internal/session"
 )
 
-// Overridable in tests. Default to the real tmux-backed implementations.
-var (
-	assignSessionExists = session.Exists
-	assignSendKeys      = session.SendKeys
-)
 
 // parseTicketID parses a ticket ID that may be in the form "PREFIX-N" (e.g. "nc-58")
 // or a bare number (e.g. "58"). The prefix is stripped before parsing.
@@ -52,12 +47,12 @@ func Ticket(args []string) error {
 	issues := repo.NewIssueRepo(conn, events)
 	agents := repo.NewAgentRepo(conn, events)
 
-	return ticketDispatch(issues, agents, cfg, args)
+	return ticketDispatch(issues, agents, cfg, args, session.New())
 }
 
 // ticketDispatch is the inner dispatcher, separated from Ticket so tests can
 // inject repos directly without needing a running Dolt server.
-func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.Config, args []string) error {
+func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.Config, args []string, sess session.Client) error {
 	switch args[0] {
 	case "create":
 		return ticketCreate(issues, cfg.TicketPrefix, args[1:])
@@ -68,7 +63,7 @@ func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.
 	case "ready":
 		return ticketReady(issues, cfg.TicketPrefix)
 	case "assign":
-		return ticketAssign(cfg, issues, agents, args[1:])
+		return ticketAssign(cfg, issues, agents, args[1:], sess)
 	case "unassign":
 		return ticketUnassign(issues, args[1:])
 	case "review":
@@ -309,7 +304,7 @@ func ticketReady(issues *repo.IssueRepo, prefix string) error {
 	return nil
 }
 
-func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) error {
+func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.AgentRepo, args []string, sess session.Client) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: gt ticket assign <ticket_id> <agent_name>")
 	}
@@ -349,12 +344,12 @@ func ticketAssign(cfg *config.Config, issues *repo.IssueRepo, agents *repo.Agent
 		fmt.Fprintf(os.Stderr, "warning: agent %s has no tmux session recorded; nudge skipped\n", agentName)
 		return nil
 	}
-	if !assignSessionExists(agent.TmuxSession.String) {
+	if !sess.Exists(agent.TmuxSession.String) {
 		fmt.Fprintf(os.Stderr, "warning: session %s for %s is not running; nudge skipped\n", agent.TmuxSession.String, agentName)
 		return nil
 	}
 	msg := fmt.Sprintf("You have been assigned ticket %d. Run `gt ticket show %d` and begin work per your CLAUDE.md lifecycle.", id, id)
-	if err := assignSendKeys(agent.TmuxSession.String, msg); err != nil {
+	if err := sess.SendKeys(agent.TmuxSession.String, msg); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to nudge %s: %v\n", agentName, err)
 	}
 	return nil

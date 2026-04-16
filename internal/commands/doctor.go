@@ -28,10 +28,10 @@ type checkResult struct {
 
 // doctorDeps groups injected functions for testability.
 type doctorDeps struct {
-	runCmd        func(name string, args ...string) (string, error)
-	loadConfig    func(root string) (*config.Config, error)
-	findRoot      func() (string, error)
-	sessionExists func(name string) bool
+	runCmd     func(name string, args ...string) (string, error)
+	loadConfig func(root string) (*config.Config, error)
+	findRoot   func() (string, error)
+	session    session.Client
 }
 
 func defaultDoctorDeps() doctorDeps {
@@ -40,11 +40,9 @@ func defaultDoctorDeps() doctorDeps {
 			out, err := exec.Command(name, args...).CombinedOutput()
 			return strings.TrimSpace(string(out)), err
 		},
-		loadConfig: func(root string) (*config.Config, error) {
-			return config.Load(root)
-		},
-		findRoot:      db.FindProjectRoot,
-		sessionExists: session.Exists,
+		loadConfig: config.Load,
+		findRoot:   db.FindProjectRoot,
+		session:    session.New(),
 	}
 }
 
@@ -229,7 +227,7 @@ func checkConfig(deps doctorDeps) (checkResult, *config.Config) {
 
 func checkDaemon(deps doctorDeps) checkResult {
 	daemonSession := session.SessionName("daemon")
-	if !deps.sessionExists(daemonSession) {
+	if !deps.session.Exists(daemonSession) {
 		return checkResult{
 			Name:   "daemon",
 			Status: "warn",

@@ -22,6 +22,47 @@ type sentMessage struct {
 	msg     string
 }
 
+// fakeSession is a test double for session.Client. Each operation delegates to
+// the corresponding func field; when the field is nil, a safe default is used.
+type fakeSession struct {
+	existsFn   func(string) bool
+	sendKeysFn func(string, string) error
+	killFn     func(string) error
+	captureFn  func(string) (string, error)
+	spawnFn    func(string) error
+}
+
+func (f *fakeSession) Exists(name string) bool {
+	if f.existsFn != nil {
+		return f.existsFn(name)
+	}
+	return false
+}
+func (f *fakeSession) SendKeys(name, keys string) error {
+	if f.sendKeysFn != nil {
+		return f.sendKeysFn(name, keys)
+	}
+	return nil
+}
+func (f *fakeSession) Kill(name string) error {
+	if f.killFn != nil {
+		return f.killFn(name)
+	}
+	return nil
+}
+func (f *fakeSession) CapturePane(name string) (string, error) {
+	if f.captureFn != nil {
+		return f.captureFn(name)
+	}
+	return "", nil
+}
+func (f *fakeSession) SpawnAttach(name string) error {
+	if f.spawnFn != nil {
+		return f.spawnFn(name)
+	}
+	return nil
+}
+
 // newTestDaemon creates a daemon with no active sessions and a discarding sendKeys.
 func newTestDaemon(t *testing.T) (*Daemon, *repo.IssueRepo, *repo.AgentRepo) {
 	t.Helper()
@@ -53,19 +94,21 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 	}
 
 	var sent []sentMessage
-
-	d := &Daemon{
-		cfg:           cfg,
-		issues:        issues,
-		agents:        agents,
-		logger:        log.New(io.Discard, "", 0),
-		stop:          make(chan struct{}),
-		sessionExists: func(s string) bool { return sessions[s] },
-		killSession:   func(string) error { return nil },
-		sendKeys: func(s, msg string) error {
+	fake := &fakeSession{
+		existsFn: func(s string) bool { return sessions[s] },
+		sendKeysFn: func(s, msg string) error {
 			sent = append(sent, sentMessage{session: s, msg: msg})
 			return nil
 		},
+	}
+
+	d := &Daemon{
+		cfg:                     cfg,
+		issues:                  issues,
+		agents:                  agents,
+		logger:                  log.New(io.Discard, "", 0),
+		stop:                    make(chan struct{}),
+		session:                 fake,
 		capturePane:             func(string) (string, error) { return "", nil },
 		runQualityBaseline:      func() error { return nil },
 		pruneStaleWorktrees:     func() (int, error) { return 0, nil },
@@ -752,7 +795,7 @@ func TestHandleDeadSessions_deletesDeadStatusProleEvenWithLiveSession(t *testing
 	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-dead-prole"})
 
 	var kills []string
-	d.killSession = func(s string) error {
+	d.session.(*fakeSession).killFn = func(s string) error {
 		kills = append(kills, s)
 		return nil
 	}
@@ -796,7 +839,7 @@ func TestHandleDeadSessions_killSessionFailureStillCleansRow(t *testing.T) {
 	// and orphaned tickets must be cleared — kill failure must not block cleanup.
 	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-zombie"})
 
-	d.killSession = func(string) error {
+	d.session.(*fakeSession).killFn = func(string) error {
 		return fmt.Errorf("tmux: session not found")
 	}
 
@@ -1376,13 +1419,15 @@ func TestHandleStuckAgents_skipsNullStatusChangedAt(t *testing.T) {
 	var sent []sentMessage
 
 	d := &Daemon{
-		cfg:                 cfg,
-		issues:              repo.NewIssueRepo(conn, nil),
-		agents:              agents,
-		logger:              log.New(io.Discard, "", 0),
-		stop:                make(chan struct{}),
-		sessionExists:       func(s string) bool { return sessions[s] },
-		sendKeys:            func(s, msg string) error { sent = append(sent, sentMessage{session: s, msg: msg}); return nil },
+		cfg:    cfg,
+		issues: repo.NewIssueRepo(conn, nil),
+		agents: agents,
+		logger: log.New(io.Discard, "", 0),
+		stop:   make(chan struct{}),
+		session: &fakeSession{
+			existsFn:   func(s string) bool { return sessions[s] },
+			sendKeysFn: func(s, msg string) error { sent = append(sent, sentMessage{session: s, msg: msg}); return nil },
+		},
 		lastNudged:          make(map[string]time.Time),
 		lastNudgeDigest:     make(map[string]string),
 		stuckAgentThreshold: 30 * time.Minute,

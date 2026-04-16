@@ -18,9 +18,10 @@ import (
 // startAgent is the shared logic for launching any agent in a tmux session.
 func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.AgentRepo, prompt string) error {
 	sessionName := session.SessionName(name)
+	sessClient := session.New()
 
 	// If session already exists, just attach
-	if session.Exists(sessionName) {
+	if sessClient.Exists(sessionName) {
 		fmt.Printf("%s is already running, attaching...\n", name)
 		return session.Attach(sessionName)
 	}
@@ -89,7 +90,8 @@ func Start() error {
 
 	// Start daemon if not already running.
 	daemonSession := session.SessionName("daemon")
-	if !session.Exists(daemonSession) {
+	sessClient := session.New()
+	if !sessClient.Exists(daemonSession) {
 		fmt.Println("Starting daemon...")
 		if err := startDaemon(cfg); err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
@@ -207,7 +209,7 @@ func Artisan(specialty string) error {
 
 	sessionName := session.SessionName(name)
 
-	if session.Exists(sessionName) {
+	if session.New().Exists(sessionName) {
 		fmt.Printf("%s is already running, attaching...\n", name)
 		return session.Attach(sessionName)
 	}
@@ -247,7 +249,8 @@ func ArtisanStop(specialty string) error {
 	name := fmt.Sprintf("artisan-%s", specialty)
 	sessionName := session.SessionName(name)
 
-	if !session.Exists(sessionName) {
+	artisanClient := session.New()
+	if !artisanClient.Exists(sessionName) {
 		fmt.Printf("artisan-%s is not running.\n", specialty)
 		return nil
 	}
@@ -265,7 +268,7 @@ func ArtisanStop(specialty string) error {
 		return fmt.Errorf("writing handoff signal: %w", err)
 	}
 
-	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
+	artisanClient.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
 
 	fmt.Printf("Handoff signal sent. artisan-%s will exit after writing handoff.md.\n", specialty)
 	return nil
@@ -275,7 +278,8 @@ func ArtisanStop(specialty string) error {
 func ArchitectStop() error {
 	sessionName := session.SessionName("architect")
 
-	if !session.Exists(sessionName) {
+	archClient := session.New()
+	if !archClient.Exists(sessionName) {
 		fmt.Println("Architect is not running.")
 		return nil
 	}
@@ -293,7 +297,7 @@ func ArchitectStop() error {
 		return fmt.Errorf("writing handoff signal: %w", err)
 	}
 
-	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
+	archClient.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
 
 	fmt.Println("Handoff signal sent. Architect will exit after writing handoff.md.")
 	return nil
@@ -349,7 +353,8 @@ func Stop(target string, clean bool) error {
 		defer conn.Close()
 	}
 
-	stopCore(sessions, ctDir, clean, session.Kill, session.SendKeys, updateStatus, os.RemoveAll, gitWorktreePrune)
+	stopClient := session.New()
+	stopCore(sessions, ctDir, clean, stopClient.Kill, stopClient.SendKeys, updateStatus, os.RemoveAll, gitWorktreePrune)
 
 	if target == "" {
 		fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
@@ -434,7 +439,7 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 func Attach(name string) error {
 	sessionName := session.SessionName(name)
 
-	if !session.Exists(sessionName) {
+	if !session.New().Exists(sessionName) {
 		return fmt.Errorf("session %q is not running", name)
 	}
 
@@ -451,9 +456,11 @@ func Nuke(target string) error {
 	}
 	ctDir := config.CompanyTownDir(projectRoot)
 
+	nukeClient := session.New()
+
 	// "bare" target removes only the bare clone — no sessions involved.
 	if target == "bare" {
-		nukeCore(nil, ctDir, target, session.Kill, nil, os.RemoveAll, gitWorktreePrune)
+		nukeCore(nil, ctDir, target, nukeClient.Kill, nil, os.RemoveAll, gitWorktreePrune)
 		fmt.Println("\nBare clone removed.")
 		return nil
 	}
@@ -478,7 +485,7 @@ func Nuke(target string) error {
 		defer conn.Close()
 	}
 
-	killed := nukeCore(sessions, ctDir, target, session.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
+	killed := nukeCore(sessions, ctDir, target, nukeClient.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
 
 	switch {
 	case target == "":
@@ -509,6 +516,7 @@ func Nuke(target string) error {
 //     whose name is ct-<target>, remove its worktree, and run git worktree prune.
 //     The bare clone is NOT removed in single-target mode (it is shared by all
 //     proles; removing it while other proles are running would break them).
+//
 // nukeCore returns the number of sessions actually killed. The caller uses
 // this to decide whether to print a "killed" summary line.
 func nukeCore(sessions []string, ctDir string, target string, killFn func(string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) int {

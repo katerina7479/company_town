@@ -99,12 +99,10 @@ type dashboardModel struct {
 	agents *repo.AgentRepo
 	issues *repo.IssueRepo
 
-	killSession   func(name string) error
-	sessionExists func(name string) bool
-	sendKeys      func(name, msg string) error
-	restartAgent  func(name, agentType string) error
-	openPRFn      func(prNumber int) error
-	sleepFn       func(time.Duration)
+	session      session.Client
+	restartAgent func(name, agentType string) error
+	openPRFn     func(prNumber int) error
+	sleepFn      func(time.Duration)
 
 	data dashboardData
 
@@ -151,9 +149,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		conn:            conn,
 		agents:          repo.NewAgentRepo(conn, nil),
 		issues:          repo.NewIssueRepo(conn, nil),
-		killSession:     session.Kill,
-		sessionExists:   session.Exists,
-		sendKeys:        session.SendKeys,
+		session:         session.New(),
 		restartAgent:    defaultRestartAgent,
 		openPRFn:        defaultOpenPR,
 		sleepFn:         time.Sleep,
@@ -217,7 +213,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						sname := m.agentSessionName(m.inputTarget)
 						if sname == "" {
 							m.statusMsg = fmt.Sprintf("agent %s has no tmux session recorded", m.inputTarget)
-						} else if err := m.sendKeys(sname, m.inputBuffer); err != nil {
+						} else if err := m.session.SendKeys(sname, m.inputBuffer); err != nil {
 							m.statusMsg = "nudge failed: " + err.Error()
 						} else {
 							m.statusMsg = "nudged " + m.inputTarget
@@ -317,10 +313,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				agent := m.data.agents[m.agentCursor]
 				if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
 					m.statusMsg = fmt.Sprintf("agent %s has no tmux session recorded", agent.Name)
-				} else if !m.sessionExists(agent.TmuxSession.String) {
+				} else if !m.session.Exists(agent.TmuxSession.String) {
 					m.statusMsg = fmt.Sprintf("session %s not running", agent.TmuxSession.String)
 				} else {
-					return m, spawnAttachCmd(agent.Name, agent.TmuxSession.String)
+					return m, m.spawnAttachCmd(agent.Name, agent.TmuxSession.String)
 				}
 			}
 
@@ -347,7 +343,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				agent := m.data.agents[m.agentCursor]
 				if !agent.TmuxSession.Valid || agent.TmuxSession.String == "" {
 					m.statusMsg = fmt.Sprintf("agent %s has no tmux session recorded", agent.Name)
-				} else if !m.sessionExists(agent.TmuxSession.String) {
+				} else if !m.session.Exists(agent.TmuxSession.String) {
 					m.statusMsg = fmt.Sprintf("session %s not running", agent.TmuxSession.String)
 				} else {
 					m.inputMode = true
@@ -485,9 +481,9 @@ func (m dashboardModel) agentSessionName(name string) string {
 
 // spawnAttachCmd runs session.SpawnAttach in a goroutine so Update stays
 // non-blocking during osascript latency (200-500ms).
-func spawnAttachCmd(agentName, sessionName string) tea.Cmd {
+func (m dashboardModel) spawnAttachCmd(agentName, sessionName string) tea.Cmd {
 	return func() tea.Msg {
-		err := session.SpawnAttach(sessionName)
+		err := m.session.SpawnAttach(sessionName)
 		return spawnAttachResultMsg{agentName: agentName, sessionName: sessionName, err: err}
 	}
 }
@@ -499,7 +495,7 @@ func (m dashboardModel) killAgentCmd(a *repo.Agent) tea.Cmd {
 			return actionResultMsg{err: fmt.Errorf("agent %s has no tmux session recorded", a.Name)}
 		}
 		sname := a.TmuxSession.String
-		if err := m.killSession(sname); err != nil {
+		if err := m.session.Kill(sname); err != nil {
 			return actionResultMsg{err: fmt.Errorf("kill session %s: %w", a.Name, err)}
 		}
 		if err := m.agents.UpdateStatus(a.Name, "dead"); err != nil {
@@ -516,11 +512,11 @@ func (m dashboardModel) stopAgentCmd(a *repo.Agent) tea.Cmd {
 			return actionResultMsg{err: fmt.Errorf("agent %s has no tmux session recorded", a.Name)}
 		}
 		sname := a.TmuxSession.String
-		if !m.sessionExists(sname) {
+		if !m.session.Exists(sname) {
 			return actionResultMsg{err: fmt.Errorf("no active session for %s", a.Name)}
 		}
 		msg := "Complete your current work, follow the completion protocol, and go idle."
-		if err := m.sendKeys(sname, msg); err != nil {
+		if err := m.session.SendKeys(sname, msg); err != nil {
 			return actionResultMsg{err: fmt.Errorf("send stop signal to %s: %w", a.Name, err)}
 		}
 		return actionResultMsg{text: fmt.Sprintf("Sent stop signal to %s", a.Name)}
@@ -535,7 +531,7 @@ func (m dashboardModel) restartAgentCmd(a *repo.Agent) tea.Cmd {
 			return actionResultMsg{err: fmt.Errorf("agent %s has no tmux session recorded", a.Name)}
 		}
 		sname := a.TmuxSession.String
-		if err := m.killSession(sname); err != nil {
+		if err := m.session.Kill(sname); err != nil {
 			return actionResultMsg{err: fmt.Errorf("kill session for %s: %w", a.Name, err)}
 		}
 		if err := m.restartAgent(a.Name, a.Type); err != nil {

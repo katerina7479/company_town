@@ -32,14 +32,11 @@ func newReviewerTestDB(t *testing.T) (*sql.DB, *config.Config) {
 }
 
 func TestCreateReviewer_sessionAlreadyExists(t *testing.T) {
-	origExists := tmuxExistsFn
-	defer func() { tmuxExistsFn = origExists }()
-	tmuxExistsFn = func(string) bool { return true }
-
 	conn, cfg := newReviewerTestDB(t)
 	agents := repo.NewAgentRepo(conn, nil)
 
-	err := createReviewerWithDeps("robin", cfg, agents)
+	fakeSess := &fakeLifecycleSession{existsFn: func(string) bool { return true }}
+	err := createReviewerWithDeps("robin", cfg, agents, fakeSess)
 	if err == nil {
 		t.Fatal("expected error when session already exists")
 	}
@@ -50,23 +47,18 @@ func TestCreateReviewer_sessionAlreadyExists(t *testing.T) {
 
 func TestCreateReviewer_success(t *testing.T) {
 	origCreate := createInteractiveFn
-	origExists := tmuxExistsFn
-	defer func() {
-		createInteractiveFn = origCreate
-		tmuxExistsFn = origExists
-	}()
+	defer func() { createInteractiveFn = origCreate }()
 
 	var capturedCfg session.AgentSessionConfig
 	createInteractiveFn = func(cfg session.AgentSessionConfig) error {
 		capturedCfg = cfg
 		return nil
 	}
-	tmuxExistsFn = func(string) bool { return false }
 
 	conn, cfg := newReviewerTestDB(t)
 	agents := repo.NewAgentRepo(conn, nil)
 
-	err := createReviewerWithDeps("robin", cfg, agents)
+	err := createReviewerWithDeps("robin", cfg, agents, &fakeLifecycleSession{})
 	if err != nil {
 		t.Fatalf("createReviewerWithDeps: %v", err)
 	}
@@ -98,21 +90,16 @@ func TestCreateReviewer_success(t *testing.T) {
 
 func TestCreateReviewer_sessionCreateFails(t *testing.T) {
 	origCreate := createInteractiveFn
-	origExists := tmuxExistsFn
-	defer func() {
-		createInteractiveFn = origCreate
-		tmuxExistsFn = origExists
-	}()
+	defer func() { createInteractiveFn = origCreate }()
 
 	createInteractiveFn = func(_ session.AgentSessionConfig) error {
 		return fmt.Errorf("simulated session create failure")
 	}
-	tmuxExistsFn = func(string) bool { return false }
 
 	conn, cfg := newReviewerTestDB(t)
 	agents := repo.NewAgentRepo(conn, nil)
 
-	err := createReviewerWithDeps("jay", cfg, agents)
+	err := createReviewerWithDeps("jay", cfg, agents, &fakeLifecycleSession{})
 	if err == nil {
 		t.Fatal("expected error when session creation fails")
 	}
@@ -123,14 +110,9 @@ func TestCreateReviewer_sessionCreateFails(t *testing.T) {
 
 func TestCreateReviewer_idempotentDBRegistration(t *testing.T) {
 	origCreate := createInteractiveFn
-	origExists := tmuxExistsFn
-	defer func() {
-		createInteractiveFn = origCreate
-		tmuxExistsFn = origExists
-	}()
+	defer func() { createInteractiveFn = origCreate }()
 
 	createInteractiveFn = func(cfg session.AgentSessionConfig) error { return nil }
-	tmuxExistsFn = func(string) bool { return false }
 
 	conn, cfg := newReviewerTestDB(t)
 	agents := repo.NewAgentRepo(conn, nil)
@@ -141,7 +123,7 @@ func TestCreateReviewer_idempotentDBRegistration(t *testing.T) {
 	}
 
 	// Should not error even though agent already exists in DB
-	if err := createReviewerWithDeps("jay", cfg, agents); err != nil {
+	if err := createReviewerWithDeps("jay", cfg, agents, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("createReviewerWithDeps: %v", err)
 	}
 

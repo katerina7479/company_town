@@ -308,7 +308,7 @@ func TestCheckDaemon(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := doctorDeps{
-				sessionExists: func(name string) bool { return tc.exists },
+				session: &fakeDashSession{existsFn: func(name string) bool { return tc.exists }},
 			}
 			r := checkDaemon(deps)
 			if r.Status != tc.wantStat {
@@ -341,9 +341,9 @@ func TestRunDoctor_allPass(t *testing.T) {
 			}
 			return "", nil
 		},
-		findRoot:      func() (string, error) { return "/tmp/proj", nil },
-		loadConfig:    func(root string) (*config.Config, error) { return goodCfg, nil },
-		sessionExists: func(name string) bool { return true },
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return goodCfg, nil },
+		session:    &fakeDashSession{existsFn: func(string) bool { return true }},
 	}
 	results, anyFail := runDoctor(deps)
 	if anyFail {
@@ -376,9 +376,9 @@ func TestRunDoctor_oneFail(t *testing.T) {
 			}
 			return "", nil
 		},
-		findRoot:      func() (string, error) { return "/tmp/proj", nil },
-		loadConfig:    func(root string) (*config.Config, error) { return goodCfg, nil },
-		sessionExists: func(name string) bool { return true },
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return goodCfg, nil },
+		session:    &fakeDashSession{existsFn: func(string) bool { return true }},
 	}
 	_, anyFail := runDoctor(deps)
 	if !anyFail {

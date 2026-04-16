@@ -31,25 +31,6 @@ func setupTicketTestRepos(t *testing.T) (*repo.IssueRepo, *repo.AgentRepo) {
 	return repo.NewIssueRepo(conn, nil), repo.NewAgentRepo(conn, nil)
 }
 
-// withStubSession swaps the tmux helpers used by ticketAssign for in-memory
-// fakes and restores them after the test. Returns a pointer to the slice of
-// captured sendKeys calls.
-func withStubSession(t *testing.T, liveSessions map[string]bool) *[]struct{ session, msg string } {
-	t.Helper()
-	origExists := assignSessionExists
-	origSend := assignSendKeys
-	sent := &[]struct{ session, msg string }{}
-	assignSessionExists = func(name string) bool { return liveSessions[name] }
-	assignSendKeys = func(name, msg string) error {
-		*sent = append(*sent, struct{ session, msg string }{name, msg})
-		return nil
-	}
-	t.Cleanup(func() {
-		assignSessionExists = origExists
-		assignSendKeys = origSend
-	})
-	return sent
-}
 
 func TestTicketCreate_withDescription(t *testing.T) {
 	issues := setupTicketTestRepo(t)
@@ -714,9 +695,16 @@ func TestTicketAssign_nudgesAgentAndLeavesStatusAlone(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	sent := withStubSession(t, map[string]bool{"ct-prole-copper": true})
+	var sent []struct{ session, msg string }
+	fakeSess := &fakeLifecycleSession{
+		existsFn: func(name string) bool { return name == "ct-prole-copper" },
+		sendKeysFn: func(name, msg string) error {
+			sent = append(sent, struct{ session, msg string }{name, msg})
+			return nil
+		},
+	}
 
-	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}, fakeSess); err != nil {
 		t.Fatalf("ticketAssign: %v", err)
 	}
 
@@ -740,14 +728,14 @@ func TestTicketAssign_nudgesAgentAndLeavesStatusAlone(t *testing.T) {
 		t.Errorf("expected ticket status unchanged ('draft'), got %q", issue.Status)
 	}
 
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 sendKeys call, got %d", len(*sent))
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sendKeys call, got %d", len(sent))
 	}
-	if (*sent)[0].session != "ct-prole-copper" {
-		t.Errorf("expected nudge to ct-prole-copper, got %q", (*sent)[0].session)
+	if sent[0].session != "ct-prole-copper" {
+		t.Errorf("expected nudge to ct-prole-copper, got %q", sent[0].session)
 	}
-	if !strings.Contains((*sent)[0].msg, fmt.Sprintf("ticket %d", id)) {
-		t.Errorf("expected nudge msg to mention ticket %d, got %q", id, (*sent)[0].msg)
+	if !strings.Contains(sent[0].msg, fmt.Sprintf("ticket %d", id)) {
+		t.Errorf("expected nudge msg to mention ticket %d, got %q", id, sent[0].msg)
 	}
 }
 
@@ -765,17 +753,13 @@ func TestTicketAssign_sendKeysFailureIsNonFatal(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	origExists := assignSessionExists
-	origSend := assignSendKeys
-	defer func() {
-		assignSessionExists = origExists
-		assignSendKeys = origSend
-	}()
-	assignSessionExists = func(string) bool { return true }
-	assignSendKeys = func(string, string) error { return fmt.Errorf("tmux error") }
+	fakeSess := &fakeLifecycleSession{
+		existsFn:   func(string) bool { return true },
+		sendKeysFn: func(string, string) error { return fmt.Errorf("tmux error") },
+	}
 
 	// Even with sendKeys failure, ticketAssign should return nil (non-fatal nudge).
-	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}, fakeSess); err != nil {
 		t.Fatalf("expected no error when sendKeys fails (non-fatal): %v", err)
 	}
 
@@ -798,15 +782,21 @@ func TestTicketAssign_noTmuxSessionRecorded(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	sent := withStubSession(t, map[string]bool{})
+	var sent []struct{ session, msg string }
+	fakeSess := &fakeLifecycleSession{
+		sendKeysFn: func(name, msg string) error {
+			sent = append(sent, struct{ session, msg string }{name, msg})
+			return nil
+		},
+	}
 
-	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}, fakeSess); err != nil {
 		t.Fatalf("ticketAssign: %v", err)
 	}
 
 	// Nudge should be skipped since no session is recorded.
-	if len(*sent) != 0 {
-		t.Errorf("expected 0 sendKeys calls (no session), got %d", len(*sent))
+	if len(sent) != 0 {
+		t.Errorf("expected 0 sendKeys calls (no session), got %d", len(sent))
 	}
 
 	// Ticket should still be assigned.
@@ -830,15 +820,21 @@ func TestTicketAssign_skipsNudgeWhenSessionMissing(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Empty live-session map — nudge should be skipped without erroring.
-	sent := withStubSession(t, map[string]bool{})
+	// existsFn defaults to false — nudge should be skipped without erroring.
+	var sent []struct{ session, msg string }
+	fakeSess := &fakeLifecycleSession{
+		sendKeysFn: func(name, msg string) error {
+			sent = append(sent, struct{ session, msg string }{name, msg})
+			return nil
+		},
+	}
 
-	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}); err != nil {
+	if err := ticketAssign(&config.Config{TicketPrefix: "nc"}, issues, agents, []string{fmt.Sprintf("%d", id), "copper"}, fakeSess); err != nil {
 		t.Fatalf("ticketAssign should not error when session is gone: %v", err)
 	}
 
-	if len(*sent) != 0 {
-		t.Errorf("expected 0 sendKeys calls, got %d", len(*sent))
+	if len(sent) != 0 {
+		t.Errorf("expected 0 sendKeys calls, got %d", len(sent))
 	}
 
 	// Ticket should still be properly assigned even though nudge failed.
@@ -867,7 +863,7 @@ func TestTicketPrioritize_priorityAlias(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := ticketDispatch(issues, agents, cfg, []string{"priority", fmt.Sprintf("%d", id), "P1"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"priority", fmt.Sprintf("%d", id), "P1"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("ticketDispatch priority alias: %v", err)
 	}
 
@@ -1706,7 +1702,7 @@ func TestTicketDispatch_show(t *testing.T) {
 	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, _ := issues.Create("Show dispatch", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"show", fmt.Sprintf("%d", id)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"show", fmt.Sprintf("%d", id)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch show: %v", err)
 	}
 }
@@ -1715,7 +1711,7 @@ func TestTicketDispatch_list(t *testing.T) {
 	issues, agents := setupTicketTestRepos(t)
 	cfg := &config.Config{TicketPrefix: "nc"}
 
-	if err := ticketDispatch(issues, agents, cfg, []string{"list"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"list"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch list: %v", err)
 	}
 }
@@ -1724,7 +1720,7 @@ func TestTicketDispatch_ready(t *testing.T) {
 	issues, agents := setupTicketTestRepos(t)
 	cfg := &config.Config{TicketPrefix: "nc"}
 
-	if err := ticketDispatch(issues, agents, cfg, []string{"ready"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"ready"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch ready: %v", err)
 	}
 }
@@ -1734,7 +1730,7 @@ func TestTicketDispatch_close(t *testing.T) {
 	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, _ := issues.Create("Close dispatch", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"close", fmt.Sprintf("%d", id)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"close", fmt.Sprintf("%d", id)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch close: %v", err)
 	}
 }
@@ -1744,7 +1740,7 @@ func TestTicketDispatch_delete(t *testing.T) {
 	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, _ := issues.Create("Delete dispatch", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"delete", fmt.Sprintf("%d", id)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"delete", fmt.Sprintf("%d", id)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch delete: %v", err)
 	}
 }
@@ -1755,7 +1751,7 @@ func TestTicketDispatch_unassign(t *testing.T) {
 
 	id, _ := issues.Create("Unassign dispatch", "task", nil, nil, nil)
 	issues.SetAssignee(id, "copper")
-	if err := ticketDispatch(issues, agents, cfg, []string{"unassign", fmt.Sprintf("%d", id)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"unassign", fmt.Sprintf("%d", id)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch unassign: %v", err)
 	}
 }
@@ -1765,7 +1761,7 @@ func TestTicketDispatch_status(t *testing.T) {
 	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, _ := issues.Create("Status dispatch", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"status", fmt.Sprintf("%d", id), "open"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"status", fmt.Sprintf("%d", id), "open"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch status: %v", err)
 	}
 }
@@ -1776,7 +1772,7 @@ func TestTicketDispatch_review(t *testing.T) {
 
 	id, _ := issues.Create("Review dispatch", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "under_review")
-	if err := ticketDispatch(issues, agents, cfg, []string{"review", fmt.Sprintf("%d", id), "approve"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"review", fmt.Sprintf("%d", id), "approve"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch review: %v", err)
 	}
 }
@@ -1786,7 +1782,7 @@ func TestTicketDispatch_describe(t *testing.T) {
 	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, _ := issues.Create("Describe dispatch", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"describe", fmt.Sprintf("%d", id), "description text"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"describe", fmt.Sprintf("%d", id), "description text"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch describe: %v", err)
 	}
 }
@@ -1796,7 +1792,7 @@ func TestTicketDispatch_type(t *testing.T) {
 	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, _ := issues.Create("Type dispatch", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"type", fmt.Sprintf("%d", id), "bug"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"type", fmt.Sprintf("%d", id), "bug"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch type: %v", err)
 	}
 }
@@ -1807,7 +1803,7 @@ func TestTicketDispatch_depend(t *testing.T) {
 
 	id1, _ := issues.Create("A", "task", nil, nil, nil)
 	id2, _ := issues.Create("B", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"depend", fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"depend", fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch depend: %v", err)
 	}
 }
@@ -1819,7 +1815,7 @@ func TestTicketDispatch_undepend(t *testing.T) {
 	id1, _ := issues.Create("A", "task", nil, nil, nil)
 	id2, _ := issues.Create("B", "task", nil, nil, nil)
 	issues.AddDependency(id2, id1)
-	if err := ticketDispatch(issues, agents, cfg, []string{"undepend", fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"undepend", fmt.Sprintf("%d", id2), fmt.Sprintf("%d", id1)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch undepend: %v", err)
 	}
 }
@@ -1830,7 +1826,7 @@ func TestTicketDispatch_parent(t *testing.T) {
 
 	parent, _ := issues.Create("Epic", "epic", nil, nil, nil)
 	child, _ := issues.Create("Child", "task", nil, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"parent", fmt.Sprintf("%d", child), fmt.Sprintf("%d", parent)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"parent", fmt.Sprintf("%d", child), fmt.Sprintf("%d", parent)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch parent: %v", err)
 	}
 }
@@ -1841,7 +1837,7 @@ func TestTicketDispatch_unparent(t *testing.T) {
 
 	parent, _ := issues.Create("Epic", "epic", nil, nil, nil)
 	child, _ := issues.Create("Child", "task", &parent, nil, nil)
-	if err := ticketDispatch(issues, agents, cfg, []string{"unparent", fmt.Sprintf("%d", child)}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"unparent", fmt.Sprintf("%d", child)}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch unparent: %v", err)
 	}
 }
@@ -1850,7 +1846,7 @@ func TestTicketDispatch_create(t *testing.T) {
 	issues, agents := setupTicketTestRepos(t)
 	cfg := &config.Config{TicketPrefix: "nc"}
 
-	if err := ticketDispatch(issues, agents, cfg, []string{"create", "New ticket via dispatch"}); err != nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"create", "New ticket via dispatch"}, &fakeLifecycleSession{}); err != nil {
 		t.Fatalf("dispatch create: %v", err)
 	}
 }
@@ -1893,15 +1889,21 @@ func TestTicketAssign_nonexistentTicket(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	sent := withStubSession(t, map[string]bool{})
+	var sent []struct{ session, msg string }
+	fakeSess := &fakeLifecycleSession{
+		sendKeysFn: func(name, msg string) error {
+			sent = append(sent, struct{ session, msg string }{name, msg})
+			return nil
+		},
+	}
 
 	// Nonexistent ticket ID — assign.Execute should fail with "getting ticket".
-	err := ticketAssign(cfg, issues, agents, []string{"9999", "copper"})
+	err := ticketAssign(cfg, issues, agents, []string{"9999", "copper"}, fakeSess)
 	if err == nil {
 		t.Fatal("expected error for nonexistent ticket, got nil")
 	}
-	if len(*sent) != 0 {
-		t.Errorf("expected no nudge on failure, got %d", len(*sent))
+	if len(sent) != 0 {
+		t.Errorf("expected no nudge on failure, got %d", len(sent))
 	}
 }
 
@@ -1909,10 +1911,10 @@ func TestTicketAssign_missingArgs(t *testing.T) {
 	issues, agents := setupTicketTestRepos(t)
 	cfg := &config.Config{TicketPrefix: "nc"}
 
-	if err := ticketAssign(cfg, issues, agents, []string{}); err == nil {
+	if err := ticketAssign(cfg, issues, agents, []string{}, &fakeLifecycleSession{}); err == nil {
 		t.Fatal("expected usage error for 0 args")
 	}
-	if err := ticketAssign(cfg, issues, agents, []string{"1"}); err == nil {
+	if err := ticketAssign(cfg, issues, agents, []string{"1"}, &fakeLifecycleSession{}); err == nil {
 		t.Fatal("expected usage error for 1 arg")
 	}
 }
@@ -1950,7 +1952,7 @@ func TestTicketDispatch_unknownCommand(t *testing.T) {
 	issues, agents := setupTicketTestRepos(t)
 	cfg := &config.Config{TicketPrefix: "nc"}
 
-	if err := ticketDispatch(issues, agents, cfg, []string{"bogus"}); err == nil {
+	if err := ticketDispatch(issues, agents, cfg, []string{"bogus"}, &fakeLifecycleSession{}); err == nil {
 		t.Fatal("expected error for unknown command, got nil")
 	}
 }

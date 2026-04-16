@@ -19,9 +19,7 @@ import (
 
 // Package-level vars for injection in tests.
 var createInteractiveFn func(session.AgentSessionConfig) error = session.CreateInteractive
-var tmuxExistsFn func(string) bool = tmuxExists
 var ensureAgentWorktreeFn func(cfg *config.Config, agentDir string) (string, error) = agentworktree.Ensure
-var killSessionFn func(string) error = session.Kill
 
 // startDaemonFn launches the daemon in a detached tmux session. Injected in tests.
 var startDaemonFn = func(cfg *config.Config) error {
@@ -54,11 +52,11 @@ func Start(args []string) error {
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	events := eventlog.NewLogger(ctDir)
 	agents := repo.NewAgentRepo(conn, events)
-	return startAgentWithDeps(cfg, agents, args[0])
+	return startAgentWithDeps(cfg, agents, args[0], session.New())
 }
 
 // startAgentWithDeps is the injectable core of Start. Extracted for testability.
-func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string) error {
+func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string, sess session.Client) error {
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 
 	var agentType, templateType, model, agentDir, prompt string
@@ -114,7 +112,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 	case name == "daemon":
 		sessionName := session.SessionName("daemon")
 
-		if tmuxExistsFn(sessionName) {
+		if sess.Exists(sessionName) {
 			fmt.Printf("daemon is already running (session: %s)\n", sessionName)
 			return nil
 		}
@@ -161,7 +159,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 
 	sessionName := session.SessionName(name)
 
-	if tmuxExistsFn(sessionName) {
+	if sess.Exists(sessionName) {
 		fmt.Printf("%s is already running (session: %s)\n", name, sessionName)
 		return nil
 	}
@@ -208,12 +206,12 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 }
 
 // stopDaemonWithDeps is the injectable core of the daemon stop path. Extracted for testability.
-func stopDaemonWithDeps(agents *repo.AgentRepo, sessionName string) error {
+func stopDaemonWithDeps(agents *repo.AgentRepo, sessionName string, sess session.Client) error {
 	if err := agents.UpdateStatus("daemon", "idle"); err != nil {
 		fmt.Printf("warning: could not update daemon status: %v\n", err)
 	}
 
-	if err := killSessionFn(sessionName); err != nil {
+	if err := sess.Kill(sessionName); err != nil {
 		return fmt.Errorf("killing daemon session: %w", err)
 	}
 
@@ -225,6 +223,11 @@ func stopDaemonWithDeps(agents *repo.AgentRepo, sessionName string) error {
 // For the daemon, which runs a Go binary (not a Claude session), the tmux
 // session is killed directly after the DB status flip.
 func Stop(args []string) error {
+	return stopWithClient(args, session.New())
+}
+
+// stopWithClient is the injectable core of Stop. Tests pass a fake session.Client.
+func stopWithClient(args []string, sess session.Client) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt stop <agent-name>")
 	}
@@ -232,7 +235,7 @@ func Stop(args []string) error {
 	name := args[0]
 	sessionName := session.SessionName(name)
 
-	if !tmuxExistsFn(sessionName) {
+	if !sess.Exists(sessionName) {
 		fmt.Printf("%s is not running.\n", name)
 		return nil
 	}
@@ -246,7 +249,7 @@ func Stop(args []string) error {
 		defer func() { _ = conn.Close() }()
 		stopEvents := eventlog.NewLogger(config.CompanyTownDir(stopCfg.ProjectRoot))
 		agents := repo.NewAgentRepo(conn, stopEvents)
-		return stopDaemonWithDeps(agents, sessionName)
+		return stopDaemonWithDeps(agents, sessionName, sess)
 	}
 
 	projectRoot, err := db.FindProjectRoot()
@@ -288,7 +291,3 @@ func Stop(args []string) error {
 	return nil
 }
 
-func tmuxExists(sessionName string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", sessionName)
-	return cmd.Run() == nil
-}

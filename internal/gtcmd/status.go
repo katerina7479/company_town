@@ -19,7 +19,7 @@ func Status() error {
 	agents := repo.NewAgentRepo(conn, nil)
 	issues := repo.NewIssueRepo(conn, nil)
 
-	if err := reconcileDeadAgents(agents, session.Exists); err != nil {
+	if err := reconcileDeadAgents(agents, session.New().Exists); err != nil {
 		return err
 	}
 
