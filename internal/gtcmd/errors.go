@@ -54,4 +54,8 @@ var (
 
 	// ErrNoBranchSet is returned when a ticket has no branch recorded.
 	ErrNoBranchSet = errors.New("ticket has no branch set")
+
+	// ErrNoPRSet is returned by pr ready when the ticket has no PR number
+	// recorded (i.e. no draft PR has been created yet).
+	ErrNoPRSet = errors.New("ticket has no PR set")
 )

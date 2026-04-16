@@ -1029,3 +1029,184 @@ func TestPRUpdate_badTicketID(t *testing.T) {
 		t.Fatal("expected error for non-numeric ticket ID in prUpdate")
 	}
 }
+
+// stubPRReadyFn replaces ghPRReadyFn for the duration of the test.
+func stubPRReadyFn(t *testing.T, fn func(prNum int, projectRoot string) error) {
+	t.Helper()
+	orig := ghPRReadyFn
+	ghPRReadyFn = fn
+	t.Cleanup(func() { ghPRReadyFn = orig })
+}
+
+func TestPRReady_missingArgs(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prReady(issues, testCfg(), "/tmp", []string{})
+	if err == nil {
+		t.Fatal("expected usage error for 0 args, got nil")
+	}
+}
+
+func TestPRReady_notFound(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prReady(issues, testCfg(), "/tmp", []string{"9999"})
+	if err == nil {
+		t.Fatal("expected error for non-existent ticket, got nil")
+	}
+}
+
+func TestPRReady_noPRSet(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("A TDD task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+	// No SetPR call — ticket has no pr_number.
+
+	err := prReady(issues, testCfg(), "/tmp", []string{"1"})
+	if err == nil {
+		t.Fatal("expected error when ticket has no PR set, got nil")
+	}
+	if !errors.Is(err, ErrNoPRSet) {
+		t.Errorf("expected ErrNoPRSet, got: %v", err)
+	}
+}
+
+func TestPRReady_noBranchSet(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("A TDD task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetPR(id, 77)
+	// No branch set on ticket.
+
+	err := prReady(issues, testCfg(), "/tmp", []string{"1"})
+	if err == nil {
+		t.Fatal("expected error when ticket has no branch set, got nil")
+	}
+	if !errors.Is(err, ErrNoBranchSet) {
+		t.Errorf("expected ErrNoBranchSet, got: %v", err)
+	}
+}
+
+func TestPRReady_detachedHead(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("A TDD task", "task", nil, nil, nil)
+	issues.Assign(id, "iron", "prole/iron/nc-42")
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetPR(id, 77)
+
+	stubBranchFns(t, "HEAD") // detached HEAD
+
+	err := prReady(issues, testCfg(), "/tmp", []string{"1"})
+	if err == nil {
+		t.Fatal("expected error for detached HEAD, got nil")
+	}
+	if !errors.Is(err, ErrHeadDetached) {
+		t.Errorf("expected ErrHeadDetached, got: %v", err)
+	}
+}
+
+func TestPRReady_pushFailure(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("A TDD task", "task", nil, nil, nil)
+	issues.Assign(id, "iron", "prole/iron/nc-42")
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetPR(id, 77)
+
+	stubBranchFns(t, "prole/iron/nc-42")
+
+	origPush := gitPushFn
+	gitPushFn = func(_ string, args ...string) error { return fmt.Errorf("push rejected") }
+	t.Cleanup(func() { gitPushFn = origPush })
+
+	err := prReady(issues, testCfg(), "/tmp", []string{"1"})
+	if err == nil {
+		t.Fatal("expected error on push failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "pushing branch") {
+		t.Errorf("expected 'pushing branch' in error, got: %v", err)
+	}
+}
+
+func TestPRReady_ghReadyFailure(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, _ := issues.Create("A TDD task", "task", nil, nil, nil)
+	issues.Assign(id, "iron", "prole/iron/nc-42")
+	issues.UpdateStatus(id, "in_progress")
+	issues.SetPR(id, 77)
+
+	stubBranchFns(t, "prole/iron/nc-42")
+
+	origPush := gitPushFn
+	gitPushFn = func(_ string, args ...string) error { return nil }
+	t.Cleanup(func() { gitPushFn = origPush })
+
+	stubPRReadyFn(t, func(_ int, _ string) error { return fmt.Errorf("PR not a draft") })
+
+	err := prReady(issues, testCfg(), "/tmp", []string{"1"})
+	if err == nil {
+		t.Fatal("expected error when gh pr ready fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "marking PR") {
+		t.Errorf("expected 'marking PR' in error, got: %v", err)
+	}
+}
+
+func TestPRReady_setsCIRunning(t *testing.T) {
+	issues := setupPRTestRepo(t)
+
+	id, err := issues.Create("A TDD task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.Assign(id, "iron", "prole/iron/nc-42"); err != nil {
+		t.Fatalf("assigning: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "in_progress"); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+	if err := issues.SetPR(id, 77); err != nil {
+		t.Fatalf("SetPR: %v", err)
+	}
+
+	stubBranchFns(t, "prole/iron/nc-42")
+
+	origPush := gitPushFn
+	gitPushFn = func(_ string, args ...string) error { return nil }
+	t.Cleanup(func() { gitPushFn = origPush })
+
+	var readyCalled int
+	stubPRReadyFn(t, func(prNum int, _ string) error {
+		readyCalled++
+		if prNum != 77 {
+			t.Errorf("expected prNum=77, got %d", prNum)
+		}
+		return nil
+	})
+
+	if err := prReady(issues, testCfg(), "/tmp", []string{"1"}); err != nil {
+		t.Fatalf("prReady: %v", err)
+	}
+
+	if readyCalled != 1 {
+		t.Errorf("expected ghPRReadyFn called once, got %d", readyCalled)
+	}
+
+	got, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status != "ci_running" {
+		t.Errorf("expected status=ci_running, got %q", got.Status)
+	}
+}
+
+func TestPRReady_badTicketID(t *testing.T) {
+	issues := setupPRTestRepo(t)
+	err := prReady(issues, testCfg(), "/tmp", []string{"not-a-number"})
+	if err == nil {
+		t.Fatal("expected error for non-numeric ticket ID in prReady")
+	}
+}
