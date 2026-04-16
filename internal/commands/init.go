@@ -1,10 +1,14 @@
 package commands
 
 import (
+	"bufio"
 	"embed"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -38,8 +42,201 @@ var topDirs = []string{
 	"agents",
 }
 
-// Init implements `ct init`.
-func Init() error {
+// gitRemoteURLFn is injectable for tests.
+var gitRemoteURLFn = func() (string, error) {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// deriveTicketPrefix extracts a lowercase alpha prefix from the project directory name.
+// Returns "" if nothing usable can be extracted.
+func deriveTicketPrefix(projectRoot string) string {
+	name := strings.ToLower(filepath.Base(projectRoot))
+	var b strings.Builder
+	for _, c := range name {
+		if c >= 'a' && c <= 'z' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// deriveDoltDatabase produces a MySQL-legal identifier from the project directory name.
+// Non-alphanumeric chars become underscores; leading digits are stripped.
+// Falls back to "company_town" if nothing usable remains.
+func deriveDoltDatabase(projectRoot string) string {
+	name := strings.ToLower(filepath.Base(projectRoot))
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	result := strings.Trim(b.String(), "_")
+	for len(result) > 0 && result[0] >= '0' && result[0] <= '9' {
+		result = result[1:]
+	}
+	if result == "" {
+		return "company_town"
+	}
+	return result
+}
+
+// deriveGithubRepo attempts to parse the git origin URL into "owner/repo" form.
+// Returns "" when the origin is unavailable or cannot be parsed.
+func deriveGithubRepo() string {
+	raw, err := gitRemoteURLFn()
+	if err != nil || raw == "" {
+		return ""
+	}
+	raw = strings.TrimSuffix(raw, ".git")
+	// HTTPS: https://github.com/owner/repo
+	if idx := strings.Index(raw, "github.com/"); idx >= 0 {
+		return raw[idx+len("github.com/"):]
+	}
+	// SSH: git@github.com:owner/repo
+	if idx := strings.Index(raw, "github.com:"); idx >= 0 {
+		return raw[idx+len("github.com:"):]
+	}
+	return ""
+}
+
+// validateTicketPrefix returns an error if s is not a valid ticket prefix.
+func validateTicketPrefix(s string) error {
+	if s == "" {
+		return fmt.Errorf("ticket_prefix cannot be empty")
+	}
+	for _, c := range s {
+		if c < 'a' || c > 'z' {
+			return fmt.Errorf("ticket_prefix must contain only lowercase letters a-z (got %q)", s)
+		}
+	}
+	return nil
+}
+
+// promptField reads one value from r, showing label and (if non-empty) defaultVal
+// in brackets. An empty response accepts the default. validate is retried on failure.
+func promptField(r *bufio.Reader, label, defaultVal string, validate func(string) error) (string, error) {
+	for {
+		if defaultVal != "" {
+			fmt.Printf("  %s [%s]: ", label, defaultVal)
+		} else {
+			fmt.Printf("  %s: ", label)
+		}
+		line, err := r.ReadString('\n')
+		val := strings.TrimSpace(line)
+		if val == "" {
+			val = defaultVal
+		}
+		if err != nil {
+			if err == io.EOF {
+				// Treat EOF as accepting the current value (supports piped input).
+				if validate != nil {
+					if verr := validate(val); verr != nil {
+						return "", fmt.Errorf("invalid value for %s: %w", label, verr)
+					}
+				}
+				fmt.Println(val)
+				return val, nil
+			}
+			return "", fmt.Errorf("reading %s: %w", label, err)
+		}
+		if validate != nil {
+			if verr := validate(val); verr != nil {
+				fmt.Printf("  error: %v\n", verr)
+				continue
+			}
+		}
+		return val, nil
+	}
+}
+
+// initParams holds the user-supplied (or derived) configuration values for a
+// new project.
+type initParams struct {
+	ticketPrefix string
+	githubRepo   string
+	doltDatabase string
+	doltPort     int
+}
+
+// collectInitParams gathers the four user-configurable fields either
+// interactively (prompting via r) or by applying derived defaults when
+// nonInteractive is true.
+func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, defaultPort int) (initParams, error) {
+	prefix := deriveTicketPrefix(projectRoot)
+	repo := deriveGithubRepo()
+	dbName := deriveDoltDatabase(projectRoot)
+
+	if nonInteractive {
+		// Fall back to safe literals only if derivation produced nothing.
+		if prefix == "" {
+			prefix = "tk"
+		}
+		if repo == "" {
+			repo = "owner/repo"
+		}
+		return initParams{
+			ticketPrefix: prefix,
+			githubRepo:   repo,
+			doltDatabase: dbName,
+			doltPort:     defaultPort,
+		}, nil
+	}
+
+	fmt.Println("Configure your Company Town project (press Enter to accept the default):")
+	br := bufio.NewReader(r)
+
+	tp, err := promptField(br, "Ticket prefix (lowercase letters, e.g. nc)", prefix, validateTicketPrefix)
+	if err != nil {
+		return initParams{}, fmt.Errorf("ticket_prefix: %w", err)
+	}
+
+	gr, err := promptField(br, "GitHub repo (owner/repo)", repo, nil)
+	if err != nil {
+		return initParams{}, fmt.Errorf("github_repo: %w", err)
+	}
+
+	dd, err := promptField(br, "Dolt database name", dbName, nil)
+	if err != nil {
+		return initParams{}, fmt.Errorf("dolt.database: %w", err)
+	}
+
+	ps, err := promptField(br, "Dolt port", strconv.Itoa(defaultPort), nil)
+	if err != nil {
+		return initParams{}, fmt.Errorf("dolt.port: %w", err)
+	}
+	port, err := strconv.Atoi(ps)
+	if err != nil || port < 1 || port > 65535 {
+		fmt.Printf("  invalid port %q, using %d\n", ps, defaultPort)
+		port = defaultPort
+	}
+
+	return initParams{
+		ticketPrefix: tp,
+		githubRepo:   gr,
+		doltDatabase: dd,
+		doltPort:     port,
+	}, nil
+}
+
+// Init implements `ct init`. args may contain --non-interactive to skip prompts.
+func Init(args []string) error {
+	nonInteractive := false
+	for _, a := range args {
+		if a == "--non-interactive" {
+			nonInteractive = true
+		}
+	}
+	return initCore(nonInteractive, os.Stdin)
+}
+
+func initCore(nonInteractive bool, stdin io.Reader) error {
 	projectRoot, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
@@ -82,21 +279,28 @@ func Init() error {
 		WriteClaudeMD(specDir, "artisan-"+specialty)
 	}
 
-	// 4. Write config.json if missing
+	// 4. Write config.json if missing, prompting for key fields.
 	cfgPath := config.ConfigPath(projectRoot)
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		cfg := config.DefaultConfig(projectRoot, "owner/repo")
-		// Pick a free port starting from the default (3307) so two projects on
-		// the same machine don't collide on the hardcoded default.
-		port, err := pickFreePort(cfg.Dolt.Port)
-		if err != nil {
-			return fmt.Errorf("finding free dolt port: %w", err)
+		defaultPort, portErr := pickFreePort(3307)
+		if portErr != nil {
+			return fmt.Errorf("finding free dolt port: %w", portErr)
 		}
-		cfg.Dolt.Port = port
+
+		params, err := collectInitParams(nonInteractive, stdin, projectRoot, defaultPort)
+		if err != nil {
+			return fmt.Errorf("collecting init params: %w", err)
+		}
+
+		cfg := config.DefaultConfig(projectRoot, params.githubRepo)
+		cfg.TicketPrefix = params.ticketPrefix
+		cfg.Dolt.Port = params.doltPort
+		cfg.Dolt.Database = params.doltDatabase
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
-		fmt.Printf("  created: config.json (dolt port=%d; set github_repo and change ticket_prefix from \"tk\" to your project prefix)\n", port)
+		fmt.Printf("  created: config.json (ticket_prefix=%q, dolt port=%d, database=%q)\n",
+			params.ticketPrefix, params.doltPort, params.doltDatabase)
 	} else {
 		fmt.Println("  exists:  config.json")
 	}
@@ -147,7 +351,7 @@ func Init() error {
 	}
 
 	fmt.Println("\nCompany Town initialized.")
-	fmt.Println("Next: edit .company_town/config.json, then run `ct start`")
+	fmt.Println("Next: run `ct start`")
 	return nil
 }
 
