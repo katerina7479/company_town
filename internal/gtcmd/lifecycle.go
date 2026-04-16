@@ -51,7 +51,9 @@ func Start(args []string) error {
 	}
 	defer conn.Close()
 
-	session.SessionPrefix = cfg.SessionPrefix
+	if cfg.SessionPrefix != "" {
+		session.SessionPrefix = cfg.SessionPrefix
+	}
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	events := eventlog.NewLogger(ctDir)
 	agents := repo.NewAgentRepo(conn, events)
@@ -240,7 +242,7 @@ func Stop(args []string) error {
 
 	// Load config to set session.SessionPrefix before building any session name.
 	if projectRoot, findErr := db.FindProjectRoot(); findErr == nil {
-		if cfg, cfgErr := config.Load(projectRoot); cfgErr == nil {
+		if cfg, cfgErr := config.Load(projectRoot); cfgErr == nil && cfg.SessionPrefix != "" {
 			session.SessionPrefix = cfg.SessionPrefix
 		}
 	}

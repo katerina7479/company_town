@@ -19,6 +19,16 @@ import (
 var sessionExistsFn func(string) bool = session.Exists
 var sessionAttachFn func(string) error = session.Attach
 
+// applySessionPrefix sets session.SessionPrefix from cfg, preserving the
+// current value when cfg.SessionPrefix is empty (e.g., in unit-test configs
+// that don't populate every field). Real configs loaded via config.Load always
+// have a non-empty SessionPrefix (the loader defaults "" to "ct-").
+func applySessionPrefix(cfg *config.Config) {
+	if cfg.SessionPrefix != "" {
+		session.SessionPrefix = cfg.SessionPrefix
+	}
+}
+
 // startAgent is the shared logic for launching any agent in a tmux session.
 func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.AgentRepo, prompt string) error {
 	sessionName := session.SessionName(name)
@@ -87,7 +97,7 @@ func Start() error {
 		return err
 	}
 
-	session.SessionPrefix = cfg.SessionPrefix
+	applySessionPrefix(cfg)
 
 	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
 	agents := repo.NewAgentRepo(conn, events)
@@ -156,7 +166,7 @@ func Architect() error {
 	}
 	defer conn.Close()
 
-	session.SessionPrefix = cfg.SessionPrefix
+	applySessionPrefix(cfg)
 	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
 	agents := repo.NewAgentRepo(conn, events)
 	prompt := fmt.Sprintf(
@@ -179,7 +189,7 @@ func Artisan(specialty string) error {
 	}
 	defer conn.Close()
 
-	session.SessionPrefix = cfg.SessionPrefix
+	applySessionPrefix(cfg)
 
 	// Look up specialty in config
 	artisanCfg, ok := cfg.Agents.Artisan[specialty]
@@ -259,6 +269,15 @@ func Artisan(specialty string) error {
 
 // ArtisanStop implements `ct artisan <specialty> stop` — graceful Artisan shutdown.
 func ArtisanStop(specialty string) error {
+	projectRoot, err := db.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+	if cfg, cfgErr := config.Load(projectRoot); cfgErr == nil {
+		applySessionPrefix(cfg)
+	}
+	ctDir := config.CompanyTownDir(projectRoot)
+
 	name := fmt.Sprintf("artisan-%s", specialty)
 	sessionName := session.SessionName(name)
 
@@ -268,12 +287,6 @@ func ArtisanStop(specialty string) error {
 	}
 
 	fmt.Printf("Signaling %s artisan to write handoff and exit...\n", specialty)
-
-	projectRoot, err := db.FindProjectRoot()
-	if err != nil {
-		return err
-	}
-	ctDir := config.CompanyTownDir(projectRoot)
 
 	signalPath := filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
 	if err := os.WriteFile(signalPath, []byte("handoff requested\n"), 0644); err != nil {
@@ -288,6 +301,15 @@ func ArtisanStop(specialty string) error {
 
 // ArchitectStop implements `ct architect stop` — graceful Architect shutdown.
 func ArchitectStop() error {
+	projectRoot, err := db.FindProjectRoot()
+	if err != nil {
+		return err
+	}
+	if cfg, cfgErr := config.Load(projectRoot); cfgErr == nil {
+		applySessionPrefix(cfg)
+	}
+	ctDir := config.CompanyTownDir(projectRoot)
+
 	sessionName := session.SessionName("architect")
 
 	if !session.Exists(sessionName) {
@@ -296,12 +318,6 @@ func ArchitectStop() error {
 	}
 
 	fmt.Println("Signaling Architect to write handoff and exit...")
-
-	projectRoot, err := db.FindProjectRoot()
-	if err != nil {
-		return err
-	}
-	ctDir := config.CompanyTownDir(projectRoot)
 
 	signalPath := filepath.Join(ctDir, "agents", "architect", "memory", "handoff_requested")
 	if err := os.WriteFile(signalPath, []byte("handoff requested\n"), 0644); err != nil {
@@ -328,7 +344,7 @@ func Stop(target string, clean bool) error {
 	}
 	cfg, cfgErr := config.Load(projectRoot)
 	if cfgErr == nil {
-		session.SessionPrefix = cfg.SessionPrefix
+		applySessionPrefix(cfg)
 	}
 	ctDir := config.CompanyTownDir(projectRoot)
 
@@ -452,6 +468,12 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 
 // Attach implements `ct attach <name>` — attach to an existing agent session.
 func Attach(name string) error {
+	if projectRoot, findErr := db.FindProjectRoot(); findErr == nil {
+		if cfg, cfgErr := config.Load(projectRoot); cfgErr == nil {
+			applySessionPrefix(cfg)
+		}
+	}
+
 	sessionName := session.SessionName(name)
 
 	if !session.Exists(sessionName) {
@@ -472,7 +494,7 @@ func Nuke(target string) error {
 	}
 	cfg, cfgErr := config.Load(projectRoot)
 	if cfgErr == nil {
-		session.SessionPrefix = cfg.SessionPrefix
+		applySessionPrefix(cfg)
 	}
 	ctDir := config.CompanyTownDir(projectRoot)
 

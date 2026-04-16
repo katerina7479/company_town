@@ -19,7 +19,9 @@ func runDaemon() error {
 	}
 	defer conn.Close()
 
-	session.SessionPrefix = cfg.SessionPrefix
+	if cfg.SessionPrefix != "" {
+		session.SessionPrefix = cfg.SessionPrefix
+	}
 
 	d, err := daemon.New(conn, cfg)
 	if err != nil {

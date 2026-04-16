@@ -64,6 +64,26 @@ func deriveTicketPrefix(projectRoot string) string {
 	return b.String()
 }
 
+// deriveSessionPrefix produces a tmux session prefix from the project directory name.
+// Non-alphanumeric chars become hyphens; the result is lowercased and gets a
+// trailing hyphen appended. Falls back to "ct-" if nothing usable can be extracted.
+func deriveSessionPrefix(projectRoot string) string {
+	name := strings.ToLower(filepath.Base(projectRoot))
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return "ct-"
+	}
+	return result + "-"
+}
+
 // deriveDoltDatabase produces a MySQL-legal identifier from the project directory name.
 // Non-alphanumeric chars become underscores; leading digits are stripped.
 // Falls back to "company_town" if nothing usable remains.
@@ -159,19 +179,21 @@ func promptField(r *bufio.Reader, label, defaultVal string, validate func(string
 // initParams holds the user-supplied (or derived) configuration values for a
 // new project.
 type initParams struct {
-	ticketPrefix string
-	githubRepo   string
-	doltDatabase string
-	doltPort     int
+	ticketPrefix  string
+	githubRepo    string
+	doltDatabase  string
+	doltPort      int
+	sessionPrefix string
 }
 
-// collectInitParams gathers the four user-configurable fields either
+// collectInitParams gathers the five user-configurable fields either
 // interactively (prompting via r) or by applying derived defaults when
 // nonInteractive is true.
 func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, defaultPort int) (initParams, error) {
 	prefix := deriveTicketPrefix(projectRoot)
 	repo := deriveGithubRepo()
 	dbName := deriveDoltDatabase(projectRoot)
+	sesPrefix := deriveSessionPrefix(projectRoot)
 
 	if nonInteractive {
 		// Fall back to safe literals only if derivation produced nothing.
@@ -182,10 +204,11 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 			repo = "owner/repo"
 		}
 		return initParams{
-			ticketPrefix: prefix,
-			githubRepo:   repo,
-			doltDatabase: dbName,
-			doltPort:     defaultPort,
+			ticketPrefix:  prefix,
+			githubRepo:    repo,
+			doltDatabase:  dbName,
+			doltPort:      defaultPort,
+			sessionPrefix: sesPrefix,
 		}, nil
 	}
 
@@ -217,11 +240,17 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 		port = defaultPort
 	}
 
+	sp, err := promptField(br, "Tmux session prefix (e.g. myproject-)", sesPrefix, nil)
+	if err != nil {
+		return initParams{}, fmt.Errorf("session_prefix: %w", err)
+	}
+
 	return initParams{
-		ticketPrefix: tp,
-		githubRepo:   gr,
-		doltDatabase: dd,
-		doltPort:     port,
+		ticketPrefix:  tp,
+		githubRepo:    gr,
+		doltDatabase:  dd,
+		doltPort:      port,
+		sessionPrefix: sp,
 	}, nil
 }
 
@@ -294,13 +323,14 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 
 		cfg := config.DefaultConfig(projectRoot, params.githubRepo)
 		cfg.TicketPrefix = params.ticketPrefix
+		cfg.SessionPrefix = params.sessionPrefix
 		cfg.Dolt.Port = params.doltPort
 		cfg.Dolt.Database = params.doltDatabase
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
-		fmt.Printf("  created: config.json (ticket_prefix=%q, dolt port=%d, database=%q)\n",
-			params.ticketPrefix, params.doltPort, params.doltDatabase)
+		fmt.Printf("  created: config.json (ticket_prefix=%q, session_prefix=%q, dolt port=%d, database=%q)\n",
+			params.ticketPrefix, params.sessionPrefix, params.doltPort, params.doltDatabase)
 	} else {
 		fmt.Println("  exists:  config.json")
 	}
