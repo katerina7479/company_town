@@ -175,6 +175,97 @@ func TestIssueRepo_RemoveDependency_restoresSelectability(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_SetBranch(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Branch ticket", "task", nil, nil, nil)
+
+	if err := r.SetBranch(id, "prole/tin/nc-42"); err != nil {
+		t.Fatalf("SetBranch: %v", err)
+	}
+
+	got, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.Branch.Valid || got.Branch.String != "prole/tin/nc-42" {
+		t.Errorf("Branch: got valid=%v value=%q, want valid=true value=%q",
+			got.Branch.Valid, got.Branch.String, "prole/tin/nc-42")
+	}
+}
+
+func TestIssueRepo_SetBranch_overwritesExisting(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("Branch ticket", "task", nil, nil, nil)
+
+	r.SetBranch(id, "old-branch") //nolint:errcheck
+	if err := r.SetBranch(id, "new-branch"); err != nil {
+		t.Fatalf("SetBranch overwrite: %v", err)
+	}
+
+	got, _ := r.Get(id)
+	if got.Branch.String != "new-branch" {
+		t.Errorf("Branch: got %q, want %q", got.Branch.String, "new-branch")
+	}
+}
+
+func TestIssueRepo_GetDependents_basic(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// tdd: tests ticket (the blocker)
+	tests, _ := r.Create("TDD tests", "tdd_tests", nil, nil, nil)
+	// impl: implementation ticket that depends on tests
+	impl, _ := r.Create("Implementation", "task", nil, nil, nil)
+
+	r.AddDependency(impl, tests) //nolint:errcheck
+
+	dependents, err := r.GetDependents(tests)
+	if err != nil {
+		t.Fatalf("GetDependents: %v", err)
+	}
+	if len(dependents) != 1 {
+		t.Fatalf("expected 1 dependent, got %d", len(dependents))
+	}
+	if dependents[0].ID != impl {
+		t.Errorf("expected dependent ID=%d, got %d", impl, dependents[0].ID)
+	}
+}
+
+func TestIssueRepo_GetDependents_closedExcluded(t *testing.T) {
+	r := setupTestRepo(t)
+
+	tests, _ := r.Create("TDD tests", "tdd_tests", nil, nil, nil)
+	impl, _ := r.Create("Implementation", "task", nil, nil, nil)
+	other, _ := r.Create("Closed impl", "task", nil, nil, nil)
+
+	r.AddDependency(impl, tests)  //nolint:errcheck
+	r.AddDependency(other, tests) //nolint:errcheck
+	r.UpdateStatus(other, "closed")
+
+	dependents, err := r.GetDependents(tests)
+	if err != nil {
+		t.Fatalf("GetDependents: %v", err)
+	}
+	if len(dependents) != 1 {
+		t.Fatalf("expected 1 open dependent (closed excluded), got %d", len(dependents))
+	}
+	if dependents[0].ID != impl {
+		t.Errorf("expected dependent ID=%d, got %d", impl, dependents[0].ID)
+	}
+}
+
+func TestIssueRepo_GetDependents_noDependents(t *testing.T) {
+	r := setupTestRepo(t)
+
+	id, _ := r.Create("Standalone", "task", nil, nil, nil)
+	dependents, err := r.GetDependents(id)
+	if err != nil {
+		t.Fatalf("GetDependents: %v", err)
+	}
+	if len(dependents) != 0 {
+		t.Errorf("expected 0 dependents, got %d", len(dependents))
+	}
+}
+
 func TestIssueRepo_Ready(t *testing.T) {
 	repo := setupTestRepo(t)
 
