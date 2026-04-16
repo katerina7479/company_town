@@ -17,9 +17,12 @@ Follow these patterns:
 | Operation | Safe form |
 |-----------|-----------|
 | `CREATE TABLE` | `CREATE TABLE IF NOT EXISTS` |
-| `ADD COLUMN` | `ALTER TABLE t ADD COLUMN IF NOT EXISTS col …` |
+| `ADD COLUMN` | `ALTER TABLE t ADD COLUMN col …` (plain — Dolt rejects `IF NOT EXISTS` on `ALTER TABLE`) |
 | `DROP COLUMN` | `ALTER TABLE t DROP COLUMN IF EXISTS col` |
 | `CREATE INDEX` | `CREATE INDEX IF NOT EXISTS` |
 | Seed `INSERT` | `INSERT IGNORE …` or `INSERT … ON DUPLICATE KEY UPDATE` |
 
-Dolt (>= 1.0) supports MySQL-compatible `IF NOT EXISTS` / `IF EXISTS` on `ALTER TABLE`.
+**Note:** Dolt does not support `ADD COLUMN IF NOT EXISTS` on `ALTER TABLE` (syntax error on
+1.83+). The `schema_migrations` tracker prevents double-application under normal operation, so
+plain `ADD COLUMN` is safe. For `CREATE TABLE` and `CREATE INDEX`, `IF NOT EXISTS` works as
+expected.
