@@ -278,73 +278,7 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,
-			Checks: []QualityCheckConfig{
-				{
-					Name:          "go_test_coverage",
-					Command:       "go test $(go list ./... | grep -vE '/cmd/ct$|/cmd/gt$|/internal/db$') -coverprofile=.company_town/.coverage.out >/dev/null 2>&1; go tool cover -func=.company_town/.coverage.out 2>/dev/null | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
-					Type:          "metric",
-					Threshold:     60.0,
-					WarnThreshold: 50.0,
-					Enabled:       true,
-				},
-				{
-					// lower is better — target 0 lint warnings; warn up to 10
-					Name:          "lint_warning_count",
-					Command:       "golangci-lint run --no-color ./... 2>&1 | grep -cE '\\.go:[0-9]+:[0-9]+:'; true",
-					Type:          "metric",
-					Threshold:     0,
-					WarnThreshold: 10,
-					Direction:     "lower",
-					Enabled:       true,
-				},
-				{
-					// higher is better — track total non-test Go LOC over time
-					Name:      "loc_total",
-					Command:   "git ls-files '*.go' | grep -v '_test\\.go' | tr '\\n' '\\0' | xargs -0 wc -l 2>/dev/null | awk 'END{print $1+0}'",
-					Type:      "metric",
-					Threshold: 1000,
-					Enabled:   true,
-				},
-				{
-					// lower is better — target 0 TODOs/FIXMEs/XXXs; warn up to 5
-					Name:          "todo_count",
-					Command:       "grep -rE 'TODO|FIXME|XXX' --include='*.go' . 2>/dev/null | wc -l",
-					Type:          "metric",
-					Threshold:     0,
-					WarnThreshold: 5,
-					Direction:     "lower",
-					Enabled:       true,
-				},
-				{
-					// higher is better — track test function count; warn below 20
-					Name:          "test_count",
-					Command:       "grep -r '^func Test' --include='*.go' . 2>/dev/null | wc -l",
-					Type:          "metric",
-					Threshold:     50,
-					WarnThreshold: 20,
-					Enabled:       true,
-				},
-				{
-					// lower is better — track third-party module count; warn above 75
-					Name:          "dependency_count",
-					Command:       "go list -m all 2>/dev/null | tail -n +2 | wc -l",
-					Type:          "metric",
-					Threshold:     50,
-					WarnThreshold: 75,
-					Direction:     "lower",
-					Enabled:       true,
-				},
-				{
-					// lower is better — count non-closed, non-cancelled tickets; warn above 20
-					Name:          "open_ticket_count",
-					Command:       "gt ticket list 2>/dev/null | grep -cE '\\[(open|draft|in_progress|ci_running|in_review|under_review|repairing|pr_open|reviewed|merge_conflict)\\]'; true",
-					Type:          "metric",
-					Threshold:     10,
-					WarnThreshold: 20,
-					Direction:     "lower",
-					Enabled:       true,
-				},
-			},
+			Checks:                  AgnosticQualityChecks(),
 		},
 	}
 }

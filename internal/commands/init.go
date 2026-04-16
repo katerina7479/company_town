@@ -179,11 +179,21 @@ func promptField(r *bufio.Reader, label, defaultVal string, validate func(string
 // initParams holds the user-supplied (or derived) configuration values for a
 // new project.
 type initParams struct {
-	ticketPrefix  string
-	githubRepo    string
-	doltDatabase  string
-	doltPort      int
-	sessionPrefix string
+	ticketPrefix   string
+	githubRepo     string
+	doltDatabase   string
+	doltPort       int
+	sessionPrefix  string
+	languagePreset string // "go", "python", or "" for agnostic-only
+}
+
+// validateLanguagePreset returns an error if s is not a recognised preset name.
+func validateLanguagePreset(s string) error {
+	switch s {
+	case "go", "python", "":
+		return nil
+	}
+	return fmt.Errorf("must be %q, %q, or blank for agnostic-only", "go", "python")
 }
 
 // collectInitParams gathers the five user-configurable fields either
@@ -194,6 +204,7 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 	repo := deriveGithubRepo()
 	dbName := deriveDoltDatabase(projectRoot)
 	sesPrefix := deriveSessionPrefix(projectRoot)
+	lang := config.DetectLanguagePreset(projectRoot)
 
 	if nonInteractive {
 		// Fall back to safe literals only if derivation produced nothing.
@@ -204,11 +215,12 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 			repo = "owner/repo"
 		}
 		return initParams{
-			ticketPrefix:  prefix,
-			githubRepo:    repo,
-			doltDatabase:  dbName,
-			doltPort:      defaultPort,
-			sessionPrefix: sesPrefix,
+			ticketPrefix:   prefix,
+			githubRepo:     repo,
+			doltDatabase:   dbName,
+			doltPort:       defaultPort,
+			sessionPrefix:  sesPrefix,
+			languagePreset: lang,
 		}, nil
 	}
 
@@ -245,12 +257,18 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 		return initParams{}, fmt.Errorf("session_prefix: %w", err)
 	}
 
+	lp, err := promptField(br, "Language preset (go, python, or blank for agnostic-only)", lang, validateLanguagePreset)
+	if err != nil {
+		return initParams{}, fmt.Errorf("language_preset: %w", err)
+	}
+
 	return initParams{
-		ticketPrefix:  tp,
-		githubRepo:    gr,
-		doltDatabase:  dd,
-		doltPort:      port,
-		sessionPrefix: sp,
+		ticketPrefix:   tp,
+		githubRepo:     gr,
+		doltDatabase:   dd,
+		doltPort:       port,
+		sessionPrefix:  sp,
+		languagePreset: lp,
 	}, nil
 }
 
@@ -326,11 +344,16 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 		cfg.SessionPrefix = params.sessionPrefix
 		cfg.Dolt.Port = params.doltPort
 		cfg.Dolt.Database = params.doltDatabase
+		cfg.Quality.Checks = config.QualityChecksForPreset(params.languagePreset)
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
 		}
-		fmt.Printf("  created: config.json (ticket_prefix=%q, session_prefix=%q, dolt port=%d, database=%q)\n",
-			params.ticketPrefix, params.sessionPrefix, params.doltPort, params.doltDatabase)
+		presetLabel := params.languagePreset
+		if presetLabel == "" {
+			presetLabel = "agnostic"
+		}
+		fmt.Printf("  created: config.json (ticket_prefix=%q, session_prefix=%q, dolt port=%d, database=%q, preset=%s)\n",
+			params.ticketPrefix, params.sessionPrefix, params.doltPort, params.doltDatabase, presetLabel)
 	} else {
 		fmt.Println("  exists:  config.json")
 	}

@@ -407,8 +407,8 @@ func TestCollectInitParams_interactive_acceptsDefaults(t *testing.T) {
 		return "https://github.com/owner/myapp.git", nil
 	}
 
-	// Simulate user pressing Enter for all prompts (accepts all defaults).
-	input := strings.NewReader("\n\n\n\n")
+	// Simulate user pressing Enter for all 5 prompts (accepts all defaults).
+	input := strings.NewReader("\n\n\n\n\n")
 	params, err := collectInitParams(false, input, "/projects/myapp", 3309)
 	if err != nil {
 		t.Fatalf("collectInitParams interactive: %v", err)
@@ -422,6 +422,10 @@ func TestCollectInitParams_interactive_acceptsDefaults(t *testing.T) {
 	if params.doltPort != 3309 {
 		t.Errorf("doltPort = %d, want %d", params.doltPort, 3309)
 	}
+	// /projects/myapp does not exist, so no marker files → agnostic
+	if params.languagePreset != "" {
+		t.Errorf("languagePreset = %q, want empty (no marker files)", params.languagePreset)
+	}
 }
 
 func TestCollectInitParams_interactive_customValues(t *testing.T) {
@@ -429,8 +433,8 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
-	// User types custom values for all four fields.
-	input := strings.NewReader("myproj\nkate/myproj\nmydb\n4000\n")
+	// User types custom values for all six fields.
+	input := strings.NewReader("myproj\nkate/myproj\nmydb\n4000\nmyproj-\npython\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams interactive custom: %v", err)
@@ -447,6 +451,12 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	if params.doltPort != 4000 {
 		t.Errorf("doltPort = %d, want %d", params.doltPort, 4000)
 	}
+	if params.sessionPrefix != "myproj-" {
+		t.Errorf("sessionPrefix = %q, want %q", params.sessionPrefix, "myproj-")
+	}
+	if params.languagePreset != "python" {
+		t.Errorf("languagePreset = %q, want %q", params.languagePreset, "python")
+	}
 }
 
 func TestCollectInitParams_interactive_rejectsInvalidPrefix(t *testing.T) {
@@ -454,14 +464,83 @@ func TestCollectInitParams_interactive_rejectsInvalidPrefix(t *testing.T) {
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
-	// First attempt: invalid prefix "BAD", second: valid "good".
-	input := strings.NewReader("BAD\ngood\nowner/repo\nmydb\n3307\n")
+	// First attempt: invalid prefix "BAD", second: valid "good". Blank for language.
+	input := strings.NewReader("BAD\ngood\nowner/repo\nmydb\n3307\n\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams retry: %v", err)
 	}
 	if params.ticketPrefix != "good" {
 		t.Errorf("ticketPrefix after retry = %q, want %q", params.ticketPrefix, "good")
+	}
+}
+
+func TestCollectInitParams_interactive_rejectsInvalidLanguagePreset(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	// First language attempt: "rust" (invalid), second: "go" (valid).
+	input := strings.NewReader("myproj\nowner/myproj\nmydb\n3307\nmyproj-\nrust\ngo\n")
+	params, err := collectInitParams(false, input, "/projects/x", 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams language retry: %v", err)
+	}
+	if params.languagePreset != "go" {
+		t.Errorf("languagePreset after retry = %q, want %q", params.languagePreset, "go")
+	}
+}
+
+func TestCollectInitParams_nonInteractive_detectsGoProject(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	params, err := collectInitParams(true, nil, dir, 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams: %v", err)
+	}
+	if params.languagePreset != "go" {
+		t.Errorf("languagePreset = %q, want %q", params.languagePreset, "go")
+	}
+}
+
+func TestCollectInitParams_nonInteractive_detectsPythonProject(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[tool.pytest]\n"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	params, err := collectInitParams(true, nil, dir, 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams: %v", err)
+	}
+	if params.languagePreset != "python" {
+		t.Errorf("languagePreset = %q, want %q", params.languagePreset, "python")
+	}
+}
+
+func TestCollectInitParams_nonInteractive_agnosticWhenNoMarkers(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	dir := t.TempDir()
+	params, err := collectInitParams(true, nil, dir, 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams: %v", err)
+	}
+	if params.languagePreset != "" {
+		t.Errorf("languagePreset = %q, want empty (no marker files)", params.languagePreset)
 	}
 }
 
