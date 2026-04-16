@@ -79,6 +79,7 @@ type QualityConfig struct {
 type Config struct {
 	Version                         string        `json:"version"`
 	TicketPrefix                    string        `json:"ticket_prefix"`
+	SessionPrefix                   string        `json:"session_prefix"`
 	ProjectRoot                     string        `json:"project_root"`
 	GithubRepo                      string        `json:"github_repo"`
 	Dolt                            DoltConfig    `json:"dolt"`
@@ -125,6 +126,12 @@ func Load(projectRoot string) (*Config, error) {
 
 	if cfg.TicketPrefix == "" {
 		return nil, fmt.Errorf("config: ticket_prefix is required")
+	}
+
+	// Backwards compatibility: configs written before session_prefix was
+	// introduced will have an empty string; apply the historical default.
+	if cfg.SessionPrefix == "" {
+		cfg.SessionPrefix = "ct-"
 	}
 
 	if err := validateAgentsWorkflow(&cfg.Agents); err != nil {
@@ -223,10 +230,11 @@ func validateTransition(path string, tt *TicketTransition) error {
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig(projectRoot, githubRepo string) *Config {
 	return &Config{
-		Version:      "1.0.0",
-		TicketPrefix: "tk",
-		ProjectRoot:  projectRoot,
-		GithubRepo:   githubRepo,
+		Version:       "1.0.0",
+		TicketPrefix:  "tk",
+		SessionPrefix: "ct-",
+		ProjectRoot:   projectRoot,
+		GithubRepo:    githubRepo,
 		Dolt: DoltConfig{
 			Host:     "127.0.0.1",
 			Port:     3307,

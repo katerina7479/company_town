@@ -433,8 +433,8 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
-	// User types custom values for all five fields.
-	input := strings.NewReader("myproj\nkate/myproj\nmydb\n4000\npython\n")
+	// User types custom values for all six fields.
+	input := strings.NewReader("myproj\nkate/myproj\nmydb\n4000\nmyproj-\npython\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams interactive custom: %v", err)
@@ -450,6 +450,9 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	}
 	if params.doltPort != 4000 {
 		t.Errorf("doltPort = %d, want %d", params.doltPort, 4000)
+	}
+	if params.sessionPrefix != "myproj-" {
+		t.Errorf("sessionPrefix = %q, want %q", params.sessionPrefix, "myproj-")
 	}
 	if params.languagePreset != "python" {
 		t.Errorf("languagePreset = %q, want %q", params.languagePreset, "python")
@@ -478,7 +481,7 @@ func TestCollectInitParams_interactive_rejectsInvalidLanguagePreset(t *testing.T
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
 	// First language attempt: "rust" (invalid), second: "go" (valid).
-	input := strings.NewReader("myproj\nowner/myproj\nmydb\n3307\nrust\ngo\n")
+	input := strings.NewReader("myproj\nowner/myproj\nmydb\n3307\nmyproj-\nrust\ngo\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams language retry: %v", err)

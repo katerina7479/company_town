@@ -253,6 +253,9 @@ func runDoctor(deps doctorDeps) ([]checkResult, bool) {
 
 	// Only check daemon if we're inside a project.
 	if cfg != nil {
+		if cfg.SessionPrefix != "" {
+			session.SessionPrefix = cfg.SessionPrefix
+		}
 		results = append(results, checkDaemon(deps))
 	}
 

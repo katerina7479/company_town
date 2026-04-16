@@ -64,6 +64,26 @@ func deriveTicketPrefix(projectRoot string) string {
 	return b.String()
 }
 
+// deriveSessionPrefix produces a tmux session prefix from the project directory name.
+// Non-alphanumeric chars become hyphens; the result is lowercased and gets a
+// trailing hyphen appended. Falls back to "ct-" if nothing usable can be extracted.
+func deriveSessionPrefix(projectRoot string) string {
+	name := strings.ToLower(filepath.Base(projectRoot))
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return "ct-"
+	}
+	return result + "-"
+}
+
 // deriveDoltDatabase produces a MySQL-legal identifier from the project directory name.
 // Non-alphanumeric chars become underscores; leading digits are stripped.
 // Falls back to "company_town" if nothing usable remains.
@@ -163,6 +183,7 @@ type initParams struct {
 	githubRepo     string
 	doltDatabase   string
 	doltPort       int
+	sessionPrefix  string
 	languagePreset string // "go", "python", or "" for agnostic-only
 }
 
@@ -182,6 +203,7 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 	prefix := deriveTicketPrefix(projectRoot)
 	repo := deriveGithubRepo()
 	dbName := deriveDoltDatabase(projectRoot)
+	sesPrefix := deriveSessionPrefix(projectRoot)
 	lang := config.DetectLanguagePreset(projectRoot)
 
 	if nonInteractive {
@@ -197,6 +219,7 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 			githubRepo:     repo,
 			doltDatabase:   dbName,
 			doltPort:       defaultPort,
+			sessionPrefix:  sesPrefix,
 			languagePreset: lang,
 		}, nil
 	}
@@ -229,6 +252,11 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 		port = defaultPort
 	}
 
+	sp, err := promptField(br, "Tmux session prefix (e.g. myproject-)", sesPrefix, nil)
+	if err != nil {
+		return initParams{}, fmt.Errorf("session_prefix: %w", err)
+	}
+
 	lp, err := promptField(br, "Language preset (go, python, or blank for agnostic-only)", lang, validateLanguagePreset)
 	if err != nil {
 		return initParams{}, fmt.Errorf("language_preset: %w", err)
@@ -239,6 +267,7 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 		githubRepo:     gr,
 		doltDatabase:   dd,
 		doltPort:       port,
+		sessionPrefix:  sp,
 		languagePreset: lp,
 	}, nil
 }
@@ -312,6 +341,7 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 
 		cfg := config.DefaultConfig(projectRoot, params.githubRepo)
 		cfg.TicketPrefix = params.ticketPrefix
+		cfg.SessionPrefix = params.sessionPrefix
 		cfg.Dolt.Port = params.doltPort
 		cfg.Dolt.Database = params.doltDatabase
 		cfg.Quality.Checks = config.QualityChecksForPreset(params.languagePreset)
@@ -322,8 +352,8 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 		if presetLabel == "" {
 			presetLabel = "agnostic"
 		}
-		fmt.Printf("  created: config.json (ticket_prefix=%q, dolt port=%d, database=%q, preset=%s)\n",
-			params.ticketPrefix, params.doltPort, params.doltDatabase, presetLabel)
+		fmt.Printf("  created: config.json (ticket_prefix=%q, session_prefix=%q, dolt port=%d, database=%q, preset=%s)\n",
+			params.ticketPrefix, params.sessionPrefix, params.doltPort, params.doltDatabase, presetLabel)
 	} else {
 		fmt.Println("  exists:  config.json")
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/katerina7479/company_town/internal/daemon"
 	"github.com/katerina7479/company_town/internal/db"
+	"github.com/katerina7479/company_town/internal/session"
 )
 
 // runDaemon runs the daemon polling loop (blocking). Called by `ct daemon`.
@@ -17,6 +18,10 @@ func runDaemon() error {
 		return err
 	}
 	defer conn.Close()
+
+	if cfg.SessionPrefix != "" {
+		session.SessionPrefix = cfg.SessionPrefix
+	}
 
 	d, err := daemon.New(conn, cfg)
 	if err != nil {

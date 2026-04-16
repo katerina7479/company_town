@@ -25,6 +25,9 @@ func Create(args []string) error {
 	}
 	defer conn.Close()
 
+	if cfg.SessionPrefix != "" {
+		session.SessionPrefix = cfg.SessionPrefix
+	}
 	agents := repo.NewAgentRepo(conn, nil)
 
 	switch args[0] {

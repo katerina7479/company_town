@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-const (
-	// SessionPrefix is prepended to all Company Town tmux session names.
-	SessionPrefix = "ct-"
-)
+// SessionPrefix is prepended to all Company Town tmux session names.
+// It is a var so that callers can override it from config (session_prefix field).
+// The default "ct-" preserves backwards compatibility for existing projects.
+var SessionPrefix = "ct-"
 
 // Client abstracts the tmux operations that callers need. The real
 // implementation calls tmux; test implementations substitute controlled
