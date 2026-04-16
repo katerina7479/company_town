@@ -5,15 +5,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/prole"
+	"github.com/katerina7479/company_town/internal/vcs"
 )
 
+// reviewerVCSProvider is the VCS platform adapter for reviewer commands.
+var reviewerVCSProvider vcs.Provider = vcs.NewGitHub()
+
 // Package-level vars for injection in tests.
-var ghPRBranchFn func(prNumber int) (string, error) = ghPRBranch
+var ghPRBranchFn func(prNumber int, repoDir string) (string, error) = func(prNumber int, repoDir string) (string, error) {
+	return reviewerVCSProvider.GetPRHeadBranch(prNumber, repoDir)
+}
 var gitFetchFn func(barePath, branch string) error = gitFetch
 var gitWorktreeAddFn func(barePath, wtPath, ref string) error = gitWorktreeAdd
 var gitWorktreeRemoveFn func(barePath, wtPath string) error = gitWorktreeRemove
@@ -51,7 +56,7 @@ func ReviewerInspectClean() error {
 
 // reviewerInspectCore is the injectable implementation of ReviewerInspect.
 func reviewerInspectCore(cfg *config.Config, prNumber int) error {
-	branch, err := ghPRBranchFn(prNumber)
+	branch, err := ghPRBranchFn(prNumber, cfg.ProjectRoot)
 	if err != nil {
 		return fmt.Errorf("looking up PR branch: %w", err)
 	}
@@ -105,16 +110,6 @@ func reviewerInspectCleanCore(cfg *config.Config) error {
 	}
 
 	return nil
-}
-
-// ghPRBranch fetches the head branch name for a PR via the gh CLI.
-func ghPRBranch(prNumber int) (string, error) {
-	out, err := exec.Command("gh", "pr", "view", fmt.Sprintf("%d", prNumber),
-		"--json", "headRefName", "--jq", ".headRefName").Output()
-	if err != nil {
-		return "", fmt.Errorf("gh pr view %d: %w", prNumber, err)
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 // gitFetch runs `git fetch origin <branch>` from the bare repo to ensure

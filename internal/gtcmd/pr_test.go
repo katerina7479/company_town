@@ -9,6 +9,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/vcs"
 )
 
 func setupPRTestRepo(t *testing.T) *repo.IssueRepo {
@@ -49,22 +50,20 @@ func stubBranchFns(t *testing.T, current string) {
 	})
 }
 
-// stubPRShowFns replaces the three gh injection points for the duration of the test.
+// stubPRShowFns injects a mock VCS provider for the three PR-show fetch methods.
 func stubPRShowFns(t *testing.T,
 	viewOut []byte, viewErr error,
 	reviewsOut []byte, reviewsErr error,
 	commentsOut []byte, commentsErr error,
 ) {
 	t.Helper()
-	origView, origReviews, origComments := ghPRViewFn, ghPRReviewsFn, ghPRCommentsFn
-	t.Cleanup(func() {
-		ghPRViewFn = origView
-		ghPRReviewsFn = origReviews
-		ghPRCommentsFn = origComments
-	})
-	ghPRViewFn = func(_ int, _ string) ([]byte, error) { return viewOut, viewErr }
-	ghPRReviewsFn = func(_ int, _ string) ([]byte, error) { return reviewsOut, reviewsErr }
-	ghPRCommentsFn = func(_ int, _ string) ([]byte, error) { return commentsOut, commentsErr }
+	orig := vcsProvider
+	t.Cleanup(func() { vcsProvider = orig })
+	vcsProvider = &vcs.MockProvider{
+		GetPRMetadataFn: func(_ int, _ string) ([]byte, error) { return viewOut, viewErr },
+		GetPRReviewsFn:  func(_ int, _ string) ([]byte, error) { return reviewsOut, reviewsErr },
+		GetPRCommentsFn: func(_ int, _ string) ([]byte, error) { return commentsOut, commentsErr },
+	}
 }
 
 func TestFormatPRTitle(t *testing.T) {
@@ -196,16 +195,18 @@ func TestPRCreate_SetsCIRunning(t *testing.T) {
 
 	origCount := gitCommitCountFn
 	origPush := gitPushFn
-	origGH := ghPRCreateFn
+	origProvider := vcsProvider
 	t.Cleanup(func() {
 		gitCommitCountFn = origCount
 		gitPushFn = origPush
-		ghPRCreateFn = origGH
+		vcsProvider = origProvider
 	})
 	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
 	gitPushFn = func(_ string, args ...string) error { return nil }
-	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
-		return "https://github.com/x/y/pull/42", nil
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, _ bool, _ string) (string, error) {
+			return "https://github.com/x/y/pull/42", nil
+		},
 	}
 	stubBranchFns(t, "prole/iron/1")
 
@@ -298,11 +299,13 @@ func TestPRShow_ticketNotFound(t *testing.T) {
 func TestPRShow_noPR(t *testing.T) {
 	issues := setupPRTestRepo(t)
 	var viewCalled bool
-	origView := ghPRViewFn
-	t.Cleanup(func() { ghPRViewFn = origView })
-	ghPRViewFn = func(_ int, _ string) ([]byte, error) {
-		viewCalled = true
-		return nil, nil
+	orig := vcsProvider
+	t.Cleanup(func() { vcsProvider = orig })
+	vcsProvider = &vcs.MockProvider{
+		GetPRMetadataFn: func(_ int, _ string) ([]byte, error) {
+			viewCalled = true
+			return nil, nil
+		},
 	}
 
 	_, _ = issues.Create("A task", "task", nil, nil, nil)
@@ -311,7 +314,7 @@ func TestPRShow_noPR(t *testing.T) {
 		t.Fatal("expected error for ticket with no PR number, got nil")
 	}
 	if viewCalled {
-		t.Error("ghPRViewFn should not be called when ticket has no PR number")
+		t.Error("GetPRMetadata should not be called when ticket has no PR number")
 	}
 }
 
@@ -470,17 +473,19 @@ func TestPRCreate_PushProceedsWhenCommitsExist(t *testing.T) {
 
 	origCount := gitCommitCountFn
 	origPush := gitPushFn
-	origGH := ghPRCreateFn
+	origProvider := vcsProvider
 	t.Cleanup(func() {
 		gitCommitCountFn = origCount
 		gitPushFn = origPush
-		ghPRCreateFn = origGH
+		vcsProvider = origProvider
 	})
 	gitCommitCountFn = func(_ string) (int, error) { return 3, nil }
 	pushCalled := false
 	gitPushFn = func(_ string, args ...string) error { pushCalled = true; return nil }
-	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
-		return "https://github.com/x/y/pull/99", nil
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, _ bool, _ string) (string, error) {
+			return "https://github.com/x/y/pull/99", nil
+		},
 	}
 	stubBranchFns(t, "prole/iron/1")
 
@@ -578,11 +583,11 @@ func TestPRCreate_WorkDirPassedToGitFns(t *testing.T) {
 
 	origCount := gitCommitCountFn
 	origPush := gitPushFn
-	origGH := ghPRCreateFn
+	origProvider := vcsProvider
 	t.Cleanup(func() {
 		gitCommitCountFn = origCount
 		gitPushFn = origPush
-		ghPRCreateFn = origGH
+		vcsProvider = origProvider
 	})
 
 	var gotCountDir, gotPushDir string
@@ -594,8 +599,10 @@ func TestPRCreate_WorkDirPassedToGitFns(t *testing.T) {
 		gotPushDir = workDir
 		return nil
 	}
-	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
-		return "https://github.com/x/y/pull/7", nil
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, _ bool, _ string) (string, error) {
+			return "https://github.com/x/y/pull/7", nil
+		},
 	}
 	stubBranchFns(t, "prole/tin/1")
 
@@ -641,10 +648,12 @@ func TestPRCreate_refusesDetachedHEAD(t *testing.T) {
 
 	pushCalled := false
 	ghCalled := false
-	origPush, origGH := gitPushFn, ghPRCreateFn
-	t.Cleanup(func() { gitPushFn = origPush; ghPRCreateFn = origGH })
+	origPush, origProvider := gitPushFn, vcsProvider
+	t.Cleanup(func() { gitPushFn = origPush; vcsProvider = origProvider })
 	gitPushFn = func(_ string, _ ...string) error { pushCalled = true; return nil }
-	ghPRCreateFn = func(_, _ string, _ bool) (string, error) { ghCalled = true; return "", nil }
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, _ bool, _ string) (string, error) { ghCalled = true; return "", nil },
+	}
 
 	err := prCreate(issues, testCfg(), "/tmp", []string{ticketID})
 	if err == nil {
@@ -657,7 +666,7 @@ func TestPRCreate_refusesDetachedHEAD(t *testing.T) {
 		t.Error("gitPushFn must not be called when HEAD is detached")
 	}
 	if ghCalled {
-		t.Error("ghPRCreateFn must not be called when HEAD is detached")
+		t.Error("CreatePR must not be called when HEAD is detached")
 	}
 }
 
@@ -714,19 +723,21 @@ func TestPRCreate_allowsMatchingBranch(t *testing.T) {
 	stubBranchFns(t, "prole/copper/nc-1")
 
 	ghCalled := false
-	origPush, origGH := gitPushFn, ghPRCreateFn
-	t.Cleanup(func() { gitPushFn = origPush; ghPRCreateFn = origGH })
+	origPush, origProvider := gitPushFn, vcsProvider
+	t.Cleanup(func() { gitPushFn = origPush; vcsProvider = origProvider })
 	gitPushFn = func(_ string, _ ...string) error { return nil }
-	ghPRCreateFn = func(_, _ string, _ bool) (string, error) {
-		ghCalled = true
-		return "https://github.com/x/y/pull/10", nil
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, _ bool, _ string) (string, error) {
+			ghCalled = true
+			return "https://github.com/x/y/pull/10", nil
+		},
 	}
 
 	if err := prCreate(issues, testCfg(), "/tmp", []string{ticketID}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !ghCalled {
-		t.Error("expected ghPRCreateFn to be reached on matching branch")
+		t.Error("expected CreatePR to be reached on matching branch")
 	}
 }
 
@@ -856,22 +867,24 @@ func TestPRCreate_ghCreateError(t *testing.T) {
 
 	origCount := gitCommitCountFn
 	origPush := gitPushFn
-	origGH := ghPRCreateFn
+	origProvider := vcsProvider
 	t.Cleanup(func() {
 		gitCommitCountFn = origCount
 		gitPushFn = origPush
-		ghPRCreateFn = origGH
+		vcsProvider = origProvider
 	})
 	gitCommitCountFn = func(_ string) (int, error) { return 2, nil }
 	gitPushFn = func(_ string, _ ...string) error { return nil }
-	ghPRCreateFn = func(_, _ string, _ bool) (string, error) {
-		return "", fmt.Errorf("gh: rate limited")
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, _ bool, _ string) (string, error) {
+			return "", fmt.Errorf("gh: rate limited")
+		},
 	}
 	stubBranchFns(t, "prole/iron/1")
 
 	err := prCreate(issues, testCfg(), "/tmp", []string{fmt.Sprintf("%d", id)})
 	if err == nil {
-		t.Fatal("expected error from ghPRCreateFn, got nil")
+		t.Fatal("expected error from CreatePR, got nil")
 	}
 	if !strings.Contains(err.Error(), "creating PR") {
 		t.Errorf("expected 'creating PR' in error, got: %v", err)
@@ -893,19 +906,21 @@ func TestPRCreate_DraftFlag_TDDTests(t *testing.T) {
 
 	origCount := gitCommitCountFn
 	origPush := gitPushFn
-	origGH := ghPRCreateFn
+	origProvider := vcsProvider
 	t.Cleanup(func() {
 		gitCommitCountFn = origCount
 		gitPushFn = origPush
-		ghPRCreateFn = origGH
+		vcsProvider = origProvider
 	})
 	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
 	gitPushFn = func(_ string, _ ...string) error { return nil }
 
 	var gotDraft bool
-	ghPRCreateFn = func(_, _ string, draft bool) (string, error) {
-		gotDraft = draft
-		return "https://github.com/x/y/pull/55", nil
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, draft bool, _ string) (string, error) {
+			gotDraft = draft
+			return "https://github.com/x/y/pull/55", nil
+		},
 	}
 	stubBranchFns(t, branch)
 
@@ -913,7 +928,7 @@ func TestPRCreate_DraftFlag_TDDTests(t *testing.T) {
 		t.Fatalf("prCreate with --draft on tdd_tests: %v", err)
 	}
 	if !gotDraft {
-		t.Error("expected ghPRCreateFn to receive draft=true")
+		t.Error("expected CreatePR to receive draft=true")
 	}
 	got, _ := issues.Get(id)
 	if got.Status != "pr_open" {
@@ -936,16 +951,18 @@ func TestPRCreate_DraftFlag_RegularTask(t *testing.T) {
 
 	origCount := gitCommitCountFn
 	origPush := gitPushFn
-	origGH := ghPRCreateFn
+	origProvider := vcsProvider
 	t.Cleanup(func() {
 		gitCommitCountFn = origCount
 		gitPushFn = origPush
-		ghPRCreateFn = origGH
+		vcsProvider = origProvider
 	})
 	gitCommitCountFn = func(_ string) (int, error) { return 1, nil }
 	gitPushFn = func(_ string, _ ...string) error { return nil }
-	ghPRCreateFn = func(_, _ string, _ bool) (string, error) {
-		return "https://github.com/x/y/pull/56", nil
+	vcsProvider = &vcs.MockProvider{
+		CreatePRFn: func(_, _ string, _ bool, _ string) (string, error) {
+			return "https://github.com/x/y/pull/56", nil
+		},
 	}
 	stubBranchFns(t, branch)
 
@@ -1030,12 +1047,12 @@ func TestPRUpdate_badTicketID(t *testing.T) {
 	}
 }
 
-// stubPRReadyFn replaces ghPRReadyFn for the duration of the test.
+// stubPRReadyFn injects a mock VCS provider with MarkPRReadyFn for the duration of the test.
 func stubPRReadyFn(t *testing.T, fn func(prNum int, projectRoot string) error) {
 	t.Helper()
-	orig := ghPRReadyFn
-	ghPRReadyFn = fn
-	t.Cleanup(func() { ghPRReadyFn = orig })
+	orig := vcsProvider
+	t.Cleanup(func() { vcsProvider = orig })
+	vcsProvider = &vcs.MockProvider{MarkPRReadyFn: fn}
 }
 
 func TestPRReady_missingArgs(t *testing.T) {

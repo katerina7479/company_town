@@ -18,6 +18,7 @@ import (
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
+	"github.com/katerina7479/company_town/internal/vcs"
 )
 
 // defaultRestartAgent re-launches an agent by type: proles use `gt prole create`,
@@ -148,14 +149,16 @@ func newDashboardModel() (*dashboardModel, error) {
 		pollingInterval = 10 * time.Second
 	}
 	return &dashboardModel{
-		conn:            conn,
-		agents:          repo.NewAgentRepo(conn, nil),
-		issues:          repo.NewIssueRepo(conn, nil),
-		killSession:     session.Kill,
-		sessionExists:   session.Exists,
-		sendKeys:        session.SendKeys,
-		restartAgent:    defaultRestartAgent,
-		openPRFn:        defaultOpenPR,
+		conn:          conn,
+		agents:        repo.NewAgentRepo(conn, nil),
+		issues:        repo.NewIssueRepo(conn, nil),
+		killSession:   session.Kill,
+		sessionExists: session.Exists,
+		sendKeys:      session.SendKeys,
+		restartAgent:  defaultRestartAgent,
+		openPRFn: func(prNum int) error {
+			return vcs.NewGitHub().OpenPRInBrowser(prNum, cfg.ProjectRoot)
+		},
 		sleepFn:         time.Sleep,
 		expanded:        make(map[int]bool),
 		theme:           DefaultTheme(),
@@ -559,17 +562,6 @@ func cleanStderr(s string) string {
 		return s[:limit] + "..."
 	}
 	return s
-}
-
-// defaultOpenPR opens a PR in the browser via gh, capturing stderr so errors
-// are surfaced. Passes raw stderr through cleanStderr before wrapping.
-func defaultOpenPR(prNumber int) error {
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNumber), "--web")
-	out, err := cmd.CombinedOutput()
-	if err != nil && len(out) > 0 {
-		return fmt.Errorf("%w: %s", err, cleanStderr(string(out)))
-	}
-	return err
 }
 
 // openPRCmd opens a pull request in the browser using `gh pr view --web`.

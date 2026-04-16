@@ -19,6 +19,7 @@ import (
 	"github.com/katerina7479/company_town/internal/quality"
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
+	"github.com/katerina7479/company_town/internal/vcs"
 )
 
 // tickObservations holds per-handler counters accumulated during a single poll
@@ -107,6 +108,10 @@ type Daemon struct {
 	reviewsSinceFollowUp int
 	lastFollowUpNudge    time.Time
 
+	// vcsProvider is the VCS platform adapter used by default implementations.
+	// Struct fields below (ghPRCloseFn, etc.) override it in tests.
+	vcsProvider vcs.Provider
+
 	// Cancellation cleanup (injectable for tests)
 	ghPRCloseFn       func(prNumber int) error
 	gitDeleteBranchFn func(barePath, branch string) error
@@ -139,6 +144,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	logger := log.New(f, "[DAEMON] ", log.LstdFlags)
 	events := eventlog.NewLogger(ctDir)
 	agentRepo := repo.NewAgentRepo(db, events)
+	provider := vcs.NewGitHub()
 
 	return &Daemon{
 		cfg:                 cfg,
@@ -172,7 +178,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		},
 		worktreeResetInterval: time.Duration(cfg.WorktreeResetIntervalSeconds) * time.Second,
 		lookupPRForBranch: func(branch string) (int, bool, error) {
-			return lookupPRForBranch(branch, cfg.ProjectRoot)
+			return provider.FindPRByBranch(branch, cfg.ProjectRoot)
 		},
 		prBackfillInterval:   time.Duration(cfg.PRBackfillIntervalSeconds) * time.Second,
 		restartDeadAgents:    cfg.RestartDeadAgents,
@@ -180,12 +186,9 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		lastRestartedAt:      make(map[string]time.Time),
 		restartAgent:         makeRestartFn(cfg, agentRepo, logger),
 		repairCycleThreshold: cfg.RepairCycleThreshold,
+		vcsProvider:          provider,
 		ghPRCloseFn: func(prNumber int) error {
-			cmd := exec.Command("gh", "pr", "close", strconv.Itoa(prNumber),
-				"--comment", "Ticket cancelled.")
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			return cmd.Run()
+			return provider.ClosePR(prNumber, cfg.ProjectRoot)
 		},
 		gitDeleteBranchFn: func(barePath, branch string) error {
 			cmd := exec.Command("git", "-C", barePath, "push", "origin", "--delete", branch)
@@ -703,15 +706,16 @@ func (d *Daemon) handleBackfillPRNumbers() {
 }
 
 // prListEntry is one element from `gh pr list --json number,state,updatedAt`.
+// Kept here for use in tests (TestPickMostRecentPR_*).
 type prListEntry struct {
 	Number    int       `json:"number"`
 	State     string    `json:"state"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// pickMostRecentPR selects the most authoritative PR from a list returned by
-// gh pr list. It sorts by UpdatedAt descending; ties are broken by state
-// precedence: MERGED > OPEN > CLOSED. Returns 0 for an empty list.
+// pickMostRecentPR selects the most authoritative PR from a list. It sorts by
+// UpdatedAt descending; ties are broken by state precedence: MERGED > OPEN > CLOSED.
+// Kept here for use in tests (TestPickMostRecentPR_*).
 func pickMostRecentPR(entries []prListEntry) int {
 	if len(entries) == 0 {
 		return 0
@@ -722,7 +726,7 @@ func pickMostRecentPR(entries []prListEntry) int {
 			return 0
 		case "OPEN":
 			return 1
-		default: // CLOSED
+		default:
 			return 2
 		}
 	}
@@ -735,37 +739,6 @@ func pickMostRecentPR(entries []prListEntry) int {
 		}
 	}
 	return best.Number
-}
-
-// lookupPRForBranch queries GitHub for any PR (open or merged) matching the
-// given head branch. Returns (prNumber, found, error). found is false when no
-// matching PR exists. --state all is required so merged PRs are included —
-// without it, gh pr list only returns open PRs and the backfill misses PRs
-// that were merged before the ticket's pr_number column was populated.
-// --limit 5 and pickMostRecentPR guard against rare branch-name collisions
-// (e.g. a prior closed PR on the same branch) by always picking the most
-// recently updated, with MERGED > OPEN > CLOSED as a tie-breaker.
-func lookupPRForBranch(branch, projectRoot string) (int, bool, error) {
-	cmd := exec.Command("gh", "pr", "list",
-		"--head", branch,
-		"--state", "all",
-		"--json", "number,state,updatedAt",
-		"--limit", "5",
-	)
-	cmd.Dir = projectRoot
-	out, err := runCmd(cmd)
-	if err != nil {
-		return 0, false, fmt.Errorf("gh pr list: %w", err)
-	}
-
-	var results []prListEntry
-	if err := json.Unmarshal(out, &results); err != nil {
-		return 0, false, fmt.Errorf("parsing PR list: %w", err)
-	}
-	if len(results) == 0 {
-		return 0, false, nil
-	}
-	return pickMostRecentPR(results), true, nil
 }
 
 // handleEpicAutoClose closes epics whose sub-tasks are all closed.
@@ -1810,9 +1783,7 @@ func (d *Daemon) getPRState(prNum int) (state, mergeable, checks string, failing
 	if d.getPRStateFn != nil {
 		return d.getPRStateFn(prNum)
 	}
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "state,mergedAt,mergeable,statusCheckRollup")
-	cmd.Dir = d.cfg.ProjectRoot
-	out, execErr := runCmd(cmd)
+	out, execErr := d.vcsProvider.GetPRStateJSON(prNum, d.cfg.ProjectRoot)
 	if execErr != nil {
 		return "", "", "", nil, false, fmt.Errorf("gh pr view: %w", execErr)
 	}
@@ -1869,11 +1840,7 @@ func classifyChecks(checks []struct {
 }
 
 func (d *Daemon) getReviewComments(prNum int) ([]prComment, error) {
-	cmd := exec.Command("gh", "api",
-		fmt.Sprintf("repos/{owner}/{repo}/pulls/%d/reviews", prNum),
-		"--jq", ".[] | {author: .user.login, authorType: .user.type, state: .state, body: .body}")
-	cmd.Dir = d.cfg.ProjectRoot
-	out, err := runCmd(cmd)
+	out, err := d.vcsProvider.GetReviewCommentsRaw(prNum, d.cfg.ProjectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("gh api: %w", err)
 	}

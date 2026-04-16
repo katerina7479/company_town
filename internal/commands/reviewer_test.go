@@ -29,7 +29,7 @@ func TestReviewerInspect_createsWorktree(t *testing.T) {
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(prNumber int) (string, error) {
+	ghPRBranchFn = func(prNumber int, _ string) (string, error) {
 		if prNumber != 42 {
 			t.Errorf("expected prNumber=42, got %d", prNumber)
 		}
@@ -83,7 +83,7 @@ func TestReviewerInspect_removesExistingPathFirst(t *testing.T) {
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int) (string, error) { return "main", nil }
+	ghPRBranchFn = func(_ int, _ string) (string, error) { return "main", nil }
 
 	oldFetch := gitFetchFn
 	t.Cleanup(func() { gitFetchFn = oldFetch })
@@ -122,7 +122,7 @@ func TestReviewerInspect_fetchesBeforeWorktreeAdd(t *testing.T) {
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int) (string, error) { return "feat/my-branch", nil }
+	ghPRBranchFn = func(_ int, _ string) (string, error) { return "feat/my-branch", nil }
 
 	var callOrder []string
 	var fetchedBranch string
@@ -166,7 +166,7 @@ func TestReviewerInspect_fetchFailurePropagates(t *testing.T) {
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int) (string, error) { return "feat/test", nil }
+	ghPRBranchFn = func(_ int, _ string) (string, error) { return "feat/test", nil }
 
 	oldFetch := gitFetchFn
 	t.Cleanup(func() { gitFetchFn = oldFetch })
@@ -201,7 +201,7 @@ func TestReviewerInspect_ghFailurePropagates(t *testing.T) {
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int) (string, error) {
+	ghPRBranchFn = func(_ int, _ string) (string, error) {
 		return "", fmt.Errorf("gh: not found")
 	}
 
@@ -226,7 +226,7 @@ func TestReviewerInspect_gitAddFailurePropagates(t *testing.T) {
 
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int) (string, error) { return "feat/test", nil }
+	ghPRBranchFn = func(_ int, _ string) (string, error) { return "feat/test", nil }
 
 	oldFetch := gitFetchFn
 	t.Cleanup(func() { gitFetchFn = oldFetch })

@@ -12,6 +12,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/vcs"
 )
 
 // PR dispatches gt pr subcommands.
@@ -70,8 +71,11 @@ func formatPRTitle(prefix string, id int, title string) string {
 	return fmt.Sprintf("[%s-%d] %s", prefix, id, title)
 }
 
-// Injection points for tests. Production code uses the real git/gh binaries;
-// tests replace these with stubs to avoid network/IO.
+// vcsProvider is the VCS platform adapter. Override in tests to inject a mock.
+var vcsProvider vcs.Provider = vcs.NewGitHub()
+
+// Injection points for tests. Production code uses the real git binaries;
+// tests replace these with stubs to avoid IO.
 var (
 	// gitPushFn pushes the current branch. workDir must be the prole's worktree
 	// (or project root for non-prole agents) so the command runs in the right
@@ -107,45 +111,6 @@ var (
 		return n, nil
 	}
 
-	ghPRCreateFn = func(title, body string, draft bool) (string, error) {
-		ghArgs := []string{"pr", "create", "--title", title, "--body", body}
-		if draft {
-			ghArgs = append(ghArgs, "--draft")
-		}
-		cmd := exec.Command("gh", ghArgs...)
-		cmd.Stderr = os.Stderr
-		out, err := cmd.Output()
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(string(out)), nil
-	}
-
-	// ghPRViewFn fetches PR metadata (title, state, branch, checks, etc.).
-	// Hard-errors on failure — the metadata is load-bearing.
-	ghPRViewFn = func(prNum int, projectRoot string) ([]byte, error) {
-		fields := "number,title,state,headRefName,mergeable,reviewDecision,statusCheckRollup"
-		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", fields)
-		cmd.Dir = projectRoot
-		return cmd.Output()
-	}
-
-	// ghPRReviewsFn fetches structured PR reviews (APPROVED / CHANGES_REQUESTED / COMMENTED).
-	// Soft-fails on error — see fetchPRShow.
-	ghPRReviewsFn = func(prNum int, projectRoot string) ([]byte, error) {
-		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "reviews")
-		cmd.Dir = projectRoot
-		return cmd.Output()
-	}
-
-	// ghPRCommentsFn fetches free-form issue comments on the PR.
-	// Soft-fails on error — see fetchPRShow.
-	ghPRCommentsFn = func(prNum int, projectRoot string) ([]byte, error) {
-		cmd := exec.Command("gh", "pr", "view", strconv.Itoa(prNum), "--json", "comments")
-		cmd.Dir = projectRoot
-		return cmd.Output()
-	}
-
 	// gitCurrentBranchFn returns the name of the currently checked-out branch,
 	// or the literal string "HEAD" if HEAD is detached. Matches the behavior of
 	// `git rev-parse --abbrev-ref HEAD`.
@@ -167,15 +132,6 @@ var (
 		}
 		s := strings.TrimSpace(string(out))
 		return strings.TrimPrefix(s, "origin/"), nil
-	}
-
-	// ghPRReadyFn converts a draft PR to ready-for-review via the GitHub CLI.
-	ghPRReadyFn = func(prNum int, projectRoot string) error {
-		cmd := exec.Command("gh", "pr", "ready", strconv.Itoa(prNum))
-		cmd.Dir = projectRoot
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
 	}
 )
 
@@ -216,7 +172,7 @@ const activityLimit = 5
 // slices) so a stale or restricted endpoint does not abort the whole command.
 func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	// --- Metadata (hard error) ---
-	metaOut, err := ghPRViewFn(prNum, projectRoot)
+	metaOut, err := vcsProvider.GetPRMetadata(prNum, projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
@@ -257,7 +213,7 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	var entries []prEntry
 
 	// --- Reviews (soft-fail) ---
-	reviewOut, err := ghPRReviewsFn(prNum, projectRoot)
+	reviewOut, err := vcsProvider.GetPRReviews(prNum, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: reviews fetch failed: %v\n", err)
 	} else {
@@ -286,7 +242,7 @@ func fetchPRShow(prNum int, projectRoot string) (*prShowData, error) {
 	}
 
 	// --- Issue comments (soft-fail) ---
-	commentOut, err := ghPRCommentsFn(prNum, projectRoot)
+	commentOut, err := vcsProvider.GetPRComments(prNum, projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: comments fetch failed: %v\n", err)
 	} else {
@@ -409,7 +365,7 @@ func prCreate(issues *repo.IssueRepo, cfg *config.Config, workDir string, args [
 
 	prBody := strings.Join(bodyParts, "\n")
 
-	prURL, err := ghPRCreateFn(prTitle, prBody, draft)
+	prURL, err := vcsProvider.CreatePR(prTitle, prBody, draft, workDir)
 	if err != nil {
 		return fmt.Errorf("creating PR: %w", err)
 	}
@@ -566,7 +522,7 @@ func prReady(issues *repo.IssueRepo, cfg *config.Config, workDir string, args []
 	}
 
 	// Convert the draft PR to ready-for-review.
-	if err := ghPRReadyFn(prNum, cfg.ProjectRoot); err != nil {
+	if err := vcsProvider.MarkPRReady(prNum, cfg.ProjectRoot); err != nil {
 		return fmt.Errorf("marking PR #%d ready: %w", prNum, err)
 	}
 
