@@ -41,7 +41,7 @@ func main() {
 	err := cmdlog.Run(cmdlog.FindLogPath(), "ct", cmdlog.Actor(), os.Args[1:], func() error {
 		switch cmd {
 		case "init":
-			return commands.Init()
+			return commands.Init(args)
 		case "start":
 			return commands.Start()
 		case "stop":
