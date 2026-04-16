@@ -3890,6 +3890,28 @@ func TestHandleFollowUpReminder_noopWhenNeitherMet(t *testing.T) {
 	}
 }
 
+// TestHandleFollowUpReminder_noopOnFirstPoll verifies that the reminder does
+// not fire spuriously on the first poll cycle when lastFollowUpNudge is
+// initialized to nowFn() (the fix for nc-214). Before the fix, zero-value
+// lastFollowUpNudge caused the time trigger to fire immediately.
+func TestHandleFollowUpReminder_noopOnFirstPoll(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-reviewer"})
+	registerReviewerAgent(t, agents)
+
+	boot := time.Now()
+	d.nowFn = func() time.Time { return boot }
+	d.followUpNReviews = 10        // count threshold not met
+	d.followUpInterval = time.Hour // interval not elapsed
+	d.lastFollowUpNudge = boot     // initialized to now, as New() does
+	d.reviewsSinceFollowUp = 0
+
+	d.handleFollowUpReminder()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no spurious reminder on first poll, got %d message(s)", len(*sent))
+	}
+}
+
 // TestHandleFollowUpReminder_resetsCounter verifies that reviewsSinceFollowUp
 // is reset to zero after a successful nudge.
 func TestHandleFollowUpReminder_resetsCounter(t *testing.T) {
