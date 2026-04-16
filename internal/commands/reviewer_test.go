@@ -27,9 +27,9 @@ func reviewerTestCfg(t *testing.T) *config.Config {
 func TestReviewerInspect_createsWorktree(t *testing.T) {
 	cfg := reviewerTestCfg(t)
 
-	oldGH := ghPRBranchFn
-	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(prNumber int, _ string) (string, error) {
+	oldGH := prBranchFn
+	t.Cleanup(func() { prBranchFn = oldGH })
+	prBranchFn = func(prNumber int, _ string) (string, error) {
 		if prNumber != 42 {
 			t.Errorf("expected prNumber=42, got %d", prNumber)
 		}
@@ -81,9 +81,9 @@ func TestReviewerInspect_removesExistingPathFirst(t *testing.T) {
 		t.Fatalf("pre-creating worktree path: %v", err)
 	}
 
-	oldGH := ghPRBranchFn
-	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int, _ string) (string, error) { return "main", nil }
+	oldGH := prBranchFn
+	t.Cleanup(func() { prBranchFn = oldGH })
+	prBranchFn = func(_ int, _ string) (string, error) { return "main", nil }
 
 	oldFetch := gitFetchFn
 	t.Cleanup(func() { gitFetchFn = oldFetch })
@@ -120,9 +120,9 @@ func TestReviewerInspect_removesExistingPathFirst(t *testing.T) {
 func TestReviewerInspect_fetchesBeforeWorktreeAdd(t *testing.T) {
 	cfg := reviewerTestCfg(t)
 
-	oldGH := ghPRBranchFn
-	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int, _ string) (string, error) { return "feat/my-branch", nil }
+	oldGH := prBranchFn
+	t.Cleanup(func() { prBranchFn = oldGH })
+	prBranchFn = func(_ int, _ string) (string, error) { return "feat/my-branch", nil }
 
 	var callOrder []string
 	var fetchedBranch string
@@ -164,9 +164,9 @@ func TestReviewerInspect_fetchesBeforeWorktreeAdd(t *testing.T) {
 func TestReviewerInspect_fetchFailurePropagates(t *testing.T) {
 	cfg := reviewerTestCfg(t)
 
-	oldGH := ghPRBranchFn
-	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int, _ string) (string, error) { return "feat/test", nil }
+	oldGH := prBranchFn
+	t.Cleanup(func() { prBranchFn = oldGH })
+	prBranchFn = func(_ int, _ string) (string, error) { return "feat/test", nil }
 
 	oldFetch := gitFetchFn
 	t.Cleanup(func() { gitFetchFn = oldFetch })
@@ -199,9 +199,9 @@ func TestReviewerInspect_fetchFailurePropagates(t *testing.T) {
 func TestReviewerInspect_ghFailurePropagates(t *testing.T) {
 	cfg := reviewerTestCfg(t)
 
-	oldGH := ghPRBranchFn
-	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int, _ string) (string, error) {
+	oldGH := prBranchFn
+	t.Cleanup(func() { prBranchFn = oldGH })
+	prBranchFn = func(_ int, _ string) (string, error) {
 		return "", fmt.Errorf("gh: not found")
 	}
 
@@ -224,9 +224,9 @@ func TestReviewerInspect_ghFailurePropagates(t *testing.T) {
 func TestReviewerInspect_gitAddFailurePropagates(t *testing.T) {
 	cfg := reviewerTestCfg(t)
 
-	oldGH := ghPRBranchFn
-	t.Cleanup(func() { ghPRBranchFn = oldGH })
-	ghPRBranchFn = func(_ int, _ string) (string, error) { return "feat/test", nil }
+	oldGH := prBranchFn
+	t.Cleanup(func() { prBranchFn = oldGH })
+	prBranchFn = func(_ int, _ string) (string, error) { return "feat/test", nil }
 
 	oldFetch := gitFetchFn
 	t.Cleanup(func() { gitFetchFn = oldFetch })

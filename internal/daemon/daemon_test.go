@@ -69,7 +69,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		},
 		capturePane:             func(string) (string, error) { return "", nil },
 		vcsProvider:             &vcs.MockProvider{},
-		ghPRCloseFn:             func(int) error { return nil },
+		prCloseFn:             func(int) error { return nil },
 		gitDeleteBranchFn:       func(string, string) error { return nil },
 		runQualityBaseline:      func() error { return nil },
 		pruneStaleWorktrees:     func() (int, error) { return 0, nil },
@@ -3994,7 +3994,7 @@ func TestHandleCancelledTickets_FullCleanup(t *testing.T) {
 	// Track PR close and branch delete calls.
 	var prClosed []int
 	var branchesDeleted []string
-	d.ghPRCloseFn = func(prNum int) error {
+	d.prCloseFn = func(prNum int) error {
 		prClosed = append(prClosed, prNum)
 		return nil
 	}
@@ -4087,7 +4087,7 @@ func TestHandleCancelledTickets_NoPR(t *testing.T) {
 	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
 
 	var prClosed []int
-	d.ghPRCloseFn = func(prNum int) error {
+	d.prCloseFn = func(prNum int) error {
 		prClosed = append(prClosed, prNum)
 		return nil
 	}
@@ -4105,7 +4105,7 @@ func TestHandleCancelledTickets_NoPR(t *testing.T) {
 	d.handleCancelledTickets()
 
 	if len(prClosed) != 0 {
-		t.Errorf("expected ghPRCloseFn NOT called when no PR, but got calls: %v", prClosed)
+		t.Errorf("expected prCloseFn NOT called when no PR, but got calls: %v", prClosed)
 	}
 
 	updated, _ := issues.Get(id)
@@ -4169,7 +4169,7 @@ func TestHandleCancelledTickets_PRCloseFailsNonFatal(t *testing.T) {
 	agentName := "prole-copper"
 	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
 
-	d.ghPRCloseFn = func(int) error {
+	d.prCloseFn = func(int) error {
 		return fmt.Errorf("gh: authentication required")
 	}
 	var branchesDeleted []string

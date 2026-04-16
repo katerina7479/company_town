@@ -109,11 +109,11 @@ type Daemon struct {
 	lastFollowUpNudge    time.Time
 
 	// vcsProvider is the VCS platform adapter used by default implementations.
-	// Struct fields below (ghPRCloseFn, etc.) override it in tests.
+	// Struct fields below (prCloseFn, etc.) override it in tests.
 	vcsProvider vcs.Provider
 
 	// Cancellation cleanup (injectable for tests)
-	ghPRCloseFn       func(prNumber int) error
+	prCloseFn       func(prNumber int) error
 	gitDeleteBranchFn func(barePath, branch string) error
 
 	// Review comment fetching (injectable for tests)
@@ -187,7 +187,7 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		restartAgent:         makeRestartFn(cfg, agentRepo, logger),
 		repairCycleThreshold: cfg.RepairCycleThreshold,
 		vcsProvider:          provider,
-		ghPRCloseFn: func(prNumber int) error {
+		prCloseFn: func(prNumber int) error {
 			return provider.ClosePR(prNumber, cfg.ProjectRoot)
 		},
 		gitDeleteBranchFn: func(barePath, branch string) error {
@@ -1122,7 +1122,7 @@ func (d *Daemon) cleanupCancelledTicket(ticket repo.Issue) {
 	// 2. Close the PR if one exists.
 	if ticket.PRNumber.Valid {
 		prNum := int(ticket.PRNumber.Int64)
-		if err := d.ghPRCloseFn(prNum); err != nil {
+		if err := d.prCloseFn(prNum); err != nil {
 			d.logger.Printf("%s error closing PR #%d: %v", prefix, prNum, err)
 			// Non-fatal — PR may already be closed or merged.
 		}
