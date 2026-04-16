@@ -198,7 +198,7 @@ func TestCheckConfig(t *testing.T) {
 	goodCfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
-		GithubRepo:   "owner/repo",
+		Repo:         "owner/repo",
 		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 
@@ -239,7 +239,7 @@ func TestCheckConfig(t *testing.T) {
 func TestCheckConfig_missingTicketPrefix(t *testing.T) {
 	cfg := &config.Config{
 		ProjectRoot: "/tmp/proj",
-		GithubRepo:  "owner/repo",
+		Repo:        "owner/repo",
 		Agents:      config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
@@ -255,7 +255,7 @@ func TestCheckConfig_missingTicketPrefix(t *testing.T) {
 	}
 }
 
-func TestCheckConfig_missingGithubRepo(t *testing.T) {
+func TestCheckConfig_missingRepo(t *testing.T) {
 	cfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
@@ -269,8 +269,8 @@ func TestCheckConfig_missingGithubRepo(t *testing.T) {
 	if r.Status != "fail" {
 		t.Errorf("status=%q want=fail", r.Status)
 	}
-	if !strings.Contains(r.Detail, "github_repo") {
-		t.Errorf("detail %q should mention github_repo", r.Detail)
+	if !strings.Contains(r.Detail, "repo") {
+		t.Errorf("detail %q should mention repo", r.Detail)
 	}
 }
 
@@ -284,7 +284,7 @@ func TestCheckConfig_missingMultipleFields(t *testing.T) {
 	if r.Status != "fail" {
 		t.Errorf("status=%q want=fail", r.Status)
 	}
-	for _, field := range []string{"ticket_prefix", "project_root", "github_repo", "agents.mayor.model"} {
+	for _, field := range []string{"ticket_prefix", "project_root", "repo", "agents.mayor.model"} {
 		if !strings.Contains(r.Detail, field) {
 			t.Errorf("detail %q should mention %q", r.Detail, field)
 		}
@@ -324,7 +324,7 @@ func TestRunDoctor_allPass(t *testing.T) {
 	goodCfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
-		GithubRepo:   "owner/repo",
+		Repo:         "owner/repo",
 		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
@@ -358,7 +358,7 @@ func TestRunDoctor_oneFail(t *testing.T) {
 	goodCfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
-		GithubRepo:   "owner/repo",
+		Repo:         "owner/repo",
 		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{

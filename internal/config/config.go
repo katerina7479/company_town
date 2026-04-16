@@ -81,7 +81,8 @@ type Config struct {
 	TicketPrefix                    string        `json:"ticket_prefix"`
 	SessionPrefix                   string        `json:"session_prefix"`
 	ProjectRoot                     string        `json:"project_root"`
-	GithubRepo                      string        `json:"github_repo"`
+	Platform                        string        `json:"platform"`
+	Repo                            string        `json:"repo"`
 	Dolt                            DoltConfig    `json:"dolt"`
 	LogDir                          string        `json:"log_dir"`
 	MaxProles                       int           `json:"max_proles"`
@@ -134,6 +135,21 @@ func Load(projectRoot string) (*Config, error) {
 		cfg.SessionPrefix = "ct-"
 	}
 
+	// Backwards compatibility: configs written before the platform/repo rename
+	// used github_repo. Migrate the old key to repo and default platform to github.
+	if cfg.Repo == "" {
+		var legacy struct {
+			GithubRepo string `json:"github_repo"`
+		}
+		_ = json.Unmarshal(data, &legacy)
+		if legacy.GithubRepo != "" {
+			cfg.Repo = legacy.GithubRepo
+		}
+	}
+	if cfg.Platform == "" {
+		cfg.Platform = "github"
+	}
+
 	if err := validateAgentsWorkflow(&cfg.Agents); err != nil {
 		return nil, err
 	}
@@ -142,14 +158,21 @@ func Load(projectRoot string) (*Config, error) {
 }
 
 // ValidateForStart checks that the config is safe to use for `ct start`.
-// It rejects placeholder or missing github_repo values that would cause
-// downstream failures (e.g. gt pr create against a non-existent repo).
+// It rejects placeholder or missing repo values that would cause downstream
+// failures (e.g. gt pr create against a non-existent repo).
 // This is intentionally NOT called from Load so that ct init can write and
 // reload its own freshly-generated placeholder config without error.
 func ValidateForStart(cfg *Config) error {
-	repo := cfg.GithubRepo
+	switch cfg.Platform {
+	case "github", "gitlab", "":
+		// valid
+	default:
+		return fmt.Errorf("config: unknown platform %q — valid values are \"github\" and \"gitlab\"", cfg.Platform)
+	}
+
+	repo := cfg.Repo
 	if repo == "" {
-		return fmt.Errorf("config: %w: unset — edit .company_town/config.json and set github_repo to \"owner/repo\" form (e.g., \"katerina7479/company_town\")", ErrInvalidGithubRepo)
+		return fmt.Errorf("config: %w: unset — edit .company_town/config.json and set repo to \"owner/repo\" form (e.g., \"katerina7479/company_town\")", ErrInvalidGithubRepo)
 	}
 	if repo == "owner/repo" {
 		return fmt.Errorf("config: %w: still the placeholder \"owner/repo\" — edit .company_town/config.json and set it to your actual repository", ErrInvalidGithubRepo)
@@ -228,13 +251,14 @@ func validateTransition(path string, tt *TicketTransition) error {
 }
 
 // DefaultConfig returns a config with sensible defaults.
-func DefaultConfig(projectRoot, githubRepo string) *Config {
+func DefaultConfig(projectRoot, repo string) *Config {
 	return &Config{
 		Version:       "1.0.0",
 		TicketPrefix:  "tk",
 		SessionPrefix: "ct-",
 		ProjectRoot:   projectRoot,
-		GithubRepo:    githubRepo,
+		Platform:      "github",
+		Repo:          repo,
 		Dolt: DoltConfig{
 			Host:     "127.0.0.1",
 			Port:     3307,

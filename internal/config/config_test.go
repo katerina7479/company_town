@@ -117,7 +117,7 @@ func writeConfig(t *testing.T, agentsJSON string) string {
 	if err := os.MkdirAll(ctDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	raw := `{"version":"1.0.0","ticket_prefix":"nc","project_root":"/tmp","github_repo":"x/y","dolt":{"host":"127.0.0.1","port":3307,"database":"ct"},"agents":` + agentsJSON + `}`
+	raw := `{"version":"1.0.0","ticket_prefix":"nc","project_root":"/tmp","platform":"github","repo":"x/y","dolt":{"host":"127.0.0.1","port":3307,"database":"ct"},"agents":` + agentsJSON + `}`
 	if err := os.WriteFile(filepath.Join(ctDir, ConfigFile), []byte(raw), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -215,8 +215,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.ProjectRoot != "/my/project" {
 		t.Errorf("ProjectRoot = %q, want %q", cfg.ProjectRoot, "/my/project")
 	}
-	if cfg.GithubRepo != "owner/repo" {
-		t.Errorf("GithubRepo = %q, want %q", cfg.GithubRepo, "owner/repo")
+	if cfg.Repo != "owner/repo" {
+		t.Errorf("Repo = %q, want %q", cfg.Repo, "owner/repo")
 	}
 	if cfg.TicketPrefix != "tk" {
 		t.Errorf("TicketPrefix = %q, want %q", cfg.TicketPrefix, "tk")
@@ -292,8 +292,8 @@ func TestWrite_roundTrip(t *testing.T) {
 	if loaded.MaxProles != 5 {
 		t.Errorf("MaxProles = %d, want 5", loaded.MaxProles)
 	}
-	if loaded.GithubRepo != original.GithubRepo {
-		t.Errorf("GithubRepo = %q, want %q", loaded.GithubRepo, original.GithubRepo)
+	if loaded.Repo != original.Repo {
+		t.Errorf("Repo = %q, want %q", loaded.Repo, original.Repo)
 	}
 }
 
@@ -323,10 +323,10 @@ func TestWrite_createsValidJSON(t *testing.T) {
 }
 
 func TestValidateForStart_emptyRepo(t *testing.T) {
-	cfg := &Config{GithubRepo: ""}
+	cfg := &Config{Platform: "github", Repo: ""}
 	err := ValidateForStart(cfg)
 	if err == nil {
-		t.Fatal("expected error for empty github_repo, got nil")
+		t.Fatal("expected error for empty repo, got nil")
 	}
 	if !errors.Is(err, ErrInvalidGithubRepo) {
 		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
@@ -334,10 +334,10 @@ func TestValidateForStart_emptyRepo(t *testing.T) {
 }
 
 func TestValidateForStart_placeholder(t *testing.T) {
-	cfg := &Config{GithubRepo: "owner/repo"}
+	cfg := &Config{Platform: "github", Repo: "owner/repo"}
 	err := ValidateForStart(cfg)
 	if err == nil {
-		t.Fatal("expected error for placeholder github_repo, got nil")
+		t.Fatal("expected error for placeholder repo, got nil")
 	}
 	if !errors.Is(err, ErrInvalidGithubRepo) {
 		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
@@ -345,10 +345,10 @@ func TestValidateForStart_placeholder(t *testing.T) {
 }
 
 func TestValidateForStart_urlForm(t *testing.T) {
-	cfg := &Config{GithubRepo: "https://github.com/foo/bar"}
+	cfg := &Config{Platform: "github", Repo: "https://github.com/foo/bar"}
 	err := ValidateForStart(cfg)
 	if err == nil {
-		t.Fatal("expected error for URL-form github_repo, got nil")
+		t.Fatal("expected error for URL-form repo, got nil")
 	}
 	if !errors.Is(err, ErrInvalidGithubRepo) {
 		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
@@ -356,20 +356,51 @@ func TestValidateForStart_urlForm(t *testing.T) {
 }
 
 func TestValidateForStart_valid(t *testing.T) {
-	cfg := &Config{GithubRepo: "foo/bar"}
+	cfg := &Config{Platform: "github", Repo: "foo/bar"}
 	if err := ValidateForStart(cfg); err != nil {
-		t.Errorf("expected no error for valid github_repo %q, got: %v", cfg.GithubRepo, err)
+		t.Errorf("expected no error for valid repo %q, got: %v", cfg.Repo, err)
 	}
 }
 
 func TestValidateForStart_noSlash(t *testing.T) {
-	cfg := &Config{GithubRepo: "justrepo"}
+	cfg := &Config{Platform: "github", Repo: "justrepo"}
 	err := ValidateForStart(cfg)
 	if err == nil {
-		t.Fatal("expected error for github_repo with no slash, got nil")
+		t.Fatal("expected error for repo with no slash, got nil")
 	}
 	if !errors.Is(err, ErrInvalidGithubRepo) {
 		t.Errorf("expected ErrInvalidGithubRepo, got: %v", err)
+	}
+}
+
+func TestValidateForStart_unknownPlatform(t *testing.T) {
+	cfg := &Config{Platform: "bitbucket", Repo: "foo/bar"}
+	err := ValidateForStart(cfg)
+	if err == nil {
+		t.Fatal("expected error for unknown platform, got nil")
+	}
+}
+
+func TestLoad_backwardCompatGithubRepo(t *testing.T) {
+	dir := t.TempDir()
+	ctDir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(ctDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Old config with github_repo key and no platform/repo
+	raw := `{"version":"1.0.0","ticket_prefix":"nc","project_root":"/tmp","github_repo":"owner/old-repo","dolt":{"host":"127.0.0.1","port":3307,"database":"ct"},"agents":{"mayor":{"model":"m"}}}`
+	if err := os.WriteFile(filepath.Join(ctDir, ConfigFile), []byte(raw), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Repo != "owner/old-repo" {
+		t.Errorf("Repo = %q, want %q (backward compat migration failed)", cfg.Repo, "owner/old-repo")
+	}
+	if cfg.Platform != "github" {
+		t.Errorf("Platform = %q, want %q (default platform migration failed)", cfg.Platform, "github")
 	}
 }
 

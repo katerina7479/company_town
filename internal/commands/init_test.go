@@ -368,8 +368,8 @@ func TestCollectInitParams_nonInteractive_derivesFromDir(t *testing.T) {
 	if params.ticketPrefix != "docflow" {
 		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "docflow")
 	}
-	if params.githubRepo != "owner/docflow" {
-		t.Errorf("githubRepo = %q, want %q", params.githubRepo, "owner/docflow")
+	if params.repo != "owner/docflow" {
+		t.Errorf("repo = %q, want %q", params.repo, "owner/docflow")
 	}
 	if params.doltDatabase != "docflow" {
 		t.Errorf("doltDatabase = %q, want %q", params.doltDatabase, "docflow")
@@ -392,8 +392,8 @@ func TestCollectInitParams_nonInteractive_fallbackWhenNoDerived(t *testing.T) {
 	if params.ticketPrefix != "tk" {
 		t.Errorf("ticketPrefix fallback = %q, want %q", params.ticketPrefix, "tk")
 	}
-	if params.githubRepo != "owner/repo" {
-		t.Errorf("githubRepo fallback = %q, want %q", params.githubRepo, "owner/repo")
+	if params.repo != "owner/repo" {
+		t.Errorf("githubRepo fallback = %q, want %q", params.repo, "owner/repo")
 	}
 	if params.doltDatabase != "company_town" {
 		t.Errorf("doltDatabase fallback = %q, want %q", params.doltDatabase, "company_town")
@@ -407,8 +407,8 @@ func TestCollectInitParams_interactive_acceptsDefaults(t *testing.T) {
 		return "https://github.com/owner/myapp.git", nil
 	}
 
-	// Simulate user pressing Enter for all 5 prompts (accepts all defaults).
-	input := strings.NewReader("\n\n\n\n\n")
+	// Simulate user pressing Enter for all 6 prompts (accepts all defaults).
+	input := strings.NewReader("\n\n\n\n\n\n")
 	params, err := collectInitParams(false, input, "/projects/myapp", 3309)
 	if err != nil {
 		t.Fatalf("collectInitParams interactive: %v", err)
@@ -416,8 +416,8 @@ func TestCollectInitParams_interactive_acceptsDefaults(t *testing.T) {
 	if params.ticketPrefix != "myapp" {
 		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "myapp")
 	}
-	if params.githubRepo != "owner/myapp" {
-		t.Errorf("githubRepo = %q, want %q", params.githubRepo, "owner/myapp")
+	if params.repo != "owner/myapp" {
+		t.Errorf("repo = %q, want %q", params.repo, "owner/myapp")
 	}
 	if params.doltPort != 3309 {
 		t.Errorf("doltPort = %d, want %d", params.doltPort, 3309)
@@ -433,8 +433,8 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
-	// User types custom values for all six fields.
-	input := strings.NewReader("myproj\nkate/myproj\nmydb\n4000\nmyproj-\npython\n")
+	// User types custom values for all seven fields.
+	input := strings.NewReader("myproj\ngitlab\nkate/myproj\nmydb\n4000\nmyproj-\npython\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams interactive custom: %v", err)
@@ -442,8 +442,11 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	if params.ticketPrefix != "myproj" {
 		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "myproj")
 	}
-	if params.githubRepo != "kate/myproj" {
-		t.Errorf("githubRepo = %q, want %q", params.githubRepo, "kate/myproj")
+	if params.platform != "gitlab" {
+		t.Errorf("platform = %q, want %q", params.platform, "gitlab")
+	}
+	if params.repo != "kate/myproj" {
+		t.Errorf("repo = %q, want %q", params.repo, "kate/myproj")
 	}
 	if params.doltDatabase != "mydb" {
 		t.Errorf("doltDatabase = %q, want %q", params.doltDatabase, "mydb")
@@ -464,8 +467,8 @@ func TestCollectInitParams_interactive_rejectsInvalidPrefix(t *testing.T) {
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
-	// First attempt: invalid prefix "BAD", second: valid "good". Blank for language.
-	input := strings.NewReader("BAD\ngood\nowner/repo\nmydb\n3307\n\n")
+	// First attempt: invalid prefix "BAD", second: valid "good". Blank for platform (default github).
+	input := strings.NewReader("BAD\ngood\ngithub\nowner/repo\nmydb\n3307\n\n\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams retry: %v", err)
@@ -481,7 +484,7 @@ func TestCollectInitParams_interactive_rejectsInvalidLanguagePreset(t *testing.T
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
 	// First language attempt: "rust" (invalid), second: "go" (valid).
-	input := strings.NewReader("myproj\nowner/myproj\nmydb\n3307\nmyproj-\nrust\ngo\n")
+	input := strings.NewReader("myproj\ngithub\nowner/myproj\nmydb\n3307\nmyproj-\nrust\ngo\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams language retry: %v", err)
@@ -544,7 +547,7 @@ func TestCollectInitParams_nonInteractive_agnosticWhenNoMarkers(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigGithubRepoPlaceholder(t *testing.T) {
+func TestDefaultConfigRepoPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	ctDir := filepath.Join(dir, config.DirName)
 	if err := os.MkdirAll(ctDir, 0750); err != nil {
@@ -566,9 +569,12 @@ func TestDefaultConfigGithubRepoPlaceholder(t *testing.T) {
 		t.Fatalf("unmarshaling config.json: %v", err)
 	}
 
-	got, _ := raw["github_repo"].(string)
+	got, _ := raw["repo"].(string)
 	if got != "owner/repo" {
-		t.Errorf("github_repo = %q, want %q", got, "owner/repo")
+		t.Errorf("repo = %q, want %q", got, "owner/repo")
+	}
+	if pl, _ := raw["platform"].(string); pl != "github" {
+		t.Errorf("platform = %q, want %q", pl, "github")
 	}
 }
 

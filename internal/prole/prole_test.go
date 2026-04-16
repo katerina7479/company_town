@@ -798,15 +798,15 @@ func TestDeployProleCLAUDEMD_errorWhenTemplateMissing(t *testing.T) {
 
 // --- mustGetOriginURL tests ---
 
-func TestMustGetOriginURL_fallsBackToGithubRepo(t *testing.T) {
+func TestMustGetOriginURL_fallsBackToRepo(t *testing.T) {
 	// t.TempDir() is not a git repo, so getOriginURL will fail.
 	cfg := &config.Config{
 		ProjectRoot: t.TempDir(),
-		GithubRepo:  "git@github.com:org/repo.git",
+		Repo:        "git@github.com:org/repo.git",
 	}
 	got := mustGetOriginURL(cfg)
 	if got != "git@github.com:org/repo.git" {
-		t.Errorf("expected GithubRepo fallback, got %q", got)
+		t.Errorf("expected Repo fallback, got %q", got)
 	}
 }
 

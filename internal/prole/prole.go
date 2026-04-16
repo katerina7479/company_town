@@ -549,7 +549,7 @@ func getOriginURL(projectRoot string) (string, error) {
 func mustGetOriginURL(cfg *config.Config) string {
 	url, err := getOriginURL(cfg.ProjectRoot)
 	if err != nil {
-		return cfg.GithubRepo
+		return cfg.Repo
 	}
 	return url
 }

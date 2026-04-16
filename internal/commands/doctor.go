@@ -209,8 +209,8 @@ func checkConfig(deps doctorDeps) (checkResult, *config.Config) {
 	if cfg.ProjectRoot == "" {
 		missing = append(missing, "project_root")
 	}
-	if cfg.GithubRepo == "" {
-		missing = append(missing, "github_repo")
+	if cfg.Repo == "" {
+		missing = append(missing, "repo")
 	}
 	if cfg.Agents.Mayor.Model == "" {
 		missing = append(missing, "agents.mayor.model")

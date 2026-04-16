@@ -180,7 +180,8 @@ func promptField(r *bufio.Reader, label, defaultVal string, validate func(string
 // new project.
 type initParams struct {
 	ticketPrefix   string
-	githubRepo     string
+	platform       string
+	repo           string
 	doltDatabase   string
 	doltPort       int
 	sessionPrefix  string
@@ -196,9 +197,17 @@ func validateLanguagePreset(s string) error {
 	return fmt.Errorf("must be %q, %q, or blank for agnostic-only", "go", "python")
 }
 
-// collectInitParams gathers the five user-configurable fields either
-// interactively (prompting via r) or by applying derived defaults when
-// nonInteractive is true.
+// validatePlatform returns an error if s is not a recognised platform name.
+func validatePlatform(s string) error {
+	switch s {
+	case "github", "gitlab", "":
+		return nil
+	}
+	return fmt.Errorf("must be %q or %q", "github", "gitlab")
+}
+
+// collectInitParams gathers the user-configurable fields either interactively
+// (prompting via r) or by applying derived defaults when nonInteractive is true.
 func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, defaultPort int) (initParams, error) {
 	prefix := deriveTicketPrefix(projectRoot)
 	repo := deriveGithubRepo()
@@ -216,7 +225,8 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 		}
 		return initParams{
 			ticketPrefix:   prefix,
-			githubRepo:     repo,
+			platform:       "github",
+			repo:           repo,
 			doltDatabase:   dbName,
 			doltPort:       defaultPort,
 			sessionPrefix:  sesPrefix,
@@ -232,9 +242,17 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 		return initParams{}, fmt.Errorf("ticket_prefix: %w", err)
 	}
 
-	gr, err := promptField(br, "GitHub repo (owner/repo)", repo, nil)
+	pl, err := promptField(br, "VCS platform (github or gitlab)", "github", validatePlatform)
 	if err != nil {
-		return initParams{}, fmt.Errorf("github_repo: %w", err)
+		return initParams{}, fmt.Errorf("platform: %w", err)
+	}
+	if pl == "" {
+		pl = "github"
+	}
+
+	gr, err := promptField(br, "Repository (owner/repo)", repo, nil)
+	if err != nil {
+		return initParams{}, fmt.Errorf("repo: %w", err)
 	}
 
 	dd, err := promptField(br, "Dolt database name", dbName, nil)
@@ -264,7 +282,8 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 
 	return initParams{
 		ticketPrefix:   tp,
-		githubRepo:     gr,
+		platform:       pl,
+		repo:           gr,
 		doltDatabase:   dd,
 		doltPort:       port,
 		sessionPrefix:  sp,
@@ -339,7 +358,8 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 			return fmt.Errorf("collecting init params: %w", err)
 		}
 
-		cfg := config.DefaultConfig(projectRoot, params.githubRepo)
+		cfg := config.DefaultConfig(projectRoot, params.repo)
+		cfg.Platform = params.platform
 		cfg.TicketPrefix = params.ticketPrefix
 		cfg.SessionPrefix = params.sessionPrefix
 		cfg.Dolt.Port = params.doltPort
