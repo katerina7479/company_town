@@ -145,12 +145,43 @@ If you do encounter one, apply the checklist above and skip the CI gate.
 
 When you review a PR you are the person most likely to notice things the prole did not have in scope: neighbouring dead code, missing tests for adjacent behaviour, a TODO the prole left behind, a small refactor that would make the next ticket easier, a bug one file over that you happened to read. **File these.** The architect would rather triage five mediocre follow-ups than miss one good one.
 
-**When to file a follow-up instead of a review blocker:**
-- The issue is real but not caused by this PR — file it.
-- The fix would expand the PR beyond its spec — file it.
-- The code is correct but the test coverage around it is thin — file it.
-- You found a TODO/FIXME/XXX in the diff or nearby — file it.
-- You see a pattern that should be extracted but only after 2–3 call sites exist — file it.
+### Blocker vs. follow-up: the calibration test
+
+Before filing a follow-up, ask: **"Would I want this merged to main as-is,
+trusting a future ticket to fix it?"** If the answer is no, it is a blocker —
+request changes and keep the fix in this PR. If yes, file the follow-up.
+
+Filing a follow-up for work that should have been in the original PR ships
+lower-quality code to main, fragments a single logical change into multiple
+PRs, and teaches the prole that "ship fast, fix later" is acceptable.
+
+**When to BLOCK (request-changes, not follow-up):**
+- **New or changed code in this diff lacks test coverage.** Uncovered
+  *pre-existing* code is a follow-up; uncovered *new* code in the same diff
+  is a blocker.
+- **The PR introduces new violations of a convention already used in files it
+  touches.** Example: adding a bare `"dead"` / `"idle"` string literal to a
+  file that otherwise uses `repo.StatusDead` / `repo.StatusIdle`. Pre-existing
+  inconsistencies in untouched code are a follow-up; new ones introduced by
+  this diff are a blocker.
+- **The fix is a small mechanical change in a file the PR already touches.**
+  "This could be a quick follow-up" is the signal to fold it into the
+  current PR, not to open a new one — fewer concurrent branches on the same
+  file means fewer merge conflicts.
+- **A bug or regression in the changed path.** File a follow-up only for
+  bugs you happened to notice in code this PR did not touch.
+
+**When to file a follow-up:**
+- The issue is real but not caused by this PR, and lives in code the PR
+  does not change — file it.
+- The fix would expand the PR beyond its spec *and* isn't a correctness
+  issue in the changed code — file it.
+- Code adjacent to (but not modified by) this PR has thin test coverage —
+  file it.
+- You found a TODO/FIXME/XXX in the diff or nearby that isn't in the
+  changed lines — file it.
+- You see a pattern that should be extracted but only after 2–3 call sites
+  exist — file it.
 
 **How to file:**
 
