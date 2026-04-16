@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -234,6 +235,233 @@ func TestEnsureRootGitignore_inlineCommentIsEquivalent(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if string(before) != string(after) {
 		t.Errorf("file was modified but entry with inline comment should be equivalent:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+// --- deriveTicketPrefix tests ---
+
+func TestDeriveTicketPrefix_alphaOnly(t *testing.T) {
+	got := deriveTicketPrefix("/home/user/docflow")
+	if got != "docflow" {
+		t.Errorf("deriveTicketPrefix = %q, want %q", got, "docflow")
+	}
+}
+
+func TestDeriveTicketPrefix_stripsDigitsAndSymbols(t *testing.T) {
+	got := deriveTicketPrefix("/projects/my-project-42")
+	if got != "myproject" {
+		t.Errorf("deriveTicketPrefix = %q, want %q", got, "myproject")
+	}
+}
+
+func TestDeriveTicketPrefix_uppercase(t *testing.T) {
+	got := deriveTicketPrefix("/Users/Kate/CompanyTown")
+	if got != "companytown" {
+		t.Errorf("deriveTicketPrefix = %q, want %q", got, "companytown")
+	}
+}
+
+func TestDeriveTicketPrefix_emptyWhenNoAlpha(t *testing.T) {
+	got := deriveTicketPrefix("/projects/123-456")
+	if got != "" {
+		t.Errorf("deriveTicketPrefix = %q, want %q", got, "")
+	}
+}
+
+// --- deriveDoltDatabase tests ---
+
+func TestDeriveDoltDatabase_simple(t *testing.T) {
+	got := deriveDoltDatabase("/home/user/docflow")
+	if got != "docflow" {
+		t.Errorf("deriveDoltDatabase = %q, want %q", got, "docflow")
+	}
+}
+
+func TestDeriveDoltDatabase_hyphenBecomeUnderscore(t *testing.T) {
+	got := deriveDoltDatabase("/projects/my-project")
+	if got != "my_project" {
+		t.Errorf("deriveDoltDatabase = %q, want %q", got, "my_project")
+	}
+}
+
+func TestDeriveDoltDatabase_stripsLeadingDigit(t *testing.T) {
+	got := deriveDoltDatabase("/projects/42app")
+	if got != "app" {
+		t.Errorf("deriveDoltDatabase = %q, want %q", got, "app")
+	}
+}
+
+func TestDeriveDoltDatabase_fallbackWhenEmpty(t *testing.T) {
+	got := deriveDoltDatabase("/projects/---")
+	if got != "company_town" {
+		t.Errorf("deriveDoltDatabase = %q, want %q", got, "company_town")
+	}
+}
+
+// --- deriveGithubRepo tests ---
+
+func TestDeriveGithubRepo_httpsURL(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) {
+		return "https://github.com/kate/myrepo.git", nil
+	}
+	got := deriveGithubRepo()
+	if got != "kate/myrepo" {
+		t.Errorf("deriveGithubRepo = %q, want %q", got, "kate/myrepo")
+	}
+}
+
+func TestDeriveGithubRepo_sshURL(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) {
+		return "git@github.com:kate/myrepo.git", nil
+	}
+	got := deriveGithubRepo()
+	if got != "kate/myrepo" {
+		t.Errorf("deriveGithubRepo = %q, want %q", got, "kate/myrepo")
+	}
+}
+
+func TestDeriveGithubRepo_noRemote(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+	got := deriveGithubRepo()
+	if got != "" {
+		t.Errorf("deriveGithubRepo = %q, want empty string", got)
+	}
+}
+
+// --- validateTicketPrefix tests ---
+
+func TestValidateTicketPrefix_valid(t *testing.T) {
+	for _, s := range []string{"nc", "ct", "docflow", "abc"} {
+		if err := validateTicketPrefix(s); err != nil {
+			t.Errorf("validateTicketPrefix(%q) unexpected error: %v", s, err)
+		}
+	}
+}
+
+func TestValidateTicketPrefix_invalid(t *testing.T) {
+	for _, s := range []string{"", "NC", "nc-1", "123", "my_app"} {
+		if err := validateTicketPrefix(s); err == nil {
+			t.Errorf("validateTicketPrefix(%q) expected error, got nil", s)
+		}
+	}
+}
+
+// --- collectInitParams tests ---
+
+func TestCollectInitParams_nonInteractive_derivesFromDir(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) {
+		return "https://github.com/owner/docflow.git", nil
+	}
+
+	params, err := collectInitParams(true, nil, "/projects/docflow", 3308)
+	if err != nil {
+		t.Fatalf("collectInitParams: %v", err)
+	}
+	if params.ticketPrefix != "docflow" {
+		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "docflow")
+	}
+	if params.githubRepo != "owner/docflow" {
+		t.Errorf("githubRepo = %q, want %q", params.githubRepo, "owner/docflow")
+	}
+	if params.doltDatabase != "docflow" {
+		t.Errorf("doltDatabase = %q, want %q", params.doltDatabase, "docflow")
+	}
+	if params.doltPort != 3308 {
+		t.Errorf("doltPort = %d, want %d", params.doltPort, 3308)
+	}
+}
+
+func TestCollectInitParams_nonInteractive_fallbackWhenNoDerived(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	// dir name "---" produces no alpha prefix and no usable DB name (falls to company_town)
+	params, err := collectInitParams(true, nil, "/projects/---", 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams: %v", err)
+	}
+	if params.ticketPrefix != "tk" {
+		t.Errorf("ticketPrefix fallback = %q, want %q", params.ticketPrefix, "tk")
+	}
+	if params.githubRepo != "owner/repo" {
+		t.Errorf("githubRepo fallback = %q, want %q", params.githubRepo, "owner/repo")
+	}
+	if params.doltDatabase != "company_town" {
+		t.Errorf("doltDatabase fallback = %q, want %q", params.doltDatabase, "company_town")
+	}
+}
+
+func TestCollectInitParams_interactive_acceptsDefaults(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) {
+		return "https://github.com/owner/myapp.git", nil
+	}
+
+	// Simulate user pressing Enter for all prompts (accepts all defaults).
+	input := strings.NewReader("\n\n\n\n")
+	params, err := collectInitParams(false, input, "/projects/myapp", 3309)
+	if err != nil {
+		t.Fatalf("collectInitParams interactive: %v", err)
+	}
+	if params.ticketPrefix != "myapp" {
+		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "myapp")
+	}
+	if params.githubRepo != "owner/myapp" {
+		t.Errorf("githubRepo = %q, want %q", params.githubRepo, "owner/myapp")
+	}
+	if params.doltPort != 3309 {
+		t.Errorf("doltPort = %d, want %d", params.doltPort, 3309)
+	}
+}
+
+func TestCollectInitParams_interactive_customValues(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	// User types custom values for all four fields.
+	input := strings.NewReader("myproj\nkate/myproj\nmydb\n4000\n")
+	params, err := collectInitParams(false, input, "/projects/x", 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams interactive custom: %v", err)
+	}
+	if params.ticketPrefix != "myproj" {
+		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "myproj")
+	}
+	if params.githubRepo != "kate/myproj" {
+		t.Errorf("githubRepo = %q, want %q", params.githubRepo, "kate/myproj")
+	}
+	if params.doltDatabase != "mydb" {
+		t.Errorf("doltDatabase = %q, want %q", params.doltDatabase, "mydb")
+	}
+	if params.doltPort != 4000 {
+		t.Errorf("doltPort = %d, want %d", params.doltPort, 4000)
+	}
+}
+
+func TestCollectInitParams_interactive_rejectsInvalidPrefix(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	// First attempt: invalid prefix "BAD", second: valid "good".
+	input := strings.NewReader("BAD\ngood\nowner/repo\nmydb\n3307\n")
+	params, err := collectInitParams(false, input, "/projects/x", 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams retry: %v", err)
+	}
+	if params.ticketPrefix != "good" {
+		t.Errorf("ticketPrefix after retry = %q, want %q", params.ticketPrefix, "good")
 	}
 }
 
