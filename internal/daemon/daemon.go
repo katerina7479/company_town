@@ -107,6 +107,10 @@ type Daemon struct {
 	reviewsSinceFollowUp int
 	lastFollowUpNudge    time.Time
 
+	// Cancellation cleanup (injectable for tests)
+	ghPRCloseFn       func(prNumber int) error
+	gitDeleteBranchFn func(barePath, branch string) error
+
 	// Review comment fetching (injectable for tests)
 	getReviewCommentsFn func(prNum int) ([]prComment, error)
 
@@ -176,10 +180,23 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		lastRestartedAt:      make(map[string]time.Time),
 		restartAgent:         makeRestartFn(cfg, agentRepo, logger),
 		repairCycleThreshold: cfg.RepairCycleThreshold,
-		followUpInterval:     time.Duration(cfg.ReviewerFollowUpIntervalSeconds) * time.Second,
-		followUpNReviews:     cfg.ReviewerFollowUpNReviews,
-		lastFollowUpNudge:    time.Now(),
-		tickFile:             filepath.Join(ctDir, "run", "daemon-tick"),
+		ghPRCloseFn: func(prNumber int) error {
+			cmd := exec.Command("gh", "pr", "close", strconv.Itoa(prNumber),
+				"--comment", "Ticket cancelled.")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			return cmd.Run()
+		},
+		gitDeleteBranchFn: func(barePath, branch string) error {
+			cmd := exec.Command("git", "-C", barePath, "push", "origin", "--delete", branch)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			return cmd.Run()
+		},
+		followUpInterval:  time.Duration(cfg.ReviewerFollowUpIntervalSeconds) * time.Second,
+		followUpNReviews:  cfg.ReviewerFollowUpNReviews,
+		lastFollowUpNudge: time.Now(),
+		tickFile:          filepath.Join(ctDir, "run", "daemon-tick"),
 	}, nil
 }
 
@@ -397,6 +414,7 @@ func (d *Daemon) poll() {
 	d.handleDeadSessions()
 	d.handleStaleWorktrees()
 	d.handleIdleProleWorktrees()
+	d.handleCancelledTickets()
 	d.handleBackfillPRNumbers()
 	d.handleDraftTickets()
 	d.handleAssignments()
@@ -1089,6 +1107,82 @@ func (d *Daemon) handleDeadSessions() {
 	}
 	if d.obs != nil {
 		d.obs.dead = deleted
+	}
+}
+
+// handleCancelledTickets picks up tickets in the `cancelled` status and runs
+// full cleanup: signal the assigned prole, close the PR, delete the remote
+// branch, clear ticket fields, and move the ticket to `closed`. Each step is
+// non-fatal — errors are logged and cleanup continues.
+func (d *Daemon) handleCancelledTickets() {
+	tickets, err := d.issues.List(repo.StatusCancelled)
+	if err != nil {
+		d.logger.Printf("error listing cancelled tickets: %v", err)
+		return
+	}
+	for _, ticket := range tickets {
+		d.cleanupCancelledTicket(*ticket)
+	}
+}
+
+func (d *Daemon) cleanupCancelledTicket(ticket repo.Issue) {
+	prefix := fmt.Sprintf("[cancel %s-%d]", d.cfg.TicketPrefix, ticket.ID)
+
+	// 1. Signal the assigned prole to stop and clear its current_issue.
+	if ticket.Assignee.Valid && ticket.Assignee.String != "" {
+		agentName := ticket.Assignee.String
+		sess := session.SessionName(agentName)
+		if d.sessionExists(sess) {
+			msg := fmt.Sprintf("TICKET CANCELLED: Ticket %s-%d has been cancelled. "+
+				"Stop all work immediately. Do not commit or push. "+
+				"Run: gt agent status %s idle",
+				d.cfg.TicketPrefix, ticket.ID, agentName)
+			if err := d.sendKeys(sess, msg); err != nil {
+				d.logger.Printf("%s error signaling %s: %v", prefix, agentName, err)
+			}
+		}
+		if err := d.agents.ClearCurrentIssue(agentName); err != nil {
+			d.logger.Printf("%s error clearing current issue for %s: %v", prefix, agentName, err)
+		}
+	}
+
+	// 2. Close the PR if one exists.
+	if ticket.PRNumber.Valid {
+		prNum := int(ticket.PRNumber.Int64)
+		if err := d.ghPRCloseFn(prNum); err != nil {
+			d.logger.Printf("%s error closing PR #%d: %v", prefix, prNum, err)
+			// Non-fatal — PR may already be closed or merged.
+		}
+		if err := d.issues.ClearPR(ticket.ID); err != nil {
+			d.logger.Printf("%s error clearing PR number: %v", prefix, err)
+		}
+	}
+
+	// 3. Delete the remote branch if one exists.
+	if ticket.Branch.Valid && ticket.Branch.String != "" {
+		branch := ticket.Branch.String
+		barePath := filepath.Join(config.CompanyTownDir(d.cfg.ProjectRoot), "repo.git")
+		if err := d.gitDeleteBranchFn(barePath, branch); err != nil {
+			d.logger.Printf("%s error deleting remote branch %s: %v", prefix, branch, err)
+			// Non-fatal — branch may already be deleted.
+		}
+		if err := d.issues.ClearBranch(ticket.ID); err != nil {
+			d.logger.Printf("%s error clearing branch: %v", prefix, err)
+		}
+	}
+
+	// 4. Clear the assignee (after all steps that need the agent name).
+	if ticket.Assignee.Valid && ticket.Assignee.String != "" {
+		if err := d.issues.ClearAssignee(ticket.ID); err != nil {
+			d.logger.Printf("%s error clearing assignee: %v", prefix, err)
+		}
+	}
+
+	// 5. Move to closed — cancelled is a transient cleanup state; closed is terminal.
+	if err := d.issues.UpdateStatus(ticket.ID, repo.StatusClosed); err != nil {
+		d.logger.Printf("%s error moving to closed: %v", prefix, err)
+	} else {
+		d.logger.Printf("%s cleanup complete, ticket closed", prefix)
 	}
 }
 

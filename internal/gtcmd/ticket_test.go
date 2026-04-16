@@ -1949,6 +1949,28 @@ func TestTicketStatus_PROpenGuard(t *testing.T) {
 	}
 }
 
+// TestTicketStatus_CancelledClosedGuard verifies that trying to cancel a ticket
+// that is already closed returns an error (nc-216).
+func TestTicketStatus_CancelledClosedGuard(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+
+	id, err := issues.Create("already closed ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, "closed"); err != nil {
+		t.Fatalf("UpdateStatus to closed: %v", err)
+	}
+
+	err = ticketStatus(issues, agents, []string{fmt.Sprintf("%d", id), "cancelled"})
+	if err == nil {
+		t.Fatal("expected error when cancelling a closed ticket, got nil")
+	}
+	if !strings.Contains(err.Error(), "already closed") {
+		t.Errorf("expected error to mention 'already closed', got: %v", err)
+	}
+}
+
 // --- ticketParent error paths ---
 
 func TestTicketParent_missingArgs(t *testing.T) {

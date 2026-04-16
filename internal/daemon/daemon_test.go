@@ -67,6 +67,8 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 			return nil
 		},
 		capturePane:             func(string) (string, error) { return "", nil },
+		ghPRCloseFn:             func(int) error { return nil },
+		gitDeleteBranchFn:       func(string, string) error { return nil },
 		runQualityBaseline:      func() error { return nil },
 		pruneStaleWorktrees:     func() (int, error) { return 0, nil },
 		resetIdleProleWorktrees: func() error { return nil },
@@ -3977,5 +3979,237 @@ func TestHandleFollowUpReminder_ciPassIncrementsCounter(t *testing.T) {
 	if d.reviewsSinceFollowUp != before+1 {
 		t.Errorf("expected reviewsSinceFollowUp to increment from %d to %d, got %d",
 			before, before+1, d.reviewsSinceFollowUp)
+	}
+}
+
+// --- handleCancelledTickets tests ---
+
+func TestHandleCancelledTickets_FullCleanup(t *testing.T) {
+	agentName := "prole-copper"
+	sess := "ct-prole-copper"
+	d, issues, agents, sent := newTestDaemonWithSessions(t, []string{sess})
+
+	// Track PR close and branch delete calls.
+	var prClosed []int
+	var branchesDeleted []string
+	d.ghPRCloseFn = func(prNum int) error {
+		prClosed = append(prClosed, prNum)
+		return nil
+	}
+	d.gitDeleteBranchFn = func(_, branch string) error {
+		branchesDeleted = append(branchesDeleted, branch)
+		return nil
+	}
+
+	// Register a prole agent.
+	if err := agents.Register(agentName, "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// Create a ticket and set it up with assignee, branch, PR.
+	id, err := issues.Create("Cancel me", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := issues.UpdateStatus(id, repo.StatusInProgress); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := issues.Assign(id, agentName, "prole/copper/nc-999"); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if err := issues.SetPR(id, 77); err != nil {
+		t.Fatalf("SetPR: %v", err)
+	}
+	if err := agents.SetCurrentIssue(agentName, &id); err != nil {
+		t.Fatalf("SetCurrentIssue: %v", err)
+	}
+	if err := issues.UpdateStatus(id, repo.StatusCancelled); err != nil {
+		t.Fatalf("UpdateStatus to cancelled: %v", err)
+	}
+
+	d.handleCancelledTickets()
+
+	// sendKeys should have sent a TICKET CANCELLED message to the prole session.
+	if len(*sent) == 0 {
+		t.Fatal("expected sendKeys to be called for prole session")
+	}
+	found := false
+	for _, m := range *sent {
+		if m.session == sess && strings.Contains(m.msg, "TICKET CANCELLED") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected TICKET CANCELLED message to session %q, got %v", sess, *sent)
+	}
+
+	// PR should have been closed.
+	if len(prClosed) != 1 || prClosed[0] != 77 {
+		t.Errorf("expected PR #77 closed, got %v", prClosed)
+	}
+
+	// Branch should have been deleted.
+	if len(branchesDeleted) != 1 || branchesDeleted[0] != "prole/copper/nc-999" {
+		t.Errorf("expected branch 'prole/copper/nc-999' deleted, got %v", branchesDeleted)
+	}
+
+	// Ticket should now be closed with branch/PR/assignee cleared.
+	updated, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Status != repo.StatusClosed {
+		t.Errorf("expected status=closed, got %q", updated.Status)
+	}
+	if updated.Assignee.Valid {
+		t.Errorf("expected assignee cleared, got %q", updated.Assignee.String)
+	}
+	if updated.Branch.Valid {
+		t.Errorf("expected branch cleared, got %q", updated.Branch.String)
+	}
+	if updated.PRNumber.Valid {
+		t.Errorf("expected pr_number cleared, got %v", updated.PRNumber.Int64)
+	}
+
+	// Agent's current_issue should be cleared.
+	agent, err := agents.Get(agentName)
+	if err != nil {
+		t.Fatalf("agents.Get: %v", err)
+	}
+	if agent.CurrentIssue.Valid {
+		t.Errorf("expected agent current_issue cleared, got %v", agent.CurrentIssue.Int64)
+	}
+}
+
+func TestHandleCancelledTickets_NoPR(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	var prClosed []int
+	d.ghPRCloseFn = func(prNum int) error {
+		prClosed = append(prClosed, prNum)
+		return nil
+	}
+
+	if err := agents.Register("prole-tin", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	id, _ := issues.Create("No PR ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, repo.StatusInProgress) //nolint:errcheck
+	issues.Assign(id, "prole-tin", "some-branch")  //nolint:errcheck
+	// No SetPR call — no PR number.
+	issues.UpdateStatus(id, repo.StatusCancelled) //nolint:errcheck
+
+	d.handleCancelledTickets()
+
+	if len(prClosed) != 0 {
+		t.Errorf("expected ghPRCloseFn NOT called when no PR, but got calls: %v", prClosed)
+	}
+
+	updated, _ := issues.Get(id)
+	if updated.Status != repo.StatusClosed {
+		t.Errorf("expected status=closed, got %q", updated.Status)
+	}
+}
+
+func TestHandleCancelledTickets_NoBranch(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	var branchesDeleted []string
+	d.gitDeleteBranchFn = func(_, branch string) error {
+		branchesDeleted = append(branchesDeleted, branch)
+		return nil
+	}
+
+	if err := agents.Register("prole-tin", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	id, _ := issues.Create("No branch ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, repo.StatusInProgress) //nolint:errcheck
+	// Assign with empty branch string — branch will not be set separately.
+	// Use SetPR but skip Assign so no branch field is set.
+	issues.SetPR(id, 55)                          //nolint:errcheck
+	issues.UpdateStatus(id, repo.StatusCancelled) //nolint:errcheck
+
+	d.handleCancelledTickets()
+
+	if len(branchesDeleted) != 0 {
+		t.Errorf("expected gitDeleteBranchFn NOT called when no branch, got: %v", branchesDeleted)
+	}
+
+	updated, _ := issues.Get(id)
+	if updated.Status != repo.StatusClosed {
+		t.Errorf("expected status=closed, got %q", updated.Status)
+	}
+}
+
+func TestHandleCancelledTickets_NoAssignee(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Unassigned cancelled ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, repo.StatusOpen)      //nolint:errcheck
+	issues.UpdateStatus(id, repo.StatusCancelled) //nolint:errcheck
+
+	d.handleCancelledTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no sendKeys calls for unassigned ticket, got %v", *sent)
+	}
+
+	updated, _ := issues.Get(id)
+	if updated.Status != repo.StatusClosed {
+		t.Errorf("expected status=closed, got %q", updated.Status)
+	}
+}
+
+func TestHandleCancelledTickets_PRCloseFailsNonFatal(t *testing.T) {
+	agentName := "prole-copper"
+	d, issues, agents, _ := newTestDaemonWithSessions(t, nil)
+
+	d.ghPRCloseFn = func(int) error {
+		return fmt.Errorf("gh: authentication required")
+	}
+	var branchesDeleted []string
+	d.gitDeleteBranchFn = func(_, branch string) error {
+		branchesDeleted = append(branchesDeleted, branch)
+		return nil
+	}
+
+	if err := agents.Register(agentName, "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	id, _ := issues.Create("PR close fails", "task", nil, nil, nil)
+	issues.UpdateStatus(id, repo.StatusInProgress)           //nolint:errcheck
+	issues.Assign(id, agentName, "prole/copper/fail-branch") //nolint:errcheck
+	issues.SetPR(id, 88)                                     //nolint:errcheck
+	issues.UpdateStatus(id, repo.StatusCancelled)            //nolint:errcheck
+
+	d.handleCancelledTickets()
+
+	// Branch deletion still ran despite PR close failure.
+	if len(branchesDeleted) != 1 || branchesDeleted[0] != "prole/copper/fail-branch" {
+		t.Errorf("expected branch deleted despite PR close error, got %v", branchesDeleted)
+	}
+
+	// Ticket should still be closed.
+	updated, _ := issues.Get(id)
+	if updated.Status != repo.StatusClosed {
+		t.Errorf("expected status=closed, got %q", updated.Status)
+	}
+}
+
+func TestHandleCancelledTickets_AlreadyClosed(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	// Create a ticket in closed status (no cancelled tickets).
+	id, _ := issues.Create("Closed ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, repo.StatusClosed) //nolint:errcheck
+
+	d.handleCancelledTickets()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no-op for no cancelled tickets, got sendKeys calls: %v", *sent)
 	}
 }
