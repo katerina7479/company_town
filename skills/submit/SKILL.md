@@ -56,15 +56,18 @@ gt pr create <ticket-id>
 
 This creates the PR and moves the ticket to `ci_running`. Note the PR number from the output.
 
-## Step 6 — Verify the PR
+## Step 6 — Verify the PR/MR
 
 ```bash
+# GitHub:
 gh pr view --json headRefName,state,url
+# GitLab (mr_iid from gt ticket show):
+glab mr view <mr_iid> --output json | jq '{source_branch: .source_branch, state: .state, web_url: .web_url}'
 ```
 
 Confirm:
-- `headRefName` matches your local branch name
-- `state` is `OPEN`
+- `headRefName` / `source_branch` matches your local branch name
+- `state` is `OPEN` (GitHub) or `opened` (GitLab)
 
 If anything looks wrong, investigate before proceeding.
 

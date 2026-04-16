@@ -96,7 +96,10 @@ If the human comments on the draft PR and the ticket enters `repairing` status:
 
 3. **Read the feedback**:
    ```bash
+   # GitHub:
    gh pr view <pr-number> --comments
+   # GitLab:
+   glab mr note list <mr-iid>
    ```
    The human's comments describe what is wrong with the test design: tests
    that test the wrong thing, missing edge cases, wrong assertions, etc.

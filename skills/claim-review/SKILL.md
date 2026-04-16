@@ -20,13 +20,18 @@ gt ticket status <ticket-id> under_review
 gt ticket show <ticket-id>
 ```
 
-Note the `pr_number` field. Then:
+Note the `pr_number` (GitHub) or `mr_iid` (GitLab) field. Then fetch PR/MR metadata:
 
 ```bash
+# GitHub:
 gh pr view <pr_number> --json headRefOid,baseRefName,headRefName,url,title
+
+# GitLab:
+glab mr view <mr_iid> --output json
+# Key fields: sha (headRefOid equivalent), source_branch, target_branch, web_url, title
 ```
 
-Record the `headRefOid` (the current PR SHA). You will use this in Step 3 and when writing the verdict.
+Record the head SHA (`headRefOid` on GitHub, `sha` on GitLab). You will use this in Step 3 and when writing the verdict.
 
 ## Step 3 — Check for stale base
 
@@ -46,7 +51,11 @@ If the merge-base is not equal to `origin/main` HEAD, the PR branch is behind ma
 ## Step 4 — List files touched
 
 ```bash
+# GitHub:
 gh pr view <pr_number> --json files --jq '.files[].path'
+
+# GitLab:
+glab mr changes <mr_iid> --output json | jq -r '.changes[].new_path'
 ```
 
 Cross-reference against the ticket spec's "Affected Files" section (if present). Files in the diff but not in the spec, or in the spec but not in the diff, are worth calling out.
@@ -85,7 +94,10 @@ Before writing the review, summarize to yourself:
 This summary is the foundation for your review. Proceed to read the full diff:
 
 ```bash
+# GitHub:
 gh pr view <pr_number> --diff
+# GitLab:
+glab mr diff <mr_iid>
 ```
 
 Then write your verdict with `/verdict`.
