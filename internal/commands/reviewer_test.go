@@ -36,6 +36,10 @@ func TestReviewerInspect_createsWorktree(t *testing.T) {
 		return "feat/test", nil
 	}
 
+	oldFetch := gitFetchFn
+	t.Cleanup(func() { gitFetchFn = oldFetch })
+	gitFetchFn = func(_, _ string) error { return nil }
+
 	var addBarePath, addWtPath, addRef string
 	oldAdd := gitWorktreeAddFn
 	t.Cleanup(func() { gitWorktreeAddFn = oldAdd })
@@ -81,6 +85,10 @@ func TestReviewerInspect_removesExistingPathFirst(t *testing.T) {
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
 	ghPRBranchFn = func(_ int) (string, error) { return "main", nil }
 
+	oldFetch := gitFetchFn
+	t.Cleanup(func() { gitFetchFn = oldFetch })
+	gitFetchFn = func(_, _ string) error { return nil }
+
 	var callOrder []string
 
 	oldRemove := gitWorktreeRemoveFn
@@ -106,6 +114,86 @@ func TestReviewerInspect_removesExistingPathFirst(t *testing.T) {
 	}
 }
 
+// TestReviewerInspect_fetchesBeforeWorktreeAdd verifies that gitFetchFn is called
+// with the correct branch before gitWorktreeAddFn, ensuring origin/<branch>
+// resolves in the bare clone (nc-206).
+func TestReviewerInspect_fetchesBeforeWorktreeAdd(t *testing.T) {
+	cfg := reviewerTestCfg(t)
+
+	oldGH := ghPRBranchFn
+	t.Cleanup(func() { ghPRBranchFn = oldGH })
+	ghPRBranchFn = func(_ int) (string, error) { return "feat/my-branch", nil }
+
+	var callOrder []string
+	var fetchedBranch string
+
+	oldFetch := gitFetchFn
+	t.Cleanup(func() { gitFetchFn = oldFetch })
+	gitFetchFn = func(_, branch string) error {
+		fetchedBranch = branch
+		callOrder = append(callOrder, "fetch")
+		return nil
+	}
+
+	oldAdd := gitWorktreeAddFn
+	t.Cleanup(func() { gitWorktreeAddFn = oldAdd })
+	gitWorktreeAddFn = func(_, _, _ string) error {
+		callOrder = append(callOrder, "add")
+		return nil
+	}
+
+	oldRemove := gitWorktreeRemoveFn
+	t.Cleanup(func() { gitWorktreeRemoveFn = oldRemove })
+	gitWorktreeRemoveFn = func(_, _ string) error { return nil }
+
+	if err := reviewerInspectCore(cfg, 7); err != nil {
+		t.Fatalf("reviewerInspectCore: %v", err)
+	}
+
+	if fetchedBranch != "feat/my-branch" {
+		t.Errorf("fetched branch = %q, want %q", fetchedBranch, "feat/my-branch")
+	}
+	if len(callOrder) < 2 || callOrder[0] != "fetch" || callOrder[1] != "add" {
+		t.Errorf("expected [fetch add], got %v", callOrder)
+	}
+}
+
+// TestReviewerInspect_fetchFailurePropagates verifies that a git fetch error
+// surfaces with a wrapped "fetching origin/<branch>" context and prevents the
+// worktree add from running.
+func TestReviewerInspect_fetchFailurePropagates(t *testing.T) {
+	cfg := reviewerTestCfg(t)
+
+	oldGH := ghPRBranchFn
+	t.Cleanup(func() { ghPRBranchFn = oldGH })
+	ghPRBranchFn = func(_ int) (string, error) { return "feat/test", nil }
+
+	oldFetch := gitFetchFn
+	t.Cleanup(func() { gitFetchFn = oldFetch })
+	gitFetchFn = func(_, _ string) error {
+		return fmt.Errorf("fatal: repository not found")
+	}
+
+	addCalled := false
+	oldAdd := gitWorktreeAddFn
+	t.Cleanup(func() { gitWorktreeAddFn = oldAdd })
+	gitWorktreeAddFn = func(_, _, _ string) error {
+		addCalled = true
+		return nil
+	}
+
+	err := reviewerInspectCore(cfg, 5)
+	if err == nil {
+		t.Fatal("expected error from fetch failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "fetching origin/") {
+		t.Errorf("expected wrapped context 'fetching origin/', got: %v", err)
+	}
+	if addCalled {
+		t.Error("gitWorktreeAddFn should not be called when fetch fails")
+	}
+}
+
 // TestReviewerInspect_ghFailurePropagates verifies that a gh CLI error surfaces
 // with a wrapped "looking up PR branch" context.
 func TestReviewerInspect_ghFailurePropagates(t *testing.T) {
@@ -116,6 +204,11 @@ func TestReviewerInspect_ghFailurePropagates(t *testing.T) {
 	ghPRBranchFn = func(_ int) (string, error) {
 		return "", fmt.Errorf("gh: not found")
 	}
+
+	// gh fails before fetch is reached; stub is present for safety.
+	oldFetch := gitFetchFn
+	t.Cleanup(func() { gitFetchFn = oldFetch })
+	gitFetchFn = func(_, _ string) error { return nil }
 
 	err := reviewerInspectCore(cfg, 99)
 	if err == nil {
@@ -134,6 +227,10 @@ func TestReviewerInspect_gitAddFailurePropagates(t *testing.T) {
 	oldGH := ghPRBranchFn
 	t.Cleanup(func() { ghPRBranchFn = oldGH })
 	ghPRBranchFn = func(_ int) (string, error) { return "feat/test", nil }
+
+	oldFetch := gitFetchFn
+	t.Cleanup(func() { gitFetchFn = oldFetch })
+	gitFetchFn = func(_, _ string) error { return nil }
 
 	oldRemove := gitWorktreeRemoveFn
 	t.Cleanup(func() { gitWorktreeRemoveFn = oldRemove })
