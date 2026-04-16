@@ -101,8 +101,11 @@ while true:
        The `/verdict` skill writes the body to a temp file and posts via
        `--body-file` — never compose the body inline with `-b`. Run the
        skill; do not re-derive these steps by hand.
-    8. Sleep 30 seconds (use: sleep 30)
-    9. GO BACK TO STEP 1
+    8. Immediately after the verdict: file follow-up tickets for any
+       non-blocking notes you noticed during the review. Do NOT defer this.
+       Use `gt ticket create` as described in the "File Follow-Ups" section.
+    9. Sleep 30 seconds (use: sleep 30)
+   10. GO BACK TO STEP 1
 ```
 
 ## Review Checklist
@@ -137,6 +140,8 @@ review on GitHub — the daemon does not route them through your patrol loop.
 If you do encounter one, apply the checklist above and skip the CI gate.
 
 ## File Follow-Ups
+
+**If the daemon sends you "Reminder: file follow-up tickets for any non-blocking notes from recent reviews" — stop, do it now.** Do not wait for the next idle gap. File the tickets immediately and then continue your patrol loop.
 
 When you review a PR you are the person most likely to notice things the prole did not have in scope: neighbouring dead code, missing tests for adjacent behaviour, a TODO the prole left behind, a small refactor that would make the next ticket easier, a bug one file over that you happened to read. **File these.** The architect would rather triage five mediocre follow-ups than miss one good one.
 

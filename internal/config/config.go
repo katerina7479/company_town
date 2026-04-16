@@ -77,26 +77,28 @@ type QualityConfig struct {
 }
 
 type Config struct {
-	Version                      string        `json:"version"`
-	TicketPrefix                 string        `json:"ticket_prefix"`
-	ProjectRoot                  string        `json:"project_root"`
-	GithubRepo                   string        `json:"github_repo"`
-	Dolt                         DoltConfig    `json:"dolt"`
-	LogDir                       string        `json:"log_dir"`
-	MaxProles                    int           `json:"max_proles"`
-	Agents                       AgentsConfig  `json:"agents"`
-	PollingIntervalSeconds       int           `json:"polling_interval_seconds"`
-	NudgeCooldownSeconds         int           `json:"nudge_cooldown_seconds"`
-	ContextHandoffThreshold      float64       `json:"context_handoff_threshold"`
-	StuckAgentThresholdSeconds   int           `json:"stuck_agent_threshold_seconds"`
-	WorktreePruneIntervalSeconds int           `json:"worktree_prune_interval_seconds"`
-	WorktreeResetIntervalSeconds int           `json:"worktree_reset_interval_seconds"`
-	PRBackfillIntervalSeconds    int           `json:"pr_backfill_interval_seconds"`
-	RestartDeadAgents            bool          `json:"restart_dead_agents"`
-	RestartCooldownSeconds       int           `json:"restart_cooldown_seconds"`
-	RepairCycleThreshold         int           `json:"repair_cycle_threshold"`
-	TDD                          bool          `json:"tdd"`
-	Quality                      QualityConfig `json:"quality"`
+	Version                         string        `json:"version"`
+	TicketPrefix                    string        `json:"ticket_prefix"`
+	ProjectRoot                     string        `json:"project_root"`
+	GithubRepo                      string        `json:"github_repo"`
+	Dolt                            DoltConfig    `json:"dolt"`
+	LogDir                          string        `json:"log_dir"`
+	MaxProles                       int           `json:"max_proles"`
+	Agents                          AgentsConfig  `json:"agents"`
+	PollingIntervalSeconds          int           `json:"polling_interval_seconds"`
+	NudgeCooldownSeconds            int           `json:"nudge_cooldown_seconds"`
+	ContextHandoffThreshold         float64       `json:"context_handoff_threshold"`
+	StuckAgentThresholdSeconds      int           `json:"stuck_agent_threshold_seconds"`
+	WorktreePruneIntervalSeconds    int           `json:"worktree_prune_interval_seconds"`
+	WorktreeResetIntervalSeconds    int           `json:"worktree_reset_interval_seconds"`
+	PRBackfillIntervalSeconds       int           `json:"pr_backfill_interval_seconds"`
+	RestartDeadAgents               bool          `json:"restart_dead_agents"`
+	RestartCooldownSeconds          int           `json:"restart_cooldown_seconds"`
+	RepairCycleThreshold            int           `json:"repair_cycle_threshold"`
+	ReviewerFollowUpIntervalSeconds int           `json:"reviewer_follow_up_interval_seconds"`
+	ReviewerFollowUpNReviews        int           `json:"reviewer_follow_up_n_reviews"`
+	TDD                             bool          `json:"tdd"`
+	Quality                         QualityConfig `json:"quality"`
 }
 
 // CompanyTownDir returns the .company_town directory path for a project root.
@@ -253,16 +255,18 @@ func DefaultConfig(projectRoot, githubRepo string) *Config {
 				},
 			},
 		},
-		PollingIntervalSeconds:       30,
-		NudgeCooldownSeconds:         300,
-		ContextHandoffThreshold:      0.80,
-		StuckAgentThresholdSeconds:   1800,
-		WorktreePruneIntervalSeconds: 300,
-		WorktreeResetIntervalSeconds: 60,
-		PRBackfillIntervalSeconds:    300,
-		RestartDeadAgents:            true,
-		RestartCooldownSeconds:       300,
-		RepairCycleThreshold:         3,
+		PollingIntervalSeconds:          30,
+		NudgeCooldownSeconds:            300,
+		ContextHandoffThreshold:         0.80,
+		StuckAgentThresholdSeconds:      1800,
+		WorktreePruneIntervalSeconds:    300,
+		WorktreeResetIntervalSeconds:    60,
+		PRBackfillIntervalSeconds:       300,
+		RestartDeadAgents:               true,
+		RestartCooldownSeconds:          300,
+		RepairCycleThreshold:            3,
+		ReviewerFollowUpIntervalSeconds: 1800,
+		ReviewerFollowUpNReviews:        5,
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,

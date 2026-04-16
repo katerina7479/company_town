@@ -101,6 +101,12 @@ type Daemon struct {
 	// Repair-cycle escalation
 	repairCycleThreshold int
 
+	// Reviewer follow-up reminder
+	followUpInterval     time.Duration
+	followUpNReviews     int
+	reviewsSinceFollowUp int
+	lastFollowUpNudge    time.Time
+
 	// Review comment fetching (injectable for tests)
 	getReviewCommentsFn func(prNum int) ([]prComment, error)
 
@@ -170,6 +176,8 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 		lastRestartedAt:      make(map[string]time.Time),
 		restartAgent:         makeRestartFn(cfg, agentRepo, logger),
 		repairCycleThreshold: cfg.RepairCycleThreshold,
+		followUpInterval:     time.Duration(cfg.ReviewerFollowUpIntervalSeconds) * time.Second,
+		followUpNReviews:     cfg.ReviewerFollowUpNReviews,
 		tickFile:             filepath.Join(ctDir, "run", "daemon-tick"),
 	}, nil
 }
@@ -394,6 +402,7 @@ func (d *Daemon) poll() {
 	d.handleIdleAssignedProles()
 	d.handleWorkingOpenTickets()
 	d.handleInReviewTickets()
+	d.handleFollowUpReminder()
 	d.handlePREvents()
 	d.handleRepairCycleEscalation()
 	d.handleStuckPrompts()
@@ -1224,6 +1233,50 @@ func (d *Daemon) handleInReviewTickets() {
 	}
 }
 
+// handleFollowUpReminder sends a periodic reminder to active reviewer sessions
+// to file follow-up tickets for non-blocking notes from recent reviews.
+//
+// It fires when either of two conditions is met (whichever comes first):
+//   - reviewsSinceFollowUp has reached followUpNReviews (count-based trigger)
+//   - followUpInterval has elapsed since the last reminder (time-based trigger)
+//
+// After firing, the review counter is reset and the nudge timestamp updated so
+// both triggers are re-armed together.
+func (d *Daemon) handleFollowUpReminder() {
+	sessions := d.nudgeableReviewerSessions()
+	if len(sessions) == 0 {
+		return
+	}
+
+	nReached := d.followUpNReviews > 0 && d.reviewsSinceFollowUp >= d.followUpNReviews
+	var timeElapsed bool
+	if d.followUpInterval > 0 {
+		timeElapsed = d.nowFn().Sub(d.lastFollowUpNudge) >= d.followUpInterval
+	} else {
+		// Zero interval means disabled — only the count trigger fires.
+		timeElapsed = false
+	}
+
+	if !nReached && !timeElapsed {
+		return
+	}
+
+	msg := "Reminder: file follow-up tickets for any non-blocking notes from recent reviews."
+	nudged := 0
+	for _, s := range sessions {
+		if err := d.sendKeys(s, msg); err != nil {
+			d.logger.Printf("error sending follow-up reminder to reviewer %s: %v", s, err)
+		} else {
+			nudged++
+		}
+	}
+	if nudged > 0 {
+		d.logger.Printf("sent follow-up reminder to %d reviewer(s) (reviews since last nudge: %d)", nudged, d.reviewsSinceFollowUp)
+		d.lastFollowUpNudge = d.nowFn()
+		d.reviewsSinceFollowUp = 0
+	}
+}
+
 // nudgeableReviewerSessions returns session names for reviewer agents that are
 // alive, have an active tmux session, and are NOT already working.
 func (d *Daemon) nudgeableReviewerSessions() []string {
@@ -1360,6 +1413,7 @@ func (d *Daemon) handleCIPass(issue *repo.Issue, prNum int) {
 	if d.obs != nil {
 		d.obs.prEventsCIPass++
 	}
+	d.reviewsSinceFollowUp++
 }
 
 // handleCIFailure moves a ci_running ticket to repairing and nudges the assigned
