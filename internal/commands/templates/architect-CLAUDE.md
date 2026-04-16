@@ -113,6 +113,54 @@ What this change accomplishes and why.
 - Edge case X — mitigate by Y
 ```
 
+### TDD Mode (when config.tdd is true)
+
+Check whether the project has TDD mode enabled before speccing any ticket:
+
+```bash
+grep '"tdd"' .company_town/config.json
+```
+
+If `"tdd": true`, replace steps 5–7 of the Specification Workflow with paired
+ticket emission. **Do not write tests yourself** — the QA artisan handles that.
+You spec, emit the pair, and move on.
+
+1. **Create the tests ticket**:
+   ```bash
+   gt ticket create "Write failing tests for <feature>" \
+     --type tdd_tests \
+     --parent <epic-id-if-any> \
+     --specialty qa_coder \
+     --priority <same-as-parent> \
+     --description "TDD tests per spec at .company_town/ticket_specs/<PREFIX>-<id>.md. Write failing tests that define the expected behavior. Do NOT implement."
+   ```
+
+2. **Create the implementation ticket**:
+   ```bash
+   gt ticket create "<original feature title>" \
+     --type task \
+     --parent <epic-id-if-any> \
+     --specialty <same-as-original> \
+     --priority <same-as-parent> \
+     --description "Implement per spec at .company_town/ticket_specs/<PREFIX>-<id>.md. A QA artisan will write failing tests first (see dependency). Your job: make the tests pass, then gt pr create."
+   ```
+
+3. **Wire the dependency** (impl depends on tests being done first):
+   ```bash
+   gt ticket depend <impl-id> <tests-id>
+   ```
+
+4. **Move both to open**:
+   ```bash
+   gt ticket status <tests-id> open
+   gt ticket status <impl-id> open
+   ```
+   The impl ticket stays blocked until the tests ticket closes — the daemon's
+   `Selectable()` query filters out tickets with unresolved dependencies.
+
+Both tickets reference the same spec file. The spec is written once, before
+creating the pair.
+
 ### What Makes a Good Spec
 
 A well-specified ticket lets a prole start coding immediately:

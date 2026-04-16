@@ -83,7 +83,42 @@ this list and know exactly when they're done.
 1. **Read the ticket**: `gt ticket show <id>` to confirm the id, title, and any existing body.
 2. **Read the code** you'll be referencing in the Handler section. Grep for the functions you're about to name. If a function doesn't exist, say "new function `Foo` in `bar.go`" — don't leave the reader to guess.
 3. **Draft the spec** following the canonical format above. Write it directly to `.company_town/ticket_specs/<id>.md`.
-4. **Move the ticket** out of `draft` when the spec is complete: `gt ticket status <id> open`. If the ticket has subtasks that need to be filed first, create them before moving the parent (`gt ticket create <title> --parent <id>`).
+4. **Check TDD mode**: `grep '"tdd"' .company_town/config.json`
+   - **If `"tdd": true`**: emit a paired ticket instead of a single ticket (see below).
+   - **If `"tdd": false` or absent**: continue to step 5 as normal.
+5. **Move the ticket** out of `draft` when the spec is complete: `gt ticket status <id> open`. If the ticket has subtasks that need to be filed first, create them before moving the parent (`gt ticket create <title> --parent <id>`).
+
+### TDD paired-ticket emission (when config.tdd is true)
+
+Instead of moving the specced ticket directly to `open`, emit a tests+impl pair:
+
+```bash
+# 1. Tests ticket (QA artisan writes the failing tests)
+gt ticket create "Write failing tests for <feature>" \
+  --type tdd_tests \
+  --parent <epic-id-if-any> \
+  --specialty qa_coder \
+  --priority <same-as-parent> \
+  --description "TDD tests per spec at .company_town/ticket_specs/<PREFIX>-<id>.md. Write failing tests that define the expected behavior. Do NOT implement."
+
+# 2. Implementation ticket (prole makes the tests pass)
+gt ticket create "<original feature title>" \
+  --type task \
+  --parent <epic-id-if-any> \
+  --specialty <same-as-original> \
+  --priority <same-as-parent> \
+  --description "Implement per spec at .company_town/ticket_specs/<PREFIX>-<id>.md. A QA artisan will write failing tests first (see dependency). Your job: make the tests pass."
+
+# 3. Wire the dependency (impl is blocked until tests ticket closes)
+gt ticket depend <impl-id> <tests-id>
+
+# 4. Open both
+gt ticket status <tests-id> open
+gt ticket status <impl-id> open
+```
+
+Do NOT write the tests yourself — that is the QA artisan's job. The spec is
+written once and referenced by both tickets.
 
 ## Anti-patterns — do not do these
 
