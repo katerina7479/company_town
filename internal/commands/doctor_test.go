@@ -133,34 +133,119 @@ func TestCheckTmux(t *testing.T) {
 	}
 }
 
-// --- checkGH ---
+// --- checkVCSCLI ---
 
-func TestCheckGH(t *testing.T) {
-	cases := []struct {
-		name     string
-		ghErr    error
-		authErr  error
-		wantStat string
-	}{
-		{"ok", nil, nil, "ok"},
-		{"not found", errors.New("not found"), nil, "fail"},
-		{"not authenticated", nil, errors.New("not logged in"), "fail"},
+func TestCheckVCSCLI_github_ok(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			return "gh version 2.0.0", nil
+		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			deps := doctorDeps{
-				runCmd: func(name string, args ...string) (string, error) {
-					if len(args) > 0 && args[0] == "auth" {
-						return "", tc.authErr
-					}
-					return "gh version 2.0.0", tc.ghErr
-				},
+	r := checkVCSCLI(deps, "github")
+	if r.Status != "ok" {
+		t.Errorf("status=%q want=ok detail=%q", r.Status, r.Detail)
+	}
+	if r.Name != "gh" {
+		t.Errorf("name=%q want=gh", r.Name)
+	}
+}
+
+func TestCheckVCSCLI_github_notInstalled(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			return "", errors.New("not found")
+		},
+	}
+	r := checkVCSCLI(deps, "github")
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if r.Name != "gh" {
+		t.Errorf("name=%q want=gh", r.Name)
+	}
+	if r.Detail != "not found" {
+		t.Errorf("detail=%q want=not found", r.Detail)
+	}
+	if r.Fix != "brew install gh" {
+		t.Errorf("fix=%q want=brew install gh", r.Fix)
+	}
+}
+
+func TestCheckVCSCLI_github_notAuthenticated(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			if len(args) > 0 && args[0] == "auth" {
+				return "", errors.New("not logged in")
 			}
-			r := checkGH(deps)
-			if r.Status != tc.wantStat {
-				t.Errorf("status=%q want=%q detail=%q", r.Status, tc.wantStat, r.Detail)
+			return "gh version 2.0.0", nil
+		},
+	}
+	r := checkVCSCLI(deps, "github")
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if r.Detail != "not authenticated" {
+		t.Errorf("detail=%q want=not authenticated", r.Detail)
+	}
+	if r.Fix != "gh auth login" {
+		t.Errorf("fix=%q want=gh auth login", r.Fix)
+	}
+}
+
+func TestCheckVCSCLI_gitlab_ok(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			return "glab version 1.43.2", nil
+		},
+	}
+	r := checkVCSCLI(deps, "gitlab")
+	if r.Status != "ok" {
+		t.Errorf("status=%q want=ok detail=%q", r.Status, r.Detail)
+	}
+	if r.Name != "glab" {
+		t.Errorf("name=%q want=glab", r.Name)
+	}
+}
+
+func TestCheckVCSCLI_gitlab_notInstalled(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			return "", errors.New("not found")
+		},
+	}
+	r := checkVCSCLI(deps, "gitlab")
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if r.Name != "glab" {
+		t.Errorf("name=%q want=glab", r.Name)
+	}
+	if r.Detail != "not found" {
+		t.Errorf("detail=%q want=not found", r.Detail)
+	}
+	if r.Fix != "brew install glab" {
+		t.Errorf("fix=%q want=brew install glab", r.Fix)
+	}
+}
+
+func TestCheckVCSCLI_gitlab_notAuthenticated(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			if len(args) > 0 && args[0] == "auth" {
+				return "", errors.New("not logged in")
 			}
-		})
+			return "glab version 1.43.2", nil
+		},
+	}
+	r := checkVCSCLI(deps, "gitlab")
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if r.Detail != "not authenticated" {
+		t.Errorf("detail=%q want=not authenticated", r.Detail)
+	}
+	if r.Fix != "glab auth login" {
+		t.Errorf("fix=%q want=glab auth login", r.Fix)
 	}
 }
 
@@ -408,6 +493,54 @@ func TestRunDoctor_oneFail(t *testing.T) {
 	_, anyFail := runDoctor(deps)
 	if !anyFail {
 		t.Error("expected a failure")
+	}
+}
+
+func TestRunDoctor_gitlabPlatform(t *testing.T) {
+	gitlabCfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Platform:     "gitlab",
+		Repo:         "mygroup/myrepo",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			switch name {
+			case "dolt":
+				return "dolt version 1.50.1", nil
+			case "tmux":
+				return "tmux 3.4", nil
+			case "glab":
+				return "glab version 1.43.2", nil
+			case "git":
+				return "git version 2.47.0", nil
+			}
+			return "", nil
+		},
+		findRoot:      func() (string, error) { return "/tmp/proj", nil },
+		loadConfig:    func(root string) (*config.Config, error) { return gitlabCfg, nil },
+		sessionExists: func(name string) bool { return true },
+	}
+	results, anyFail := runDoctor(deps)
+	if anyFail {
+		t.Error("expected no failures")
+	}
+	hasGlab := false
+	hasGH := false
+	for _, r := range results {
+		if r.Name == "glab" {
+			hasGlab = true
+		}
+		if r.Name == "gh" {
+			hasGH = true
+		}
+	}
+	if !hasGlab {
+		t.Error("expected glab row in results for gitlab platform")
+	}
+	if hasGH {
+		t.Error("expected no gh row in results for gitlab platform")
 	}
 }
 
