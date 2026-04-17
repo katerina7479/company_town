@@ -134,26 +134,33 @@ func checkTmux(deps doctorDeps) checkResult {
 	return checkResult{Name: "tmux", Status: "ok", Detail: ver}
 }
 
-func checkGH(deps doctorDeps) checkResult {
-	_, err := deps.runCmd("gh", "--version")
-	if err != nil {
+func checkVCSCLI(deps doctorDeps, platform string) checkResult {
+	switch platform {
+	case "gitlab":
+		return checkCLI(deps, "glab", "brew install glab", "glab auth login")
+	default:
+		return checkCLI(deps, "gh", "brew install gh", "gh auth login")
+	}
+}
+
+func checkCLI(deps doctorDeps, name, installFix, authFix string) checkResult {
+	if _, err := deps.runCmd(name, "--version"); err != nil {
 		return checkResult{
-			Name:   "gh",
+			Name:   name,
 			Status: "fail",
 			Detail: "not found",
-			Fix:    "brew install gh",
+			Fix:    installFix,
 		}
 	}
-	_, authErr := deps.runCmd("gh", "auth", "status")
-	if authErr != nil {
+	if _, err := deps.runCmd(name, "auth", "status"); err != nil {
 		return checkResult{
-			Name:   "gh",
+			Name:   name,
 			Status: "fail",
 			Detail: "not authenticated",
-			Fix:    "gh auth login",
+			Fix:    authFix,
 		}
 	}
-	return checkResult{Name: "gh", Status: "ok", Detail: "authenticated"}
+	return checkResult{Name: name, Status: "ok", Detail: "authenticated"}
 }
 
 func checkGit(deps doctorDeps) checkResult {
@@ -247,11 +254,16 @@ func runDoctor(deps doctorDeps) ([]checkResult, bool) {
 	results := []checkResult{
 		checkDolt(deps),
 		checkTmux(deps),
-		checkGH(deps),
 		checkGit(deps),
 	}
 
 	cfgResult, cfg := checkConfig(deps)
+
+	platform := "github"
+	if cfg != nil && cfg.Platform != "" {
+		platform = cfg.Platform
+	}
+	results = append(results, checkVCSCLI(deps, platform))
 	results = append(results, cfgResult)
 
 	// Only check daemon if we're inside a project.
