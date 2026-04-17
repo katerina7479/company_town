@@ -10,6 +10,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/session"
+	"github.com/katerina7479/company_town/internal/vcs/gitlab"
 )
 
 var (
@@ -137,10 +138,48 @@ func checkTmux(deps doctorDeps) checkResult {
 func checkVCSCLI(deps doctorDeps, platform string) checkResult {
 	switch platform {
 	case "gitlab":
-		return checkCLI(deps, "glab", "brew install glab", "glab auth login")
+		return checkGlabCLI(deps)
 	default:
 		return checkCLI(deps, "gh", "brew install gh", "gh auth login")
 	}
+}
+
+// checkGlabCLI checks glab installation, authentication, and version against
+// gitlab.MinSupportedVersion. A version below the minimum emits a warn, not a fail,
+// so the user can still operate while upgrading.
+func checkGlabCLI(deps doctorDeps) checkResult {
+	out, err := deps.runCmd("glab", "--version")
+	if err != nil {
+		return checkResult{
+			Name:   "glab",
+			Status: "fail",
+			Detail: "not found",
+			Fix:    "brew install glab",
+		}
+	}
+	if _, err := deps.runCmd("glab", "auth", "status"); err != nil {
+		return checkResult{
+			Name:   "glab",
+			Status: "fail",
+			Detail: "not authenticated",
+			Fix:    "glab auth login",
+		}
+	}
+	maj, min, pat, ok := parseVersion(out)
+	if !ok {
+		return checkResult{Name: "glab", Status: "warn", Detail: "authenticated (version unknown)"}
+	}
+	ver := fmt.Sprintf("%d.%d.%d", maj, min, pat)
+	reqMaj, reqMin, reqPat, _ := parseVersion(gitlab.MinSupportedVersion)
+	if !versionAtLeast(maj, min, pat, reqMaj, reqMin, reqPat) {
+		return checkResult{
+			Name:   "glab",
+			Status: "warn",
+			Detail: fmt.Sprintf("%s (need >= %s)", ver, gitlab.MinSupportedVersion),
+			Fix:    "brew upgrade glab",
+		}
+	}
+	return checkResult{Name: "glab", Status: "ok", Detail: ver}
 }
 
 func checkCLI(deps doctorDeps, name, installFix, authFix string) checkResult {
