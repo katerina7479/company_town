@@ -249,6 +249,54 @@ func TestCheckVCSCLI_gitlab_notAuthenticated(t *testing.T) {
 	}
 }
 
+func TestCheckVCSCLI_gitlab_tooOld(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			return "glab version 1.42.0", nil
+		},
+	}
+	r := checkVCSCLI(deps, "gitlab")
+	if r.Status != "warn" {
+		t.Errorf("status=%q want=warn detail=%q", r.Status, r.Detail)
+	}
+	if !strings.Contains(r.Detail, "1.42.0") {
+		t.Errorf("detail %q should contain installed version", r.Detail)
+	}
+	if !strings.Contains(r.Detail, "1.43.0") {
+		t.Errorf("detail %q should contain minimum version", r.Detail)
+	}
+	if r.Fix == "" {
+		t.Error("expected Fix to be set for outdated glab")
+	}
+}
+
+func TestCheckVCSCLI_gitlab_exactMinVersion(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			return "glab version 1.43.0", nil
+		},
+	}
+	r := checkVCSCLI(deps, "gitlab")
+	if r.Status != "ok" {
+		t.Errorf("status=%q want=ok detail=%q", r.Status, r.Detail)
+	}
+}
+
+func TestCheckVCSCLI_gitlab_versionUnknown(t *testing.T) {
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			return "glab (unknown build)", nil
+		},
+	}
+	r := checkVCSCLI(deps, "gitlab")
+	if r.Status != "warn" {
+		t.Errorf("status=%q want=warn detail=%q", r.Status, r.Detail)
+	}
+	if r.Name != "glab" {
+		t.Errorf("name=%q want=glab", r.Name)
+	}
+}
+
 // --- checkGit ---
 
 func TestCheckGit(t *testing.T) {
