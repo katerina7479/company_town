@@ -100,6 +100,7 @@ type Config struct {
 	ReviewerFollowUpIntervalSeconds int           `json:"reviewer_follow_up_interval_seconds"`
 	ReviewerFollowUpNReviews        int           `json:"reviewer_follow_up_n_reviews"`
 	TDD                             bool          `json:"tdd"`
+	Language                        string        `json:"language"` // "go", "python", "" (agnostic)
 	Quality                         QualityConfig `json:"quality"`
 }
 

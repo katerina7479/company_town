@@ -17,6 +17,7 @@
 package prole
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -261,6 +262,12 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		return fmt.Errorf("deploying CLAUDE.md: %w", err)
 	}
 
+	// Deploy .claude/settings.json with language-appropriate Bash allowlist.
+	// Must run before CreateInteractive so provisionClaudeSettings finds it present.
+	if err := deployProleSettings(name, cfg); err != nil {
+		return fmt.Errorf("deploying .claude/settings.json: %w", err)
+	}
+
 	// Launch tmux session
 	sessionName := session.SessionName("prole-" + name)
 	prompt := fmt.Sprintf(
@@ -483,6 +490,57 @@ func deployProleCLAUDEMD(name, wtPath string, cfg *config.Config) error {
 	}
 
 	return os.WriteFile(filepath.Join(proleDir, "CLAUDE.md"), []byte(content), 0644)
+}
+
+// proleSettingsJSON builds the .claude/settings.json content for a prole.
+// The base allowlist (gt, git, go, make, ct) is always present. Language-specific
+// tools are appended: python adds python/pytest/pip; js adds npm/pnpm/node.
+// gh, glab, and dolt are intentionally excluded — those mutations must flow
+// through gt (which routes them through vcs.Provider and the SQL connection).
+func proleSettingsJSON(language string) ([]byte, error) {
+	allow := []string{
+		"Bash(make:*)",
+		"Bash(go:*)",
+		"Bash(git:*)",
+		"Bash(gt:*)",
+		"Bash(ct:*)",
+	}
+	switch language {
+	case "python":
+		allow = append(allow, "Bash(python:*)", "Bash(pytest:*)", "Bash(pip:*)")
+	case "js", "javascript":
+		allow = append(allow, "Bash(npm:*)", "Bash(pnpm:*)", "Bash(node:*)")
+	}
+
+	type perms struct {
+		Allow []string `json:"allow"`
+	}
+	type settings struct {
+		Permissions perms `json:"permissions"`
+	}
+
+	return json.MarshalIndent(settings{Permissions: perms{Allow: allow}}, "", "  ")
+}
+
+// deployProleSettings writes .claude/settings.json to the prole's agent directory
+// (.company_town/proles/<name>/.claude/settings.json) with a Bash allowlist tuned
+// to cfg.Language. Called before CreateInteractive so provisionClaudeSettings finds
+// the file already present and skips its generic fallback write.
+func deployProleSettings(name string, cfg *config.Config) error {
+	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
+	proleDir := filepath.Join(ctDir, "proles", name)
+
+	data, err := proleSettingsJSON(cfg.Language)
+	if err != nil {
+		return fmt.Errorf("generating prole settings: %w", err)
+	}
+
+	claudeDir := filepath.Join(proleDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		return fmt.Errorf("creating .claude dir: %w", err)
+	}
+
+	return os.WriteFile(filepath.Join(claudeDir, "settings.json"), append(data, '\n'), 0644)
 }
 
 // SwitchToBranch fetches branch from origin into the bare repo and checks it

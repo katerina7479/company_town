@@ -796,6 +796,112 @@ func TestDeployProleCLAUDEMD_errorWhenTemplateMissing(t *testing.T) {
 	}
 }
 
+// --- deployProleSettings tests ---
+
+func TestDeployProleSettings_baseAllowlistAlwaysPresent(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ProjectRoot: root, Language: ""}
+	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
+	if err := os.MkdirAll(proleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deployProleSettings("iron", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(proleDir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("reading settings.json: %v", err)
+	}
+	content := string(data)
+	for _, item := range []string{"Bash(gt:*)", "Bash(git:*)", "Bash(go:*)", "Bash(make:*)", "Bash(ct:*)"} {
+		if !strings.Contains(content, item) {
+			t.Errorf("expected base allowlist item %q in settings.json, got:\n%s", item, content)
+		}
+	}
+}
+
+func TestDeployProleSettings_pythonAddsTooling(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ProjectRoot: root, Language: "python"}
+	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
+	if err := os.MkdirAll(proleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deployProleSettings("iron", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(proleDir, ".claude", "settings.json"))
+	content := string(data)
+	for _, item := range []string{"Bash(python:*)", "Bash(pytest:*)", "Bash(pip:*)"} {
+		if !strings.Contains(content, item) {
+			t.Errorf("expected python allowlist item %q in settings.json, got:\n%s", item, content)
+		}
+	}
+}
+
+func TestDeployProleSettings_goLanguage_noExtraTools(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ProjectRoot: root, Language: "go"}
+	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
+	if err := os.MkdirAll(proleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deployProleSettings("iron", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(proleDir, ".claude", "settings.json"))
+	content := string(data)
+	for _, unexpected := range []string{"Bash(python:*)", "Bash(pytest:*)", "Bash(pip:*)", "Bash(npm:*)"} {
+		if strings.Contains(content, unexpected) {
+			t.Errorf("unexpected item %q in go allowlist, got:\n%s", unexpected, content)
+		}
+	}
+}
+
+func TestDeployProleSettings_omitsForbiddenTools(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ProjectRoot: root, Language: ""}
+	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
+	if err := os.MkdirAll(proleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := deployProleSettings("iron", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(proleDir, ".claude", "settings.json"))
+	content := string(data)
+	for _, forbidden := range []string{"\"gh\"", "\"glab\"", "\"dolt\""} {
+		if strings.Contains(content, forbidden) {
+			t.Errorf("forbidden tool %q found in prole settings:\n%s", forbidden, content)
+		}
+	}
+}
+
+func TestDeployProleSettings_createsClaudeDir(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{ProjectRoot: root, Language: ""}
+	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
+	if err := os.MkdirAll(proleDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deployProleSettings("iron", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	settingsPath := filepath.Join(proleDir, ".claude", "settings.json")
+	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
+		t.Errorf("expected settings.json at %s, not found", settingsPath)
+	}
+}
+
 // --- mustGetOriginURL tests ---
 
 func TestMustGetOriginURL_fallsBackToRepo(t *testing.T) {
