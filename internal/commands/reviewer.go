@@ -13,7 +13,8 @@ import (
 )
 
 // reviewerVCSProvider is the VCS platform adapter for reviewer commands.
-var reviewerVCSProvider vcs.Provider = vcs.NewGitHub()
+// Initialized from config in ReviewerInspect; override in tests via prBranchFn.
+var reviewerVCSProvider vcs.Provider
 
 // Package-level vars for injection in tests.
 var prBranchFn func(prNumber int, repoDir string) (string, error) = func(prNumber int, repoDir string) (string, error) {
@@ -40,6 +41,13 @@ func ReviewerInspect(prNumber int) error {
 	_, cfg, err := db.OpenFromWorkingDir()
 	if err != nil {
 		return err
+	}
+	if reviewerVCSProvider == nil {
+		p, err := vcs.ProviderFromConfig(cfg.Platform, cfg.Repo)
+		if err != nil {
+			return fmt.Errorf("initializing VCS provider: %w", err)
+		}
+		reviewerVCSProvider = p
 	}
 	return reviewerInspectCore(cfg, prNumber)
 }

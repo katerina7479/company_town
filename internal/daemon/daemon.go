@@ -144,7 +144,10 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	logger := log.New(f, "[DAEMON] ", log.LstdFlags)
 	events := eventlog.NewLogger(ctDir)
 	agentRepo := repo.NewAgentRepo(db, events)
-	provider := vcs.NewGitHub()
+	provider, err := vcs.ProviderFromConfig(cfg.Platform, cfg.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("initializing VCS provider: %w", err)
+	}
 
 	return &Daemon{
 		cfg:                 cfg,
