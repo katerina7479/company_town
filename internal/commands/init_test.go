@@ -448,14 +448,14 @@ func TestCollectInitParams_nonInteractive_fallbackWhenNoDerived(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectInitParams: %v", err)
 	}
-	if params.platform != "github" {
-		t.Errorf("platform fallback = %q, want %q", params.platform, "github")
+	if params.platform != "" {
+		t.Errorf("platform fallback = %q, want empty (no detection, no github default)", params.platform)
 	}
 	if params.ticketPrefix != "tk" {
 		t.Errorf("ticketPrefix fallback = %q, want %q", params.ticketPrefix, "tk")
 	}
-	if params.repoRef != "owner/repo" {
-		t.Errorf("repoRef fallback = %q, want %q", params.repoRef, "owner/repo")
+	if params.repoRef != "" {
+		t.Errorf("repoRef fallback = %q, want empty (no detection, no fallback placeholder)", params.repoRef)
 	}
 	if params.doltDatabase != "company_town" {
 		t.Errorf("doltDatabase fallback = %q, want %q", params.doltDatabase, "company_town")
@@ -632,14 +632,14 @@ func TestCollectInitParams_nonInteractive_agnosticWhenNoMarkers(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigGithubRepoPlaceholder(t *testing.T) {
+func TestDefaultConfigRepoPlaceholder(t *testing.T) {
 	dir := t.TempDir()
 	ctDir := filepath.Join(dir, config.DirName)
 	if err := os.MkdirAll(ctDir, 0750); err != nil {
 		t.Fatalf("creating ct dir: %v", err)
 	}
 
-	cfg := config.DefaultConfig(dir, "owner/repo")
+	cfg := config.DefaultConfig(dir, "github", "owner/repo")
 	if err := config.Write(dir, cfg); err != nil {
 		t.Fatalf("config.Write: %v", err)
 	}
@@ -654,9 +654,12 @@ func TestDefaultConfigGithubRepoPlaceholder(t *testing.T) {
 		t.Fatalf("unmarshaling config.json: %v", err)
 	}
 
-	got, _ := raw["github_repo"].(string)
+	got, _ := raw["repo"].(string)
 	if got != "owner/repo" {
-		t.Errorf("github_repo = %q, want %q", got, "owner/repo")
+		t.Errorf("repo = %q, want %q", got, "owner/repo")
+	}
+	if pl, _ := raw["platform"].(string); pl != "github" {
+		t.Errorf("platform = %q, want %q", pl, "github")
 	}
 }
 

@@ -55,10 +55,11 @@ $EDITOR .company_town/config.json
 
 `ct init` creates `.company_town/`, starts the Dolt server, runs migrations, writes a `.gitignore` entry for `.company_town/` at the project root (so nothing Company Town tracks leaks into your repo), and drops a default `config.json`.
 
-At minimum, set these two fields:
+At minimum, set these three fields:
 
 - `ticket_prefix` — two or three letters used in ticket IDs, branch names, and PR titles (e.g. `nc` → `nc-42`, `[nc-42] Title`, `prole/iron/nc-42`).
-- `github_repo` — SSH or HTTPS URL of the upstream repo. Proles push branches here.
+- `platform` — `github` or `gitlab`. Required; there is no default.
+- `repo` — `owner/repo` (github) or `namespace/project` (gitlab). Proles push branches here.
 
 ### 4. Start the daemon and attach to the Mayor
 
@@ -99,7 +100,7 @@ tail -f .company_town/logs/daemon.log
 Common first-run failures:
 
 - **`tmux: command not found`** — install tmux (`brew install tmux` / `apt install tmux`).
-- **`gh: not authenticated`** — run `gh auth login` against the repo in `github_repo`.
+- **`gh: not authenticated`** (github) or **`glab: not authenticated`** (gitlab) — run `gh auth login` or `glab auth login` against the repo in `repo`.
 - **`claude: command not found`** — install and authenticate the Claude Code CLI.
 - **Dolt port already in use** — another project's Dolt server is already bound. Either stop it or change `dolt.port` in `config.json`.
 - **`ct start` exits immediately with no visible error** — check `.company_town/logs/daemon.log`; a failed migration or config parse error shows up there.
@@ -303,7 +304,8 @@ Migrations are embedded in `internal/db/migrations/` and run automatically on `c
 | Field | Purpose |
 |---|---|
 | `ticket_prefix` | Used in branch and PR titles (e.g. `nc` → `[nc-42]`, `prole/iron/nc-42`). |
-| `github_repo` | SSH or HTTPS URL of the upstream repo. Proles push here. |
+| `platform` | `github` or `gitlab`. Required. |
+| `repo` | `owner/repo` (github) or `namespace/project` (gitlab). Proles push here. |
 | `dolt.host` / `dolt.port` / `dolt.database` | Local Dolt server location. |
 | `max_proles` | Hard cap on concurrent proles. The daemon respects this. |
 | `agents.<role>.model` | Claude model per role (`opus`, `sonnet`, or a full model id). |

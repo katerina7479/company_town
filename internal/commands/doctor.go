@@ -209,18 +209,11 @@ func checkConfig(deps doctorDeps) (checkResult, *config.Config) {
 	if cfg.ProjectRoot == "" {
 		missing = append(missing, "project_root")
 	}
-	platform := cfg.Platform
-	if platform == "" {
-		platform = "github"
+	if cfg.Platform == "" {
+		missing = append(missing, "platform")
 	}
-	if platform == "gitlab" {
-		if cfg.GitlabProject == "" {
-			missing = append(missing, "gitlab_project")
-		}
-	} else {
-		if cfg.GithubRepo == "" {
-			missing = append(missing, "github_repo")
-		}
+	if cfg.Repo == "" {
+		missing = append(missing, "repo")
 	}
 	if cfg.Agents.Mayor.Model == "" {
 		missing = append(missing, "agents.mayor.model")

@@ -240,31 +240,18 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 	}
 
 	if nonInteractive {
-		platform := detectedPlatform
-		if platform == "" {
-			platform = "github"
-		}
-		repoRef := detectedRepoRef
 		if prefix == "" {
 			prefix = "tk"
 		}
-		if repoRef == "" {
-			repoRef = "owner/repo"
-		}
 		return initParams{
-			platform:       platform,
-			repoRef:        repoRef,
+			platform:       detectedPlatform, // empty if detection failed — caller must edit config.json
+			repoRef:        detectedRepoRef,  // empty if detection failed
 			ticketPrefix:   prefix,
 			doltDatabase:   dbName,
 			doltPort:       defaultPort,
 			sessionPrefix:  sesPrefix,
 			languagePreset: lang,
 		}, nil
-	}
-
-	// Default to "github" when detection finds nothing.
-	if detectedPlatform == "" {
-		detectedPlatform = "github"
 	}
 
 	fmt.Println("Configure your Company Town project (press Enter to accept the default):")
@@ -392,13 +379,7 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 			return fmt.Errorf("collecting init params: %w", err)
 		}
 
-		cfg := config.DefaultConfig(projectRoot, "")
-		cfg.Platform = params.platform
-		if params.platform == "gitlab" {
-			cfg.GitlabProject = params.repoRef
-		} else {
-			cfg.GithubRepo = params.repoRef
-		}
+		cfg := config.DefaultConfig(projectRoot, params.platform, params.repoRef)
 		cfg.TicketPrefix = params.ticketPrefix
 		cfg.SessionPrefix = params.sessionPrefix
 		cfg.Dolt.Port = params.doltPort

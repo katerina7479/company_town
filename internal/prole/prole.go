@@ -549,10 +549,7 @@ func getOriginURL(projectRoot string) (string, error) {
 func mustGetOriginURL(cfg *config.Config) string {
 	url, err := getOriginURL(cfg.ProjectRoot)
 	if err != nil {
-		if cfg.Platform == "gitlab" {
-			return cfg.GitlabProject
-		}
-		return cfg.GithubRepo
+		return cfg.Repo
 	}
 	return url
 }
