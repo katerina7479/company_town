@@ -278,6 +278,19 @@ CRITICAL: always prefix the review body with `[ct-reviewer]`. The daemon uses
 this sentinel to distinguish your comments from human feedback. A missing
 prefix will cause your own LGTM to bounce the ticket to repairing.
 
+CRITICAL: on **GitLab**, when requesting changes the body must start with
+`[ct-reviewer][changes-requested]` (in that exact order). `[ct-reviewer]` must
+come first so the daemon's human-feedback check skips it; `[changes-requested]`
+must follow immediately so `GetReviewCommentsRaw` classifies the note as
+CHANGES_REQUESTED instead of COMMENTED. Without this sentinel the daemon cannot
+detect that the AI reviewer requested changes, and the repair flow breaks.
+
+Examples:
+- GitHub approval: `[ct-reviewer] LGTM at <sha>. ...`
+- GitHub request-changes: `[ct-reviewer] Changes requested. ...`
+- GitLab approval: `[ct-reviewer] LGTM at <sha>. ...`
+- GitLab request-changes: `[ct-reviewer][changes-requested] Changes requested. ...`
+
 CRITICAL: always use `--body-file` when posting review comments — never use
 `-b '...'` with inline content. Single-quote escaping of complex bodies is
 error-prone and caused a double-post incident on PR #97. Write the body to a

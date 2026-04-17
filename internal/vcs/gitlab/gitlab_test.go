@@ -449,6 +449,35 @@ func TestGetReviewCommentsRaw_synthesizesJSONL(t *testing.T) {
 	}
 }
 
+// --- hasChangesRequestedSentinel ---
+
+func TestHasChangesRequestedSentinel(t *testing.T) {
+	cases := []struct {
+		body string
+		want bool
+	}{
+		// Plain sentinel (legacy / backward-compat)
+		{"[changes-requested] Please fix.", true},
+		{"[changes-requested]No space still works.", true},
+		// Canonical combined prefix
+		{"[ct-reviewer][changes-requested] Changes requested.", true},
+		{"[ct-reviewer] [changes-requested] with a space", true},
+		// Approval — should not match
+		{"[ct-reviewer] LGTM at abc1234.", false},
+		// Ordinary comment
+		{"This is a plain comment.", false},
+		{"[ct-reviewer] Some plain feedback.", false},
+		// sentinel embedded mid-body — should NOT match
+		{"Some comment mentioning [changes-requested] inline.", false},
+	}
+	for _, tc := range cases {
+		got := hasChangesRequestedSentinel(tc.body)
+		if got != tc.want {
+			t.Errorf("hasChangesRequestedSentinel(%q) = %v, want %v", tc.body, got, tc.want)
+		}
+	}
+}
+
 func TestGetReviewCommentsRaw_emptyWhenNoReviews(t *testing.T) {
 	viewGolden := loadTestdata(t, "mr_view_open.json") // no approved_by
 	p := newTestProvider(seqStub([][]byte{viewGolden, []byte("[]")}))
@@ -459,6 +488,42 @@ func TestGetReviewCommentsRaw_emptyWhenNoReviews(t *testing.T) {
 	}
 	if len(strings.TrimSpace(string(out))) != 0 {
 		t.Errorf("expected empty output for no reviews, got: %q", out)
+	}
+}
+
+func TestGetReviewCommentsRaw_combinedSentinel(t *testing.T) {
+	// Verify that [ct-reviewer][changes-requested] (canonical AI format) is
+	// classified as CHANGES_REQUESTED, not COMMENTED.
+	viewGolden := loadTestdata(t, "mr_view_open.json") // no approved_by
+	notes := []byte(`[
+		{"id":1,"body":"[ct-reviewer][changes-requested] Changes requested.","created_at":"2026-04-16T10:00:00Z","author":{"id":2,"username":"reviewer","name":"Reviewer"}},
+		{"id":2,"body":"[ct-reviewer] LGTM at abc.","created_at":"2026-04-16T11:00:00Z","author":{"id":2,"username":"reviewer","name":"Reviewer"}}
+	]`)
+	p := newTestProvider(seqStub([][]byte{viewGolden, notes}))
+
+	out, err := p.GetReviewCommentsRaw(42, "/repo")
+	if err != nil {
+		t.Fatalf("GetReviewCommentsRaw: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %s", len(lines), out)
+	}
+
+	var first, second struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("parse line 0: %v", err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("parse line 1: %v", err)
+	}
+	if first.State != "CHANGES_REQUESTED" {
+		t.Errorf("[ct-reviewer][changes-requested] classified as %q, want CHANGES_REQUESTED", first.State)
+	}
+	if second.State != "COMMENTED" {
+		t.Errorf("[ct-reviewer] LGTM classified as %q, want COMMENTED", second.State)
 	}
 }
 

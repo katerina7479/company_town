@@ -21,10 +21,16 @@
 //
 // 4. [changes-requested] note convention. GetReviewCommentsRaw synthesises
 // review records from approvals (approved_by) and MR notes. Notes whose body
-// starts with "[changes-requested]" are reported as CHANGES_REQUESTED reviews;
-// all other notes are COMMENTED. Reviewer agents on GitLab projects must
-// prefix request-changes comments with this sentinel so the daemon can
-// distinguish them from ordinary feedback.
+// starts with "[changes-requested]" — or with "[ct-reviewer][changes-requested]"
+// — are reported as CHANGES_REQUESTED reviews; all other notes are COMMENTED.
+// The canonical format for AI reviewer request-changes comments on GitLab is:
+//
+//	[ct-reviewer][changes-requested] Changes requested. ...
+//
+// The [ct-reviewer] prefix must come first so the daemon's human-feedback
+// detection (which checks HasPrefix "[ct-reviewer]") skips it. The
+// [changes-requested] sentinel must follow immediately so GetReviewCommentsRaw
+// can classify the note state correctly.
 //
 // 5. Locked MR state. GitLab "locked" MRs are reported as OPEN because
 // they are still effectively in-flight from Company Town's perspective. A
