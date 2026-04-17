@@ -37,12 +37,12 @@ EOF
 
 **CRITICAL**: The body must start with `[ct-reviewer]`. The daemon uses this sentinel to distinguish your comments from human feedback. A missing prefix will cause your own LGTM to bounce the ticket to repairing.
 
-For an approval:
+For an approval (any platform):
 ```
 [ct-reviewer] LGTM at <sha>. <any merge-relevant notes>
 ```
 
-For changes requested — use the format from your CLAUDE.md Review Comment Format section:
+For changes requested on **GitHub**:
 ```
 [ct-reviewer] Changes requested.
 
@@ -52,6 +52,18 @@ For changes requested — use the format from your CLAUDE.md Review Comment Form
 [non-blocking] Filed NC-201 for the missing prole_test.go edge case.
 [non-blocking] Filed NC-202 for the TODO on dashboard.go:442.
 ```
+
+For changes requested on **GitLab**: the `[changes-requested]` sentinel must immediately follow `[ct-reviewer]` so the GitLab adapter classifies the note as CHANGES_REQUESTED:
+```
+[ct-reviewer][changes-requested] Changes requested.
+
+- `path/to/file.go:42` — <one-line fix required>
+- `path/to/other.go:17` — <one-line fix required>
+
+[non-blocking] Filed NC-201 for the missing prole_test.go edge case.
+```
+
+**Why both prefixes?** `[ct-reviewer]` must be first so the daemon skips the note when scanning for human feedback (it checks `HasPrefix "[ct-reviewer]"`). `[changes-requested]` must follow immediately so `GetReviewCommentsRaw` classifies the note as CHANGES_REQUESTED rather than COMMENTED. On GitLab there is no first-class request-changes review state — only this sentinel bridges the gap.
 
 Cite every follow-up you filed in Step 1 as a `[non-blocking]` line so the PR author sees what you punted.
 

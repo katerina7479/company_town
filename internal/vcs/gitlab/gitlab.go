@@ -315,8 +315,9 @@ func (p *Provider) GetPRStateJSON(prNum int, repoDir string) ([]byte, error) {
 
 // GetReviewCommentsRaw returns JSONL review records for the given MR.
 // Each line is a JSON object with author, authorType, state, body fields.
-// Approvals produce APPROVED state; notes whose body starts with
-// "[changes-requested]" produce CHANGES_REQUESTED; all other notes produce
+// Approvals produce APPROVED state; notes whose body contains
+// "[changes-requested]" (as a leading sentinel, optionally preceded by
+// "[ct-reviewer]") produce CHANGES_REQUESTED; all other notes produce
 // COMMENTED. See doc.go for the convention details.
 func (p *Provider) GetReviewCommentsRaw(prNum int, repoDir string) ([]byte, error) {
 	mr, err := p.glabView(prNum, repoDir)
@@ -353,7 +354,7 @@ func (p *Provider) GetReviewCommentsRaw(prNum int, repoDir string) ([]byte, erro
 	}
 	for _, n := range notes {
 		state := "COMMENTED"
-		if strings.HasPrefix(n.Body, "[changes-requested]") {
+		if hasChangesRequestedSentinel(n.Body) {
 			state = "CHANGES_REQUESTED"
 		}
 		b, _ := json.Marshal(reviewLine{
@@ -388,6 +389,24 @@ func (p *Provider) FindPRByBranch(branch, repoDir string) (int, bool, error) {
 		return 0, false, nil
 	}
 	return pickMostRecentMR(results), true, nil
+}
+
+// hasChangesRequestedSentinel reports whether body carries the [changes-requested]
+// sentinel. The reviewer may prepend [ct-reviewer] first (the canonical format
+// is "[ct-reviewer][changes-requested] ..."), so the check scans the first
+// two tokens rather than requiring an exact prefix.
+func hasChangesRequestedSentinel(body string) bool {
+	const sentinel = "[changes-requested]"
+	trimmed := strings.TrimSpace(body)
+	if strings.HasPrefix(trimmed, sentinel) {
+		return true
+	}
+	// Allow [ct-reviewer][changes-requested] prefix.
+	const ctPrefix = "[ct-reviewer]"
+	if strings.HasPrefix(trimmed, ctPrefix) {
+		return strings.HasPrefix(strings.TrimSpace(trimmed[len(ctPrefix):]), sentinel)
+	}
+	return false
 }
 
 // pickMostRecentMR selects the most authoritative MR from a list.
