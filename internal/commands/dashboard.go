@@ -148,6 +148,10 @@ func newDashboardModel() (*dashboardModel, error) {
 	if pollingInterval <= 0 {
 		pollingInterval = 10 * time.Second
 	}
+	dashProvider, err := vcs.ProviderFromConfig(cfg.Platform, cfg.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("initializing VCS provider: %w", err)
+	}
 	return &dashboardModel{
 		conn:          conn,
 		agents:        repo.NewAgentRepo(conn, nil),
@@ -157,7 +161,7 @@ func newDashboardModel() (*dashboardModel, error) {
 		sendKeys:      session.SendKeys,
 		restartAgent:  defaultRestartAgent,
 		openPRFn: func(prNum int) error {
-			return vcs.NewGitHub().OpenPRInBrowser(prNum, cfg.ProjectRoot)
+			return dashProvider.OpenPRInBrowser(prNum, cfg.ProjectRoot)
 		},
 		sleepFn:         time.Sleep,
 		expanded:        make(map[int]bool),

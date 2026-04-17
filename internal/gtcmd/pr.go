@@ -28,6 +28,14 @@ func PR(args []string) error {
 	}
 	defer conn.Close()
 
+	if vcsProvider == nil {
+		p, err := vcs.ProviderFromConfig(cfg.Platform, cfg.Repo)
+		if err != nil {
+			return fmt.Errorf("initializing VCS provider: %w", err)
+		}
+		vcsProvider = p
+	}
+
 	issues := repo.NewIssueRepo(conn, nil)
 	agents := repo.NewAgentRepo(conn, nil)
 
@@ -71,8 +79,9 @@ func formatPRTitle(prefix string, id int, title string) string {
 	return fmt.Sprintf("[%s-%d] %s", prefix, id, title)
 }
 
-// vcsProvider is the VCS platform adapter. Override in tests to inject a mock.
-var vcsProvider vcs.Provider = vcs.NewGitHub()
+// vcsProvider is the VCS platform adapter. Initialized from config in PR();
+// override in tests to inject a mock.
+var vcsProvider vcs.Provider
 
 // Injection points for tests. Production code uses the real git binaries;
 // tests replace these with stubs to avoid IO.
