@@ -802,7 +802,7 @@ func TestDeployProleSettings_baseAllowlistAlwaysPresent(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{ProjectRoot: root, Language: ""}
 	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
-	if err := os.MkdirAll(proleDir, 0755); err != nil {
+	if err := os.MkdirAll(proleDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -826,7 +826,7 @@ func TestDeployProleSettings_pythonAddsTooling(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{ProjectRoot: root, Language: "python"}
 	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
-	if err := os.MkdirAll(proleDir, 0755); err != nil {
+	if err := os.MkdirAll(proleDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -847,7 +847,7 @@ func TestDeployProleSettings_goLanguage_noExtraTools(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{ProjectRoot: root, Language: "go"}
 	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
-	if err := os.MkdirAll(proleDir, 0755); err != nil {
+	if err := os.MkdirAll(proleDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -868,7 +868,7 @@ func TestDeployProleSettings_omitsForbiddenTools(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{ProjectRoot: root, Language: ""}
 	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
-	if err := os.MkdirAll(proleDir, 0755); err != nil {
+	if err := os.MkdirAll(proleDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	if err := deployProleSettings("iron", cfg); err != nil {
@@ -888,7 +888,7 @@ func TestDeployProleSettings_createsClaudeDir(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{ProjectRoot: root, Language: ""}
 	proleDir := filepath.Join(config.CompanyTownDir(root), "proles", "iron")
-	if err := os.MkdirAll(proleDir, 0755); err != nil {
+	if err := os.MkdirAll(proleDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 

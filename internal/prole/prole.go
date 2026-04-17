@@ -536,7 +536,7 @@ func deployProleSettings(name string, cfg *config.Config) error {
 	}
 
 	claudeDir := filepath.Join(proleDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	if err := os.MkdirAll(claudeDir, 0750); err != nil {
 		return fmt.Errorf("creating .claude dir: %w", err)
 	}
 
