@@ -384,6 +384,7 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 		cfg.SessionPrefix = params.sessionPrefix
 		cfg.Dolt.Port = params.doltPort
 		cfg.Dolt.Database = params.doltDatabase
+		cfg.Language = params.languagePreset
 		cfg.Quality.Checks = config.QualityChecksForPreset(params.languagePreset)
 		if err := config.Write(projectRoot, cfg); err != nil {
 			return fmt.Errorf("writing config: %w", err)
