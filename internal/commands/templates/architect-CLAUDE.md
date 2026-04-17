@@ -76,42 +76,89 @@ Keep your agent status accurate at all times:
 
 ## Specification Workflow
 
+Every spec is a **paired artifact**: a ticket in Dolt plus a markdown
+file on disk. Neither alone is enough.
+
+- **Ticket** (`gt ticket create ...`) carries metadata: parent,
+  priority, specialty, type, status. The description is thin — a
+  paragraph of intent.
+- **Spec file** at `.company_town/ticket_specs/<PREFIX>-<id>.md`
+  carries the implementation blueprint. This is what the prole reads.
+- **Status transition** (`gt ticket status <id> open`) is the handoff
+  signal. Do not flip to `open` until the spec file is written and
+  complete.
+
+**Completeness bar:** a prole claiming the ticket should be able to
+start coding without asking a single clarifying question. Every file
+path has a line range or an explicit "new file" marker. Every new
+function has a signature. Every test case is named. If you find
+yourself writing "figure out X" or "TBD", the spec is not ready.
+
 For each draft ticket:
 
-1. **Read the ticket**: `gt ticket show <id>` — understand the intent
-2. **Analyze the codebase**: identify affected files, interfaces, patterns
-3. **Write a design spec** to `.company_town/ticket_specs/<PREFIX>-<id>.md`
+1. **Read the ticket**: `gt ticket show <id>` — understand the intent.
+2. **Analyze the codebase**: identify affected files, interfaces,
+   patterns. Read them — don't guess.
+3. **Write the spec file** to
+   `.company_town/ticket_specs/<PREFIX>-<id>.md` using the format
+   below.
 4. **Break into subtasks** if the work is too large for one prole:
    - `gt ticket create <title> --parent <id> --specialty <s>`
-   - Each subtask must be self-contained with explicit file list
-5. **File breaking tests PR** for the new behavior
-6. **Wait for "go for build"** comment on the tests PR
-7. **Move subtasks to open**: `gt ticket status <id> open`
+   - Each child is its own paired artifact: new ticket + new spec
+     file. The parent's spec lists the children and their ordering.
+5. **File breaking tests PR** for the new behavior (non-TDD flow).
+6. **Wait for "go for build"** comment on the tests PR.
+7. **Move to open**: `gt ticket status <id> open`.
 
 ### Specification Format
 
+Use these sections, in this order. Reference nc-231 / nc-232 / nc-249
+for worked examples.
+
 ```markdown
+# <PREFIX>-<id> — <short title>
+
 ## Goal
-What this change accomplishes and why.
+One paragraph: what this change accomplishes and why. Name the parent
+ticket if any.
+
+## Scope
+**In:** bullet list of what this ticket delivers.
+**Out:** bullet list of what it does NOT deliver (and which sibling
+ticket owns each out-of-scope item).
+
+## Dependency
+Which tickets must land first. "No hard deps" is a valid answer.
 
 ## Affected Files
-- `path/to/file.go` — what changes here
-- `path/to/file_test.go` — new tests needed
+- `path/to/file.go:123-145` — what changes here, with snippets if
+  non-obvious.
+- `path/to/new_file.go` — new file; describe shape.
+- `path/to/file_test.go` — new tests; list them by name.
 
 ## Implementation Plan
-1. Step one — specific action with code references
-2. Step two — specific action with code references
+Numbered steps. Each step names files, functions, and the exact
+change. If a step involves new code, include the code inline.
 
 ## Patterns to Follow
-- See `path/to/example.go:123` for how X is done
+- See `path/to/example.go:123` for the reference shape of X.
 
 ## Test Plan
-- Unit tests: what to test, expected behavior
-- Integration tests: if applicable
+- Unit tests: list by name, with expected behavior.
+- Integration / smoke tests: commands to run, expected output.
 
 ## Risks
-- Edge case X — mitigate by Y
+- Edge case X — mitigate by Y.
+- Migration risk Z — handled in step N.
+
+## Out of Scope
+Explicit non-goals. Prevents scope creep in review.
+
+## Done when
+Numbered acceptance checklist. Each item is binary (done / not done).
 ```
+
+A spec that skips sections is a spec that will get questions.
 
 ### TDD Mode (when config.tdd is true)
 
