@@ -1046,6 +1046,33 @@ func TestReset_failsForUnknownProle(t *testing.T) {
 	}
 }
 
+func TestReset_deploysProleSettings(t *testing.T) {
+	cfg, agents, bareDir, addWorktree := setupPruneEnv(t)
+	cfg.Language = "python"
+	wtPath := addWorktree("resetme")
+	agents.Register("resetme", "prole", nil)
+
+	// Put worktree on a feature branch so Reset has work to do.
+	runGit(t, bareDir, "branch", "prole/resetme/nc-247", "origin/main")
+	runGit(t, wtPath, "checkout", "prole/resetme/nc-247")
+
+	if err := Reset("resetme", cfg, agents); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	settingsPath := filepath.Join(config.CompanyTownDir(cfg.ProjectRoot), "proles", "resetme", ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("settings.json not written by Reset: %v", err)
+	}
+	content := string(data)
+	for _, item := range []string{"Bash(gt:*)", "Bash(git:*)", "Bash(go:*)", "Bash(make:*)", "Bash(python:*)"} {
+		if !strings.Contains(content, item) {
+			t.Errorf("expected %q in settings.json after Reset, got:\n%s", item, content)
+		}
+	}
+}
+
 // --- ResetIdleWorktrees tests ---
 
 func TestResetIdleWorktrees_resetsWorktreeOnFeatureBranch(t *testing.T) {

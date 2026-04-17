@@ -342,6 +342,11 @@ func Reset(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 		}
 	}
 
+	// Redeploy settings so proles created before nc-246 get the Bash allowlist.
+	if err := deployProleSettings(name, cfg); err != nil {
+		return fmt.Errorf("deploying prole settings: %w", err)
+	}
+
 	// Clear current issue
 	if err := agents.ClearCurrentIssue(name); err != nil {
 		return fmt.Errorf("clearing issue: %w", err)
