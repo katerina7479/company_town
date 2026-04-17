@@ -107,23 +107,49 @@ func deriveDoltDatabase(projectRoot string) string {
 	return result
 }
 
-// deriveGithubRepo attempts to parse the git origin URL into "owner/repo" form.
+// deriveVCSPlatformFromURL returns "github", "gitlab", or "" based on the
+// host embedded in the remote URL.
+func deriveVCSPlatformFromURL(raw string) string {
+	switch {
+	case strings.Contains(raw, "github.com"):
+		return "github"
+	case strings.Contains(raw, "gitlab.com"):
+		return "gitlab"
+	default:
+		return ""
+	}
+}
+
+// deriveRepoRefFromURL extracts the "owner/repo" (or "namespace/project")
+// portion from a GitHub or GitLab remote URL in either HTTPS or SSH form.
+// Returns "" if the URL is not recognised.
+func deriveRepoRefFromURL(raw string) string {
+	raw = strings.TrimSuffix(raw, ".git")
+	for _, sep := range []string{"github.com/", "gitlab.com/", "github.com:", "gitlab.com:"} {
+		if idx := strings.Index(raw, sep); idx >= 0 {
+			return raw[idx+len(sep):]
+		}
+	}
+	return ""
+}
+
+// deriveRepoRef attempts to parse the git origin URL into "owner/repo" form.
 // Returns "" when the origin is unavailable or cannot be parsed.
-func deriveGithubRepo() string {
+func deriveRepoRef() string {
 	raw, err := gitRemoteURLFn()
 	if err != nil || raw == "" {
 		return ""
 	}
-	raw = strings.TrimSuffix(raw, ".git")
-	// HTTPS: https://github.com/owner/repo
-	if idx := strings.Index(raw, "github.com/"); idx >= 0 {
-		return raw[idx+len("github.com/"):]
+	return deriveRepoRefFromURL(raw)
+}
+
+// validatePlatform returns an error if s is not a recognised VCS platform.
+func validatePlatform(s string) error {
+	switch s {
+	case "github", "gitlab":
+		return nil
 	}
-	// SSH: git@github.com:owner/repo
-	if idx := strings.Index(raw, "github.com:"); idx >= 0 {
-		return raw[idx+len("github.com:"):]
-	}
-	return ""
+	return fmt.Errorf("must be %q or %q", "github", "gitlab")
 }
 
 // validateTicketPrefix returns an error if s is not a valid ticket prefix.
@@ -179,9 +205,9 @@ func promptField(r *bufio.Reader, label, defaultVal string, validate func(string
 // initParams holds the user-supplied (or derived) configuration values for a
 // new project.
 type initParams struct {
+	platform       string // "github" or "gitlab"
+	repoRef        string // owner/repo or namespace/project
 	ticketPrefix   string
-	platform       string
-	repo           string
 	doltDatabase   string
 	doltPort       int
 	sessionPrefix  string
@@ -197,36 +223,30 @@ func validateLanguagePreset(s string) error {
 	return fmt.Errorf("must be %q, %q, or blank for agnostic-only", "go", "python")
 }
 
-// validatePlatform returns an error if s is not a recognised platform name.
-func validatePlatform(s string) error {
-	switch s {
-	case "github", "gitlab", "":
-		return nil
-	}
-	return fmt.Errorf("must be %q or %q", "github", "gitlab")
-}
-
-// collectInitParams gathers the user-configurable fields either interactively
+// collectInitParams gathers user-configurable fields either interactively
 // (prompting via r) or by applying derived defaults when nonInteractive is true.
 func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, defaultPort int) (initParams, error) {
 	prefix := deriveTicketPrefix(projectRoot)
-	repo := deriveGithubRepo()
 	dbName := deriveDoltDatabase(projectRoot)
 	sesPrefix := deriveSessionPrefix(projectRoot)
 	lang := config.DetectLanguagePreset(projectRoot)
 
+	// Derive platform and repo ref from the git remote URL in one call.
+	rawURL, urlErr := gitRemoteURLFn()
+	var detectedPlatform, detectedRepoRef string
+	if urlErr == nil && rawURL != "" {
+		detectedPlatform = deriveVCSPlatformFromURL(rawURL)
+		detectedRepoRef = deriveRepoRefFromURL(rawURL)
+	}
+
 	if nonInteractive {
-		// Fall back to safe literals only if derivation produced nothing.
 		if prefix == "" {
 			prefix = "tk"
 		}
-		if repo == "" {
-			repo = "owner/repo"
-		}
 		return initParams{
+			platform:       detectedPlatform, // empty if detection failed — caller must edit config.json
+			repoRef:        detectedRepoRef,  // empty if detection failed
 			ticketPrefix:   prefix,
-			platform:       "github",
-			repo:           repo,
 			doltDatabase:   dbName,
 			doltPort:       defaultPort,
 			sessionPrefix:  sesPrefix,
@@ -242,15 +262,16 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 		return initParams{}, fmt.Errorf("ticket_prefix: %w", err)
 	}
 
-	pl, err := promptField(br, "VCS platform (github or gitlab)", "github", validatePlatform)
+	plat, err := promptField(br, "VCS platform (github, gitlab)", detectedPlatform, validatePlatform)
 	if err != nil {
 		return initParams{}, fmt.Errorf("platform: %w", err)
 	}
-	if pl == "" {
-		pl = "github"
-	}
 
-	gr, err := promptField(br, "Repository (owner/repo)", repo, nil)
+	repoLabel := "GitHub repo (owner/repo)"
+	if plat == "gitlab" {
+		repoLabel = "GitLab project (namespace/project)"
+	}
+	rr, err := promptField(br, repoLabel, detectedRepoRef, nil)
 	if err != nil {
 		return initParams{}, fmt.Errorf("repo: %w", err)
 	}
@@ -281,9 +302,9 @@ func collectInitParams(nonInteractive bool, r io.Reader, projectRoot string, def
 	}
 
 	return initParams{
+		platform:       plat,
+		repoRef:        rr,
 		ticketPrefix:   tp,
-		platform:       pl,
-		repo:           gr,
 		doltDatabase:   dd,
 		doltPort:       port,
 		sessionPrefix:  sp,
@@ -358,8 +379,7 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 			return fmt.Errorf("collecting init params: %w", err)
 		}
 
-		cfg := config.DefaultConfig(projectRoot, params.repo)
-		cfg.Platform = params.platform
+		cfg := config.DefaultConfig(projectRoot, params.platform, params.repoRef)
 		cfg.TicketPrefix = params.ticketPrefix
 		cfg.SessionPrefix = params.sessionPrefix
 		cfg.Dolt.Port = params.doltPort
@@ -372,8 +392,8 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 		if presetLabel == "" {
 			presetLabel = "agnostic"
 		}
-		fmt.Printf("  created: config.json (ticket_prefix=%q, session_prefix=%q, dolt port=%d, database=%q, preset=%s)\n",
-			params.ticketPrefix, params.sessionPrefix, params.doltPort, params.doltDatabase, presetLabel)
+		fmt.Printf("  created: config.json (platform=%s, ticket_prefix=%q, session_prefix=%q, dolt port=%d, database=%q, preset=%s)\n",
+			params.platform, params.ticketPrefix, params.sessionPrefix, params.doltPort, params.doltDatabase, presetLabel)
 	} else {
 		fmt.Println("  exists:  config.json")
 	}

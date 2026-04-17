@@ -298,39 +298,76 @@ func TestDeriveDoltDatabase_fallbackWhenEmpty(t *testing.T) {
 	}
 }
 
-// --- deriveGithubRepo tests ---
+// --- deriveVCSPlatformFromURL tests ---
 
-func TestDeriveGithubRepo_httpsURL(t *testing.T) {
-	old := gitRemoteURLFn
-	defer func() { gitRemoteURLFn = old }()
-	gitRemoteURLFn = func() (string, error) {
-		return "https://github.com/kate/myrepo.git", nil
-	}
-	got := deriveGithubRepo()
-	if got != "kate/myrepo" {
-		t.Errorf("deriveGithubRepo = %q, want %q", got, "kate/myrepo")
+func TestDeriveVCSPlatformFromURL_github(t *testing.T) {
+	for _, raw := range []string{
+		"https://github.com/kate/myrepo.git",
+		"git@github.com:kate/myrepo.git",
+	} {
+		got := deriveVCSPlatformFromURL(raw)
+		if got != "github" {
+			t.Errorf("deriveVCSPlatformFromURL(%q) = %q, want %q", raw, got, "github")
+		}
 	}
 }
 
-func TestDeriveGithubRepo_sshURL(t *testing.T) {
-	old := gitRemoteURLFn
-	defer func() { gitRemoteURLFn = old }()
-	gitRemoteURLFn = func() (string, error) {
-		return "git@github.com:kate/myrepo.git", nil
-	}
-	got := deriveGithubRepo()
-	if got != "kate/myrepo" {
-		t.Errorf("deriveGithubRepo = %q, want %q", got, "kate/myrepo")
+func TestDeriveVCSPlatformFromURL_gitlab(t *testing.T) {
+	for _, raw := range []string{
+		"https://gitlab.com/mygroup/myrepo.git",
+		"git@gitlab.com:mygroup/myrepo.git",
+	} {
+		got := deriveVCSPlatformFromURL(raw)
+		if got != "gitlab" {
+			t.Errorf("deriveVCSPlatformFromURL(%q) = %q, want %q", raw, got, "gitlab")
+		}
 	}
 }
 
-func TestDeriveGithubRepo_noRemote(t *testing.T) {
+func TestDeriveVCSPlatformFromURL_unknown(t *testing.T) {
+	got := deriveVCSPlatformFromURL("https://bitbucket.org/kate/myrepo.git")
+	if got != "" {
+		t.Errorf("deriveVCSPlatformFromURL unknown host = %q, want empty", got)
+	}
+}
+
+// --- deriveRepoRefFromURL tests ---
+
+func TestDeriveRepoRefFromURL_httpsGithub(t *testing.T) {
+	got := deriveRepoRefFromURL("https://github.com/kate/myrepo.git")
+	if got != "kate/myrepo" {
+		t.Errorf("deriveRepoRefFromURL = %q, want %q", got, "kate/myrepo")
+	}
+}
+
+func TestDeriveRepoRefFromURL_sshGithub(t *testing.T) {
+	got := deriveRepoRefFromURL("git@github.com:kate/myrepo.git")
+	if got != "kate/myrepo" {
+		t.Errorf("deriveRepoRefFromURL = %q, want %q", got, "kate/myrepo")
+	}
+}
+
+func TestDeriveRepoRefFromURL_httpsGitlab(t *testing.T) {
+	got := deriveRepoRefFromURL("https://gitlab.com/mygroup/myproject.git")
+	if got != "mygroup/myproject" {
+		t.Errorf("deriveRepoRefFromURL = %q, want %q", got, "mygroup/myproject")
+	}
+}
+
+func TestDeriveRepoRefFromURL_sshGitlab(t *testing.T) {
+	got := deriveRepoRefFromURL("git@gitlab.com:mygroup/myproject.git")
+	if got != "mygroup/myproject" {
+		t.Errorf("deriveRepoRefFromURL = %q, want %q", got, "mygroup/myproject")
+	}
+}
+
+func TestDeriveRepoRef_noRemote(t *testing.T) {
 	old := gitRemoteURLFn
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
-	got := deriveGithubRepo()
+	got := deriveRepoRef()
 	if got != "" {
-		t.Errorf("deriveGithubRepo = %q, want empty string", got)
+		t.Errorf("deriveRepoRef = %q, want empty string", got)
 	}
 }
 
@@ -365,17 +402,39 @@ func TestCollectInitParams_nonInteractive_derivesFromDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectInitParams: %v", err)
 	}
+	if params.platform != "github" {
+		t.Errorf("platform = %q, want %q", params.platform, "github")
+	}
 	if params.ticketPrefix != "docflow" {
 		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "docflow")
 	}
-	if params.repo != "owner/docflow" {
-		t.Errorf("repo = %q, want %q", params.repo, "owner/docflow")
+	if params.repoRef != "owner/docflow" {
+		t.Errorf("repoRef = %q, want %q", params.repoRef, "owner/docflow")
 	}
 	if params.doltDatabase != "docflow" {
 		t.Errorf("doltDatabase = %q, want %q", params.doltDatabase, "docflow")
 	}
 	if params.doltPort != 3308 {
 		t.Errorf("doltPort = %d, want %d", params.doltPort, 3308)
+	}
+}
+
+func TestCollectInitParams_nonInteractive_detectsGitlab(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) {
+		return "https://gitlab.com/mygroup/myproject.git", nil
+	}
+
+	params, err := collectInitParams(true, nil, "/projects/myproject", 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams: %v", err)
+	}
+	if params.platform != "gitlab" {
+		t.Errorf("platform = %q, want %q", params.platform, "gitlab")
+	}
+	if params.repoRef != "mygroup/myproject" {
+		t.Errorf("repoRef = %q, want %q", params.repoRef, "mygroup/myproject")
 	}
 }
 
@@ -389,11 +448,14 @@ func TestCollectInitParams_nonInteractive_fallbackWhenNoDerived(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectInitParams: %v", err)
 	}
+	if params.platform != "" {
+		t.Errorf("platform fallback = %q, want empty (no detection, no github default)", params.platform)
+	}
 	if params.ticketPrefix != "tk" {
 		t.Errorf("ticketPrefix fallback = %q, want %q", params.ticketPrefix, "tk")
 	}
-	if params.repo != "owner/repo" {
-		t.Errorf("githubRepo fallback = %q, want %q", params.repo, "owner/repo")
+	if params.repoRef != "" {
+		t.Errorf("repoRef fallback = %q, want empty (no detection, no fallback placeholder)", params.repoRef)
 	}
 	if params.doltDatabase != "company_town" {
 		t.Errorf("doltDatabase fallback = %q, want %q", params.doltDatabase, "company_town")
@@ -408,16 +470,20 @@ func TestCollectInitParams_interactive_acceptsDefaults(t *testing.T) {
 	}
 
 	// Simulate user pressing Enter for all 6 prompts (accepts all defaults).
+	// 7th prompt (language preset) hits EOF and accepts the default.
 	input := strings.NewReader("\n\n\n\n\n\n")
 	params, err := collectInitParams(false, input, "/projects/myapp", 3309)
 	if err != nil {
 		t.Fatalf("collectInitParams interactive: %v", err)
 	}
+	if params.platform != "github" {
+		t.Errorf("platform = %q, want %q", params.platform, "github")
+	}
 	if params.ticketPrefix != "myapp" {
 		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "myapp")
 	}
-	if params.repo != "owner/myapp" {
-		t.Errorf("repo = %q, want %q", params.repo, "owner/myapp")
+	if params.repoRef != "owner/myapp" {
+		t.Errorf("repoRef = %q, want %q", params.repoRef, "owner/myapp")
 	}
 	if params.doltPort != 3309 {
 		t.Errorf("doltPort = %d, want %d", params.doltPort, 3309)
@@ -433,20 +499,20 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
-	// User types custom values for all seven fields.
-	input := strings.NewReader("myproj\ngitlab\nkate/myproj\nmydb\n4000\nmyproj-\npython\n")
+	// User types custom values for all seven fields (including platform).
+	input := strings.NewReader("myproj\ngithub\nkate/myproj\nmydb\n4000\nmyproj-\npython\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams interactive custom: %v", err)
 	}
+	if params.platform != "github" {
+		t.Errorf("platform = %q, want %q", params.platform, "github")
+	}
 	if params.ticketPrefix != "myproj" {
 		t.Errorf("ticketPrefix = %q, want %q", params.ticketPrefix, "myproj")
 	}
-	if params.platform != "gitlab" {
-		t.Errorf("platform = %q, want %q", params.platform, "gitlab")
-	}
-	if params.repo != "kate/myproj" {
-		t.Errorf("repo = %q, want %q", params.repo, "kate/myproj")
+	if params.repoRef != "kate/myproj" {
+		t.Errorf("repoRef = %q, want %q", params.repoRef, "kate/myproj")
 	}
 	if params.doltDatabase != "mydb" {
 		t.Errorf("doltDatabase = %q, want %q", params.doltDatabase, "mydb")
@@ -462,13 +528,32 @@ func TestCollectInitParams_interactive_customValues(t *testing.T) {
 	}
 }
 
+func TestCollectInitParams_interactive_gitlabPlatform(t *testing.T) {
+	old := gitRemoteURLFn
+	defer func() { gitRemoteURLFn = old }()
+	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
+
+	// User chooses gitlab and provides a GitLab project path.
+	input := strings.NewReader("myproj\ngitlab\nmygroup/myproject\nmydb\n3307\nmyproj-\n")
+	params, err := collectInitParams(false, input, "/projects/x", 3307)
+	if err != nil {
+		t.Fatalf("collectInitParams gitlab: %v", err)
+	}
+	if params.platform != "gitlab" {
+		t.Errorf("platform = %q, want %q", params.platform, "gitlab")
+	}
+	if params.repoRef != "mygroup/myproject" {
+		t.Errorf("repoRef = %q, want %q", params.repoRef, "mygroup/myproject")
+	}
+}
+
 func TestCollectInitParams_interactive_rejectsInvalidPrefix(t *testing.T) {
 	old := gitRemoteURLFn
 	defer func() { gitRemoteURLFn = old }()
 	gitRemoteURLFn = func() (string, error) { return "", fmt.Errorf("no remote") }
 
-	// First attempt: invalid prefix "BAD", second: valid "good". Blank for platform (default github).
-	input := strings.NewReader("BAD\ngood\ngithub\nowner/repo\nmydb\n3307\n\n\n")
+	// First attempt: invalid prefix "BAD", second: valid "good". Blank for language.
+	input := strings.NewReader("BAD\ngood\ngithub\nowner/repo\nmydb\n3307\n\n")
 	params, err := collectInitParams(false, input, "/projects/x", 3307)
 	if err != nil {
 		t.Fatalf("collectInitParams retry: %v", err)
@@ -554,7 +639,7 @@ func TestDefaultConfigRepoPlaceholder(t *testing.T) {
 		t.Fatalf("creating ct dir: %v", err)
 	}
 
-	cfg := config.DefaultConfig(dir, "owner/repo")
+	cfg := config.DefaultConfig(dir, "github", "owner/repo")
 	if err := config.Write(dir, cfg); err != nil {
 		t.Fatalf("config.Write: %v", err)
 	}

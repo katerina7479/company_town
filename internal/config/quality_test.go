@@ -6,7 +6,7 @@ import (
 )
 
 func TestDefaultConfig_quality(t *testing.T) {
-	cfg := DefaultConfig("/tmp/test", "owner/repo")
+	cfg := DefaultConfig("/tmp/test", "github", "owner/repo")
 
 	if !cfg.Quality.Enabled {
 		t.Error("expected Quality.Enabled=true by default")
@@ -25,7 +25,7 @@ func TestDefaultConfig_quality(t *testing.T) {
 }
 
 func TestDefaultConfig_quality_newChecks(t *testing.T) {
-	cfg := DefaultConfig("/tmp/test", "owner/repo")
+	cfg := DefaultConfig("/tmp/test", "github", "owner/repo")
 
 	names := make(map[string]bool, len(cfg.Quality.Checks))
 	for _, c := range cfg.Quality.Checks {
@@ -43,7 +43,7 @@ func TestDefaultConfig_quality_newChecks(t *testing.T) {
 }
 
 func TestDefaultConfig_quality_lowerDirectionChecks(t *testing.T) {
-	cfg := DefaultConfig("/tmp/test", "owner/repo")
+	cfg := DefaultConfig("/tmp/test", "github", "owner/repo")
 
 	for _, c := range cfg.Quality.Checks {
 		if c.Name == "open_ticket_count" && c.Direction != "lower" {
@@ -53,7 +53,7 @@ func TestDefaultConfig_quality_lowerDirectionChecks(t *testing.T) {
 }
 
 func TestDefaultConfig_quality_allMetric(t *testing.T) {
-	cfg := DefaultConfig("/tmp/test", "owner/repo")
+	cfg := DefaultConfig("/tmp/test", "github", "owner/repo")
 	for _, c := range cfg.Quality.Checks {
 		if c.Type != "metric" {
 			t.Errorf("check %q: expected type=metric, got %q", c.Name, c.Type)
@@ -65,7 +65,7 @@ func TestDefaultConfig_quality_allMetric(t *testing.T) {
 }
 
 func TestQualityConfig_roundTrip(t *testing.T) {
-	cfg := DefaultConfig("/tmp/test", "owner/repo")
+	cfg := DefaultConfig("/tmp/test", "github", "owner/repo")
 	cfg.Quality = QualityConfig{
 		Enabled: true,
 		Checks: []QualityCheckConfig{

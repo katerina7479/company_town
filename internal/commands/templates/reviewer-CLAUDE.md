@@ -93,10 +93,10 @@ while true:
     4. gt agent status reviewer working --issue <id>
     5. Claim: gt ticket status <id> under_review
        (plain status transition — no --agent, the prole stays the ticket assignee)
-    6. Get PR number: gt ticket show <id>  (look for pr_number)
-       Pull the PR diff: gh pr view <pr_number> --diff
-       Review the diff against the ticket spec
-    7. File GitHub review AND submit verdict via `/verdict` skill.
+    6. Get PR/MR number: gt ticket show <id>  (look for pr_number / mr_iid)
+       Pull the diff via the `/claim-review` skill — it handles both GitHub
+       (gh pr view) and GitLab (glab mr diff) automatically.
+    7. Submit verdict via `/verdict` skill.
 
        The `/verdict` skill writes the body to a temp file and posts via
        `--body-file` — never compose the body inline with `-b`. Run the
@@ -282,6 +282,8 @@ CRITICAL: always use `--body-file` when posting review comments — never use
 `-b '...'` with inline content. Single-quote escaping of complex bodies is
 error-prone and caused a double-post incident on PR #97. Write the body to a
 temp file first (see `/verdict` Step 1) and post with `--body-file`.
+Note: `glab` uses `--file` instead of `--body-file` — the `/verdict` skill
+handles this distinction automatically; do not substitute flags by hand.
 
 ## Status Management
 

@@ -81,8 +81,8 @@ type Config struct {
 	TicketPrefix                    string        `json:"ticket_prefix"`
 	SessionPrefix                   string        `json:"session_prefix"`
 	ProjectRoot                     string        `json:"project_root"`
-	Platform                        string        `json:"platform"`
-	Repo                            string        `json:"repo"`
+	Platform                        string        `json:"platform"` // required: "github" or "gitlab"
+	Repo                            string        `json:"repo"`     // required: "owner/repo" (github) or "namespace/project" (gitlab)
 	Dolt                            DoltConfig    `json:"dolt"`
 	LogDir                          string        `json:"log_dir"`
 	MaxProles                       int           `json:"max_proles"`
@@ -135,21 +135,6 @@ func Load(projectRoot string) (*Config, error) {
 		cfg.SessionPrefix = "ct-"
 	}
 
-	// Backwards compatibility: configs written before the platform/repo rename
-	// used github_repo. Migrate the old key to repo and default platform to github.
-	if cfg.Repo == "" {
-		var legacy struct {
-			GithubRepo string `json:"github_repo"`
-		}
-		_ = json.Unmarshal(data, &legacy)
-		if legacy.GithubRepo != "" {
-			cfg.Repo = legacy.GithubRepo
-		}
-	}
-	if cfg.Platform == "" {
-		cfg.Platform = "github"
-	}
-
 	if err := validateAgentsWorkflow(&cfg.Agents); err != nil {
 		return nil, err
 	}
@@ -164,24 +149,32 @@ func Load(projectRoot string) (*Config, error) {
 // reload its own freshly-generated placeholder config without error.
 func ValidateForStart(cfg *Config) error {
 	switch cfg.Platform {
-	case "github", "gitlab", "":
-		// valid
+	case "github":
+		return validateRepo(cfg.Repo, "owner/repo", "katerina7479/company_town")
+	case "gitlab":
+		return validateRepo(cfg.Repo, "namespace/project", "mygroup/myrepo")
+	case "":
+		return fmt.Errorf("config: %w: platform is required — edit .company_town/config.json and set platform to \"github\" or \"gitlab\"", ErrInvalidPlatform)
 	default:
-		return fmt.Errorf("config: unknown platform %q — valid values are \"github\" and \"gitlab\"", cfg.Platform)
+		return fmt.Errorf("config: %w: unknown platform %q — valid values are \"github\" and \"gitlab\"", ErrInvalidPlatform, cfg.Platform)
 	}
+}
 
-	repo := cfg.Repo
+// validateRepo checks that a repo value is in "<ns>/<name>" form. placeholder
+// is the example string used both for the "unset placeholder" check and the
+// hint text shown to the user; example is the concrete hint.
+func validateRepo(repo, placeholder, example string) error {
 	if repo == "" {
-		return fmt.Errorf("config: %w: unset — edit .company_town/config.json and set repo to \"owner/repo\" form (e.g., \"katerina7479/company_town\")", ErrInvalidGithubRepo)
+		return fmt.Errorf("config: %w: unset — edit .company_town/config.json and set repo to %q form (e.g., %q)", ErrInvalidRepo, placeholder, example)
 	}
-	if repo == "owner/repo" {
-		return fmt.Errorf("config: %w: still the placeholder \"owner/repo\" — edit .company_town/config.json and set it to your actual repository", ErrInvalidGithubRepo)
+	if repo == placeholder {
+		return fmt.Errorf("config: %w: still the placeholder %q — edit .company_town/config.json and set it to your actual repository", ErrInvalidRepo, placeholder)
 	}
 	if strings.HasPrefix(repo, "http://") || strings.HasPrefix(repo, "https://") {
-		return fmt.Errorf("config: %w: must be in \"owner/repo\" form, not a URL (got %q)", ErrInvalidGithubRepo, repo)
+		return fmt.Errorf("config: %w: must be in %q form, not a URL (got %q)", ErrInvalidRepo, placeholder, repo)
 	}
 	if !strings.Contains(repo, "/") {
-		return fmt.Errorf("config: %w: must be in \"owner/repo\" form (got %q)", ErrInvalidGithubRepo, repo)
+		return fmt.Errorf("config: %w: must be in %q form (got %q)", ErrInvalidRepo, placeholder, repo)
 	}
 	return nil
 }
@@ -250,14 +243,16 @@ func validateTransition(path string, tt *TicketTransition) error {
 	return nil
 }
 
-// DefaultConfig returns a config with sensible defaults.
-func DefaultConfig(projectRoot, repo string) *Config {
+// DefaultConfig returns a config with sensible defaults. platform must be
+// "github" or "gitlab"; repo is the corresponding repo string
+// ("owner/repo" or "namespace/project").
+func DefaultConfig(projectRoot, platform, repo string) *Config {
 	return &Config{
 		Version:       "1.0.0",
 		TicketPrefix:  "tk",
 		SessionPrefix: "ct-",
 		ProjectRoot:   projectRoot,
-		Platform:      "github",
+		Platform:      platform,
 		Repo:          repo,
 		Dolt: DoltConfig{
 			Host:     "127.0.0.1",

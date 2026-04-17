@@ -209,6 +209,9 @@ func checkConfig(deps doctorDeps) (checkResult, *config.Config) {
 	if cfg.ProjectRoot == "" {
 		missing = append(missing, "project_root")
 	}
+	if cfg.Platform == "" {
+		missing = append(missing, "platform")
+	}
 	if cfg.Repo == "" {
 		missing = append(missing, "repo")
 	}

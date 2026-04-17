@@ -16,7 +16,7 @@ import (
 var reviewerVCSProvider vcs.Provider = vcs.NewGitHub()
 
 // Package-level vars for injection in tests.
-var ghPRBranchFn func(prNumber int, repoDir string) (string, error) = func(prNumber int, repoDir string) (string, error) {
+var prBranchFn func(prNumber int, repoDir string) (string, error) = func(prNumber int, repoDir string) (string, error) {
 	return reviewerVCSProvider.GetPRHeadBranch(prNumber, repoDir)
 }
 var gitFetchFn func(barePath, branch string) error = gitFetch
@@ -56,7 +56,7 @@ func ReviewerInspectClean() error {
 
 // reviewerInspectCore is the injectable implementation of ReviewerInspect.
 func reviewerInspectCore(cfg *config.Config, prNumber int) error {
-	branch, err := ghPRBranchFn(prNumber, cfg.ProjectRoot)
+	branch, err := prBranchFn(prNumber, cfg.ProjectRoot)
 	if err != nil {
 		return fmt.Errorf("looking up PR branch: %w", err)
 	}

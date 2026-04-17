@@ -198,6 +198,7 @@ func TestCheckConfig(t *testing.T) {
 	goodCfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
+		Platform:     "github",
 		Repo:         "owner/repo",
 		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
@@ -239,6 +240,7 @@ func TestCheckConfig(t *testing.T) {
 func TestCheckConfig_missingTicketPrefix(t *testing.T) {
 	cfg := &config.Config{
 		ProjectRoot: "/tmp/proj",
+		Platform:    "github",
 		Repo:        "owner/repo",
 		Agents:      config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
@@ -259,6 +261,7 @@ func TestCheckConfig_missingRepo(t *testing.T) {
 	cfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
+		Platform:     "github",
 		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
 	deps := doctorDeps{
@@ -284,13 +287,33 @@ func TestCheckConfig_missingMultipleFields(t *testing.T) {
 	if r.Status != "fail" {
 		t.Errorf("status=%q want=fail", r.Status)
 	}
-	for _, field := range []string{"ticket_prefix", "project_root", "repo", "agents.mayor.model"} {
+	for _, field := range []string{"ticket_prefix", "project_root", "platform", "repo", "agents.mayor.model"} {
 		if !strings.Contains(r.Detail, field) {
 			t.Errorf("detail %q should mention %q", r.Detail, field)
 		}
 	}
 	if r.Fix == "" {
 		t.Error("expected Fix to be set")
+	}
+}
+
+func TestCheckConfig_gitlabMissingRepo(t *testing.T) {
+	cfg := &config.Config{
+		Platform:     "gitlab",
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		findRoot:   func() (string, error) { return "/tmp/proj", nil },
+		loadConfig: func(root string) (*config.Config, error) { return cfg, nil },
+	}
+	r, _ := checkConfig(deps)
+	if r.Status != "fail" {
+		t.Errorf("status=%q want=fail", r.Status)
+	}
+	if !strings.Contains(r.Detail, "repo") {
+		t.Errorf("detail %q should mention repo", r.Detail)
 	}
 }
 
@@ -324,6 +347,7 @@ func TestRunDoctor_allPass(t *testing.T) {
 	goodCfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
+		Platform:     "github",
 		Repo:         "owner/repo",
 		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
@@ -358,6 +382,7 @@ func TestRunDoctor_oneFail(t *testing.T) {
 	goodCfg := &config.Config{
 		TicketPrefix: "nc",
 		ProjectRoot:  "/tmp/proj",
+		Platform:     "github",
 		Repo:         "owner/repo",
 		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
 	}
