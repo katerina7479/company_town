@@ -41,7 +41,7 @@ func DefaultTheme() StyleTheme {
 			Padding(0, 1),
 
 		Header:   lipgloss.NewStyle().Bold(true).Underline(true),
-		Selected: lipgloss.NewStyle().Background(lipgloss.Color("237")),
+		Selected: lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "252", Dark: "237"}),
 		Footer:   lipgloss.NewStyle().Faint(true),
 
 		Priority: map[string]lipgloss.Style{
