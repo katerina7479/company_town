@@ -1,13 +1,13 @@
 package session
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/katerina7479/company_town/internal/runner"
 )
 
 // SessionPrefix is prepended to all Company Town tmux session names.
@@ -80,44 +80,34 @@ type AgentSessionConfig struct {
 	Prompt    string            // initial prompt to send to Claude Code
 	EnvVars   map[string]string // extra environment variables for the session
 	AgentType string            // agent type for status bar coloring; derived from Name if empty
+	Runner    runner.Runner     // agent CLI runtime; defaults to runner.Default() (ClaudeRunner) when nil
 }
 
-// CreateInteractive creates a tmux session with Claude Code in interactive mode.
-// It provisions a .claude/ dir inside the agent's directory with settings.json,
-// then uses --settings so Claude Code auto-discovers the CLAUDE.md there.
+// CreateInteractive creates a tmux session with the configured agent CLI runtime.
+// It provisions any runner-specific config files inside the agent's directory,
+// then launches the runner command inside a new tmux session.
 func CreateInteractive(cfg AgentSessionConfig) error {
 	if Exists(cfg.Name) {
 		return fmt.Errorf("session %s already exists", cfg.Name)
 	}
 
-	// Ensure .claude/settings.json exists in the agent dir
-	if err := provisionClaudeSettings(cfg.AgentDir); err != nil {
-		return fmt.Errorf("provisioning claude settings: %w", err)
+	r := cfg.Runner
+	if r == nil {
+		r = runner.Default()
 	}
 
-	settingsPath := filepath.Join(cfg.AgentDir, ".claude", "settings.json")
-
-	// Build the claude command
-	parts := []string{
-		"claude",
-		"--dangerously-skip-permissions",
-		"--model", shellQuote(cfg.Model),
-		"--name", shellQuote(cfg.Name),
-		"--settings", shellQuote(settingsPath),
+	if err := r.ProvisionSettings(cfg.AgentDir); err != nil {
+		return fmt.Errorf("provisioning runner settings: %w", err)
 	}
 
-	// Add initial prompt if provided
-	if cfg.Prompt != "" {
-		parts = append(parts, shellQuote(cfg.Prompt))
-	}
-
-	claudeCmd := strings.Join(parts, " ")
+	settingsPath := r.SettingsPath(cfg.AgentDir)
+	agentCmd := r.Command(cfg.Model, cfg.Name, settingsPath, cfg.Prompt)
 
 	tmuxArgs := []string{"new-session", "-d", "-s", cfg.Name, "-c", cfg.WorkDir}
 	for k, v := range cfg.EnvVars {
 		tmuxArgs = append(tmuxArgs, "-e", k+"="+v)
 	}
-	tmuxArgs = append(tmuxArgs, claudeCmd)
+	tmuxArgs = append(tmuxArgs, agentCmd)
 
 	cmd := exec.Command("tmux", tmuxArgs...)
 	cmd.Stdout = os.Stdout
@@ -133,42 +123,6 @@ func CreateInteractive(cfg AgentSessionConfig) error {
 	}
 	_ = ApplyStatusBar(cfg.Name, agentType)
 
-	return nil
-}
-
-// provisionClaudeSettings creates a .claude/settings.json in the agent directory
-// so Claude Code discovers the CLAUDE.md there.
-func provisionClaudeSettings(agentDir string) error {
-	claudeDir := filepath.Join(agentDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return fmt.Errorf("creating .claude dir %s: %w", claudeDir, err)
-	}
-
-	settingsPath := filepath.Join(claudeDir, "settings.json")
-	if _, err := os.Stat(settingsPath); err == nil {
-		return nil // already exists
-	}
-
-	settings := map[string]interface{}{
-		"permissions": map[string]interface{}{
-			"allow": []string{
-				"Bash(make:*)",
-				"Bash(go:*)",
-				"Bash(git:*)",
-				"Bash(gt:*)",
-				"Bash(ct:*)",
-			},
-		},
-	}
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshalling claude settings: %w", err)
-	}
-
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		return fmt.Errorf("writing claude settings to %s: %w", settingsPath, err)
-	}
 	return nil
 }
 

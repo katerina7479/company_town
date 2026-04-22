@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/katerina7479/company_town/internal/runner"
 )
 
 // newTestClient returns a tmuxClient with controllable seams for unit tests.
@@ -283,11 +285,12 @@ func TestClient_Kill_execError_wrapsError(t *testing.T) {
 	}
 }
 
-// TestProvisionClaudeSettings_creates verifies that provisionClaudeSettings writes a
-// .claude/settings.json containing the permissions block when the file is absent.
-func TestProvisionClaudeSettings_creates(t *testing.T) {
+// TestClaudeRunner_ProvisionSettings_creates verifies that ClaudeRunner.ProvisionSettings
+// writes a .claude/settings.json containing the permissions block when the file is absent.
+func TestClaudeRunner_ProvisionSettings_creates(t *testing.T) {
 	dir := t.TempDir()
-	if err := provisionClaudeSettings(dir); err != nil {
+	r := runner.ClaudeRunner{}
+	if err := r.ProvisionSettings(dir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	settingsPath := filepath.Join(dir, ".claude", "settings.json")
@@ -304,11 +307,12 @@ func TestProvisionClaudeSettings_creates(t *testing.T) {
 	}
 }
 
-// TestProvisionClaudeSettings_idempotent verifies that a second call does not
+// TestClaudeRunner_ProvisionSettings_idempotent verifies that a second call does not
 // overwrite a settings file that already exists.
-func TestProvisionClaudeSettings_idempotent(t *testing.T) {
+func TestClaudeRunner_ProvisionSettings_idempotent(t *testing.T) {
 	dir := t.TempDir()
-	if err := provisionClaudeSettings(dir); err != nil {
+	r := runner.ClaudeRunner{}
+	if err := r.ProvisionSettings(dir); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
 	settingsPath := filepath.Join(dir, ".claude", "settings.json")
@@ -316,7 +320,7 @@ func TestProvisionClaudeSettings_idempotent(t *testing.T) {
 	if err := os.WriteFile(settingsPath, custom, 0644); err != nil {
 		t.Fatalf("writing custom content: %v", err)
 	}
-	if err := provisionClaudeSettings(dir); err != nil {
+	if err := r.ProvisionSettings(dir); err != nil {
 		t.Fatalf("second call: %v", err)
 	}
 	data, err := os.ReadFile(settingsPath)
@@ -324,7 +328,7 @@ func TestProvisionClaudeSettings_idempotent(t *testing.T) {
 		t.Fatalf("reading after second call: %v", err)
 	}
 	if string(data) != string(custom) {
-		t.Error("provisionClaudeSettings overwrote existing settings file")
+		t.Error("ClaudeRunner.ProvisionSettings overwrote existing settings file")
 	}
 }
 
