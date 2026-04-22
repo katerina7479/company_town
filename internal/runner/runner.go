@@ -33,6 +33,18 @@ type Runner interface {
 // Default returns the default Runner (ClaudeRunner).
 func Default() Runner { return ClaudeRunner{} }
 
+// BaseBashAllowList returns the Bash tool permissions that every agent session
+// receives regardless of language. Callers may append language-specific entries.
+func BaseBashAllowList() []string {
+	return []string{
+		"Bash(make:*)",
+		"Bash(go:*)",
+		"Bash(git:*)",
+		"Bash(gt:*)",
+		"Bash(ct:*)",
+	}
+}
+
 // ClaudeRunner drives the claude CLI (Claude Code).
 type ClaudeRunner struct{}
 
@@ -67,13 +79,7 @@ func (ClaudeRunner) ProvisionSettings(agentDir string) error {
 
 	settings := map[string]interface{}{
 		"permissions": map[string]interface{}{
-			"allow": []string{
-				"Bash(make:*)",
-				"Bash(go:*)",
-				"Bash(git:*)",
-				"Bash(gt:*)",
-				"Bash(ct:*)",
-			},
+			"allow": BaseBashAllowList(),
 		},
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")

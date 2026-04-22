@@ -27,6 +27,7 @@ import (
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/runner"
 	"github.com/katerina7479/company_town/internal/session"
 )
 
@@ -503,13 +504,7 @@ func deployProleCLAUDEMD(name, wtPath string, cfg *config.Config) error {
 // gh, glab, and dolt are intentionally excluded — those mutations must flow
 // through gt (which routes them through vcs.Provider and the SQL connection).
 func proleSettingsJSON(language string) ([]byte, error) {
-	allow := []string{
-		"Bash(make:*)",
-		"Bash(go:*)",
-		"Bash(git:*)",
-		"Bash(gt:*)",
-		"Bash(ct:*)",
-	}
+	allow := runner.BaseBashAllowList()
 	switch language {
 	case "python":
 		allow = append(allow, "Bash(python:*)", "Bash(pytest:*)", "Bash(pip:*)")
