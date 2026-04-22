@@ -349,6 +349,45 @@ gt check history build --limit 20
 gt check run
 ```
 
+#### Check schema
+
+Each entry in `quality.checks` supports:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | Unique identifier; used by `gt check history <name>`. |
+| `command` | string | yes | Shell command the daemon runs. For `pass_fail`, exit 0 = pass. For `metric`, stdout must be a single number. |
+| `type` | string | yes | `"pass_fail"` or `"metric"`. |
+| `threshold` | number | metric only | Pass boundary. Value ≥ threshold for `"higher"`, ≤ threshold for `"lower"`. |
+| `warn_threshold` | number | metric, optional | Warn band edge. Ignored when zero or unset. |
+| `direction` | string | metric, optional | `"higher"` (default) or `"lower"` — which direction means better. |
+| `enabled` | bool | yes | Whether the daemon runs this check on the baseline cadence. |
+
+**pass_fail example** — a build check that passes when `go build ./...` exits 0:
+
+```json
+{
+  "name": "build",
+  "command": "go build ./...",
+  "type": "pass_fail",
+  "enabled": true
+}
+```
+
+**metric example** — test coverage; passes at ≥ 70 %, warns between 60 % and 70 %:
+
+```json
+{
+  "name": "go_test_coverage",
+  "command": "go test $(go list ./...) -coverprofile=.coverage.out >/dev/null 2>&1; go tool cover -func=.coverage.out | awk '/^total:/ {gsub(\"%\",\"\"); print $3}'",
+  "type": "metric",
+  "threshold": 70.0,
+  "warn_threshold": 60.0,
+  "direction": "higher",
+  "enabled": true
+}
+```
+
 ## Rules of the road
 
 - **Never push to `main`.** All work lives on `prole/<name>/<id>` branches. Humans merge PRs.
