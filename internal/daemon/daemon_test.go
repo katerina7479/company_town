@@ -4215,3 +4215,62 @@ func TestHandleCancelledTickets_AlreadyClosed(t *testing.T) {
 		t.Errorf("expected no-op for no cancelled tickets, got sendKeys calls: %v", *sent)
 	}
 }
+
+// --- detectBlockingPrompt tests ---
+
+func TestDetectBlockingPrompt_realPermissionPrompt(t *testing.T) {
+	pane := "Allow Claude to use Bash? (y/n)"
+	if got := detectBlockingPrompt(pane); got == "" {
+		t.Error("expected detection of a real permission prompt, got empty string")
+	}
+}
+
+func TestDetectBlockingPrompt_ynSuffix(t *testing.T) {
+	pane := "Do you want to proceed? (y/n)"
+	if got := detectBlockingPrompt(pane); got == "" {
+		t.Errorf("expected detection via (y/n), got %q", got)
+	}
+}
+
+// TestDetectBlockingPrompt_allowCodeDiff is the regression test for nc-252:
+// a diff line containing "allow" as a Go identifier must not trigger detection.
+func TestDetectBlockingPrompt_allowCodeDiff(t *testing.T) {
+	// Exact line observed in copper's pane during nc-251 that caused a false positive.
+	pane := `510      allow = append(allow, "Bash(python:*)", "Bash(pytest:*)",`
+	if got := detectBlockingPrompt(pane); got != "" {
+		t.Errorf("false positive: code diff line should not be detected as a prompt, got %q", got)
+	}
+}
+
+func TestDetectBlockingPrompt_allowMidLine(t *testing.T) {
+	pane := `permissions.allow = []string{"Bash(gt:*)"}`
+	if got := detectBlockingPrompt(pane); got != "" {
+		t.Errorf("false positive: 'allow' mid-line should not be detected, got %q", got)
+	}
+}
+
+func TestDetectBlockingPrompt_doYouWantToInComment(t *testing.T) {
+	pane := "// Do you want to refactor this function?"
+	if got := detectBlockingPrompt(pane); got != "" {
+		t.Errorf("false positive: comment containing 'do you want to' should not be detected, got %q", got)
+	}
+}
+
+func TestDetectBlockingPrompt_empty(t *testing.T) {
+	if got := detectBlockingPrompt(""); got != "" {
+		t.Errorf("expected empty string for empty pane, got %q", got)
+	}
+}
+
+func TestDetectBlockingPrompt_onlyInLast20Lines(t *testing.T) {
+	var lines []string
+	// Put the prompt far back (line 1) and fill with 25 non-prompt lines after it.
+	lines = append(lines, "Allow Claude to use Bash? (y/n)")
+	for i := 0; i < 25; i++ {
+		lines = append(lines, "normal output line")
+	}
+	pane := strings.Join(lines, "\n")
+	if got := detectBlockingPrompt(pane); got != "" {
+		t.Errorf("prompt outside last-20-line window should not be detected, got %q", got)
+	}
+}

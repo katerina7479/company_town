@@ -831,18 +831,27 @@ func (d *Daemon) handleStuckAgents() {
 	}
 }
 
-// stuckPromptPatterns are substrings that indicate a prole's pane is showing
-// a blocking prompt requiring human input. Matched case-insensitively against
-// the last 20 lines of the captured pane so historical prompt text that has
-// already scrolled past does not produce false positives.
-var stuckPromptPatterns = []string{
-	"do you want to",
-	"allow ",
-	"(y/n)",
-	"[y/n]",
-	"press enter to continue",
-	"are you sure",
-	"confirm?",
+// promptPattern describes a single stuck-prompt heuristic.
+// When anchored is true the pattern must appear at the start of the trimmed,
+// lowercased line; when false it may appear anywhere. Anchoring is used for
+// patterns whose words are common in source code (e.g. "allow", "do you want
+// to") to prevent false positives on Edit diffs or code comments.
+type promptPattern struct {
+	text     string
+	anchored bool
+}
+
+// stuckPromptPatterns are the heuristics that indicate a prole's pane is
+// showing a blocking prompt requiring human input. Matched case-insensitively
+// against the last 20 lines of the captured pane.
+var stuckPromptPatterns = []promptPattern{
+	{text: "do you want to", anchored: true}, // common in comments; anchor to start
+	{text: "allow ", anchored: true},         // "allow" is a Go identifier; anchor to start
+	{text: "(y/n)", anchored: false},
+	{text: "[y/n]", anchored: false},
+	{text: "press enter to continue", anchored: false},
+	{text: "are you sure", anchored: true}, // can appear in comments
+	{text: "confirm?", anchored: false},
 }
 
 // detectBlockingPrompt checks the last 20 lines of a captured tmux pane for
@@ -860,8 +869,14 @@ func detectBlockingPrompt(paneContent string) string {
 			continue
 		}
 		lower := strings.ToLower(trimmed)
-		for _, pattern := range stuckPromptPatterns {
-			if strings.Contains(lower, pattern) {
+		for _, p := range stuckPromptPatterns {
+			var matched bool
+			if p.anchored {
+				matched = strings.HasPrefix(lower, p.text)
+			} else {
+				matched = strings.Contains(lower, p.text)
+			}
+			if matched {
 				return trimmed
 			}
 		}
