@@ -662,7 +662,7 @@ func (r *IssueRepo) directDepsClosed(id int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	for rows.Next() {
 		var status string
 		if err := rows.Scan(&status); err != nil {
