@@ -200,6 +200,70 @@ func TestHandlePRMerged_noopIfAlreadyClosed(t *testing.T) {
 	}
 }
 
+func TestHandlePRMerged_notifiesBothMayorAndArchitect(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-architect"})
+
+	id, _ := issues.Create("Dual notify", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 77)
+
+	issue, _ := issues.Get(id)
+	d.handlePRMerged(issue)
+
+	if len(*sent) != 2 {
+		t.Fatalf("expected 2 messages (Mayor + Architect), got %d", len(*sent))
+	}
+	sessions := map[string]bool{(*sent)[0].session: true, (*sent)[1].session: true}
+	if !sessions["ct-mayor"] {
+		t.Errorf("expected message to ct-mayor, sessions: %v", sessions)
+	}
+	if !sessions["ct-architect"] {
+		t.Errorf("expected message to ct-architect, sessions: %v", sessions)
+	}
+	if (*sent)[0].msg != (*sent)[1].msg {
+		t.Errorf("expected identical message to both, got %q vs %q", (*sent)[0].msg, (*sent)[1].msg)
+	}
+	if !strings.Contains((*sent)[0].msg, "PR #77") {
+		t.Errorf("expected PR number in message, got %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandlePRMerged_notifiesOnlyMayorWhenArchitectAbsent(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	id, _ := issues.Create("Mayor only", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 88)
+
+	issue, _ := issues.Get(id)
+	d.handlePRMerged(issue)
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 message (Mayor only), got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-mayor" {
+		t.Errorf("expected message to ct-mayor, got %q", (*sent)[0].session)
+	}
+}
+
+func TestHandlePRMerged_notifiesOnlyArchitectWhenMayorAbsent(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-architect"})
+
+	id, _ := issues.Create("Architect only", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "in_review")
+	issues.SetPR(id, 99)
+
+	issue, _ := issues.Get(id)
+	d.handlePRMerged(issue)
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 message (Architect only), got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-architect" {
+		t.Errorf("expected message to ct-architect, got %q", (*sent)[0].session)
+	}
+}
+
 func TestHandleIdleProleWorktrees_runsReconciler(t *testing.T) {
 	d, _, _ := newTestDaemon(t)
 	calls := withIdleResetCapture(d)
@@ -1538,6 +1602,55 @@ func TestHandleEpicAutoClose_notifiesMayor(t *testing.T) {
 	}
 	if (*sent)[0].session != "ct-mayor" {
 		t.Errorf("expected message to mayor session, got %q", (*sent)[0].session)
+	}
+}
+
+func TestHandleEpicAutoClose_notifiesBothMayorAndArchitect(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-architect"})
+
+	epicID, _ := issues.Create("Grand Plan", "epic", nil, nil, nil)
+	issues.UpdateStatus(epicID, "open")
+	child1, _ := issues.Create("Sub 1", "task", &epicID, nil, nil)
+	issues.UpdateStatus(child1, "closed")
+
+	d.handleEpicAutoClose()
+
+	if len(*sent) != 2 {
+		t.Fatalf("expected 2 messages (Mayor + Architect), got %d", len(*sent))
+	}
+	sessions := map[string]bool{(*sent)[0].session: true, (*sent)[1].session: true}
+	if !sessions["ct-mayor"] {
+		t.Errorf("expected message to ct-mayor, sessions: %v", sessions)
+	}
+	if !sessions["ct-architect"] {
+		t.Errorf("expected message to ct-architect, sessions: %v", sessions)
+	}
+	if (*sent)[0].msg != (*sent)[1].msg {
+		t.Errorf("expected identical message to both, got %q vs %q", (*sent)[0].msg, (*sent)[1].msg)
+	}
+	if !strings.Contains((*sent)[0].msg, "Grand Plan") {
+		t.Errorf("expected epic title in message, got %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleEpicAutoClose_notifiesOnlyArchitectWhenMayorAbsent(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-architect"})
+
+	epicID, _ := issues.Create("Architect Only Epic", "epic", nil, nil, nil)
+	issues.UpdateStatus(epicID, "open")
+	child1, _ := issues.Create("Sub task", "task", &epicID, nil, nil)
+	issues.UpdateStatus(child1, "closed")
+
+	d.handleEpicAutoClose()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 message (Architect only), got %d", len(*sent))
+	}
+	if (*sent)[0].session != "ct-architect" {
+		t.Errorf("expected message to ct-architect, got %q", (*sent)[0].session)
+	}
+	if !strings.Contains((*sent)[0].msg, "Architect Only Epic") {
+		t.Errorf("expected epic title in message, got %q", (*sent)[0].msg)
 	}
 }
 
