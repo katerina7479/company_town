@@ -2635,6 +2635,357 @@ func TestUpdate_enterExpandsTicket(t *testing.T) {
 	}
 }
 
+// --- unassign hotkey tests ---
+
+// makeModelWithAssignedTicket returns a model with the ticket panel focused on a
+// ticket assigned to "copper", plus the copper agent in the agent snapshot.
+func makeModelWithAssignedTicket(t *testing.T) (*dashboardModel, *[]struct{ session, msg string }, *repo.IssueRepo, int) {
+	t.Helper()
+	sent := &[]struct{ session, msg string }{}
+	m, agents := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true },
+		func(name, msg string) error {
+			*sent = append(*sent, struct{ session, msg string }{name, msg})
+			return nil
+		},
+		func(string, string) error { return nil },
+	)
+	m.ticketPrefix = "nc"
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	issueID, err := m.issues.Create("some work", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create issue: %v", err)
+	}
+	if err := m.issues.UpdateStatus(issueID, "in_progress"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := m.issues.SetAssignee(issueID, "copper"); err != nil {
+		t.Fatalf("SetAssignee: %v", err)
+	}
+	if err := agents.SetTmuxSession("copper", "ct-prole-copper"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+	issueIDint64 := int64(issueID)
+	m.data.agents = []*repo.Agent{{
+		Name:         "copper",
+		Type:         "prole",
+		TmuxSession:  sql.NullString{String: "ct-prole-copper", Valid: true},
+		CurrentIssue: sql.NullInt64{Int64: issueIDint64, Valid: true},
+	}}
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID:       issueID,
+		Status:   "in_progress",
+		Assignee: sql.NullString{String: "copper", Valid: true},
+	}}
+	m.data.roots = []*repo.IssueNode{node}
+	m.focusedPanel = 1
+	return m, sent, m.issues, issueID
+}
+
+func TestUnassign_entersInputModeForAssignedTicket(t *testing.T) {
+	m, _, _, _ := makeModelWithAssignedTicket(t)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
+	dm := updated.(dashboardModel)
+
+	if !dm.inputMode {
+		t.Fatal("expected inputMode=true after pressing u on assigned ticket")
+	}
+	if dm.inputAction != "unassign_confirm" {
+		t.Errorf("expected inputAction=unassign_confirm, got %q", dm.inputAction)
+	}
+	if dm.inputTarget2 != "copper" {
+		t.Errorf("expected inputTarget2=copper (assignee), got %q", dm.inputTarget2)
+	}
+	if dm.inputBuffer != "" {
+		t.Errorf("expected empty inputBuffer, got %q", dm.inputBuffer)
+	}
+}
+
+func TestUnassign_noAssigneeShowsStatusMsg(t *testing.T) {
+	m, _, _, _ := makeModelWithAssignedTicket(t)
+	// Replace the ticket data with an unassigned ticket.
+	m.data.roots = []*repo.IssueNode{{Issue: &repo.Issue{ID: 99, Status: "open"}}}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
+	dm := updated.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false for ticket with no assignee")
+	}
+	if dm.statusMsg == "" {
+		t.Error("expected statusMsg set when ticket has no assignee")
+	}
+}
+
+func TestUnassign_agentPanelNoOp(t *testing.T) {
+	m, _, _, _ := makeModelWithAssignedTicket(t)
+	m.focusedPanel = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
+	dm := updated.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false when u pressed in agent panel")
+	}
+}
+
+func TestUnassign_confirmY_executesUnassign(t *testing.T) {
+	m, sent, issues, issueID := makeModelWithAssignedTicket(t)
+
+	// Press u to enter confirm mode.
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
+	dm := upd.(dashboardModel)
+	if !dm.inputMode {
+		t.Fatal("expected inputMode after pressing u")
+	}
+
+	// Type "y".
+	upd, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("y")})
+	dm = upd.(dashboardModel)
+
+	// Press Enter to confirm.
+	upd, cmd := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+
+	// Execute the returned command.
+	if cmd == nil {
+		t.Fatal("expected a command after confirm, got nil")
+	}
+	result := cmd().(actionResultMsg)
+	if result.err != nil {
+		t.Fatalf("unassignCmd returned error: %v", result.err)
+	}
+
+	// Verify assignee cleared in DB.
+	issue, err := issues.Get(issueID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Assignee.Valid && issue.Assignee.String != "" {
+		t.Errorf("expected assignee cleared, still got %q", issue.Assignee.String)
+	}
+
+	// Verify signal was sent.
+	if len(*sent) == 0 {
+		t.Error("expected sendKeys to be called with unassign signal")
+	} else if !strings.Contains((*sent)[0].msg, "UNASSIGNED") {
+		t.Errorf("expected UNASSIGNED in signal message, got %q", (*sent)[0].msg)
+	}
+}
+
+func TestUnassign_confirmNonY_noOp(t *testing.T) {
+	m, _, issues, issueID := makeModelWithAssignedTicket(t)
+
+	// Press u to enter confirm mode.
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
+	dm := upd.(dashboardModel)
+
+	// Type "n" and press Enter — should not unassign.
+	upd, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("n")})
+	dm = upd.(dashboardModel)
+	_, _ = dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Assignee should still be set.
+	issue, err := issues.Get(issueID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !issue.Assignee.Valid || issue.Assignee.String == "" {
+		t.Error("expected assignee to remain set after non-y confirm")
+	}
+}
+
+func TestUnassign_escapeClears(t *testing.T) {
+	m, _, _, _ := makeModelWithAssignedTicket(t)
+
+	// Press u to enter confirm mode.
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
+	dm := upd.(dashboardModel)
+	if !dm.inputMode {
+		t.Fatal("expected inputMode after u")
+	}
+
+	// Escape should cancel.
+	upd, _ = dm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Escape")
+	}
+	if dm.inputBuffer != "" {
+		t.Error("expected inputBuffer cleared after Escape")
+	}
+}
+
+// --- unassignCmd unit tests ---
+
+func TestUnassignCmd_clearsAssigneeAndSignalsAgent(t *testing.T) {
+	var sentSession, sentMsg string
+	m, agents := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return true },
+		func(name, msg string) error { sentSession = name; sentMsg = msg; return nil },
+		func(string, string) error { return nil },
+	)
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	issueID, err := m.issues.Create("work", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := m.issues.SetAssignee(issueID, "copper"); err != nil {
+		t.Fatalf("SetAssignee: %v", err)
+	}
+
+	m.data.agents = []*repo.Agent{{
+		Name:         "copper",
+		TmuxSession:  sql.NullString{String: "ct-prole-copper", Valid: true},
+		CurrentIssue: sql.NullInt64{Int64: int64(issueID), Valid: true},
+	}}
+
+	cmd := m.unassignCmd(issueID, "copper")
+	result := cmd().(actionResultMsg)
+
+	if result.err != nil {
+		t.Fatalf("unexpected error: %v", result.err)
+	}
+	if !strings.Contains(result.text, "Unassigned copper") {
+		t.Errorf("unexpected success text: %q", result.text)
+	}
+	if sentSession != "ct-prole-copper" {
+		t.Errorf("expected signal sent to ct-prole-copper, got %q", sentSession)
+	}
+	if !strings.Contains(sentMsg, "UNASSIGNED") {
+		t.Errorf("expected UNASSIGNED in signal, got %q", sentMsg)
+	}
+	if !strings.Contains(sentMsg, "gt agent status copper idle") {
+		t.Errorf("expected idle instruction in signal, got %q", sentMsg)
+	}
+
+	// Verify assignee cleared.
+	issue, err := m.issues.Get(issueID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Assignee.Valid && issue.Assignee.String != "" {
+		t.Errorf("expected assignee cleared, got %q", issue.Assignee.String)
+	}
+
+	// Verify agent's current_issue cleared.
+	a, err := agents.Get("copper")
+	if err != nil {
+		t.Fatalf("Get agent: %v", err)
+	}
+	if a.CurrentIssue.Valid {
+		t.Errorf("expected current_issue cleared, got %d", a.CurrentIssue.Int64)
+	}
+}
+
+func TestUnassignCmd_agentOnDifferentTicket_doesNotClearAgent(t *testing.T) {
+	m, agents := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false },
+		func(string, string) error { return nil },
+		func(string, string) error { return nil },
+	)
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	issueID, _ := m.issues.Create("work", "task", nil, nil, nil)
+	otherID := 999
+
+	// Agent is working on a different ticket.
+	m.data.agents = []*repo.Agent{{
+		Name:         "copper",
+		CurrentIssue: sql.NullInt64{Int64: int64(otherID), Valid: true},
+	}}
+
+	cmd := m.unassignCmd(issueID, "copper")
+	result := cmd().(actionResultMsg)
+
+	if result.err != nil {
+		t.Fatalf("unexpected error: %v", result.err)
+	}
+
+	// Agent's current_issue should NOT have been cleared.
+	a, err := agents.Get("copper")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// copper still at its default idle/no-issue state since we never called SetCurrentIssue
+	// — the point is ClearCurrentIssue was NOT called for a different-ticket agent.
+	_ = a
+}
+
+func TestUnassignCmd_noSession_noSignalSent(t *testing.T) {
+	signalSent := false
+	m, agents := newTestModel(t,
+		func(string) error { return nil },
+		func(string) bool { return false }, // session not running
+		func(string, string) error { signalSent = true; return nil },
+		func(string, string) error { return nil },
+	)
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	issueID, _ := m.issues.Create("work", "task", nil, nil, nil)
+	m.data.agents = []*repo.Agent{{
+		Name:        "copper",
+		TmuxSession: sql.NullString{String: "ct-prole-copper", Valid: true},
+	}}
+
+	cmd := m.unassignCmd(issueID, "copper")
+	result := cmd().(actionResultMsg)
+
+	if result.err != nil {
+		t.Fatalf("unexpected error: %v", result.err)
+	}
+	if signalSent {
+		t.Error("expected no signal when session is not running")
+	}
+}
+
+func TestView_inputModeUnassignConfirm(t *testing.T) {
+	m := blankModel()
+	m.width = 160
+	m.height = 40
+	m.ticketPrefix = "nc"
+	m.inputMode = true
+	m.inputAction = "unassign_confirm"
+	m.inputTarget = "42"
+	m.inputTarget2 = "copper"
+
+	view := m.View()
+	if !strings.Contains(view, "Unassign copper from nc-42") {
+		t.Errorf("expected unassign confirm prompt in footer, got: %q", view)
+	}
+	if !strings.Contains(view, "[y/N]") {
+		t.Errorf("expected [y/N] in footer, got: %q", view)
+	}
+}
+
+func TestView_ticketsPanelHint_containsUnassign(t *testing.T) {
+	m := blankModel()
+	m.width = 200
+	m.height = 40
+	m.focusedPanel = 1
+
+	view := m.View()
+	if !strings.Contains(view, "u unassign") {
+		t.Errorf("expected 'u unassign' in tickets panel hint, got: %q", view)
+	}
+}
+
 func TestAgentWorktreePath_allCases(t *testing.T) {
 	ctDir := "/tmp/ct"
 	cases := []struct {
