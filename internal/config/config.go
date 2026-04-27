@@ -99,6 +99,7 @@ type Config struct {
 	RepairCycleThreshold            int           `json:"repair_cycle_threshold"`
 	ReviewerFollowUpIntervalSeconds int           `json:"reviewer_follow_up_interval_seconds"`
 	ReviewerFollowUpNReviews        int           `json:"reviewer_follow_up_n_reviews"`
+	CIRunningStuckThresholdSeconds  int           `json:"ci_running_stuck_threshold_seconds"`
 	TDD                             bool          `json:"tdd"`
 	Language                        string        `json:"language"` // "go", "python", "" (agnostic)
 	Quality                         QualityConfig `json:"quality"`
@@ -295,6 +296,7 @@ func DefaultConfig(projectRoot, platform, repo string) *Config {
 		RepairCycleThreshold:            3,
 		ReviewerFollowUpIntervalSeconds: 1800,
 		ReviewerFollowUpNReviews:        5,
+		CIRunningStuckThresholdSeconds:  1800,
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,
