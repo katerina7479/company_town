@@ -1379,7 +1379,7 @@ func TestRenderIssueRow_fitsContentWidth(t *testing.T) {
 
 	for _, status := range statuses {
 		node := makeFullNode(status, longTitle)
-		row := blankModel().renderIssueRow(node, 0, contentWidth)
+		row := blankModel().renderIssueRow(node, 0, "", contentWidth)
 		// lipgloss.Width strips ANSI codes and returns the visual cell width.
 		got := lipgloss.Width(row)
 		if got > contentWidth {
@@ -1395,7 +1395,7 @@ func TestRenderIssueRow_selectedRowDoesNotWrap(t *testing.T) {
 	contentWidth := 100
 	node := makeFullNode("open", strings.Repeat("B", 200))
 
-	row := blankModel().renderIssueRow(node, 0, contentWidth)
+	row := blankModel().renderIssueRow(node, 0, "", contentWidth)
 	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
 
 	// If wrapping occurs, lipgloss.Height > 1.
@@ -1411,7 +1411,7 @@ func TestRenderIssueRow_selectedRowDoesNotWrapShortStatus(t *testing.T) {
 	contentWidth := 80
 	node := makeFullNode("open", strings.Repeat("C", 200))
 
-	row := blankModel().renderIssueRow(node, 0, contentWidth)
+	row := blankModel().renderIssueRow(node, 0, "", contentWidth)
 	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
 
 	if h := lipgloss.Height(rendered); h != 1 {
@@ -1476,7 +1476,7 @@ func TestRenderIssueRow_typeIndicatorPresent(t *testing.T) {
 			Title:     "Something broken",
 		},
 	}
-	row := blankModel().renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, "", 120)
 	if !strings.Contains(row, "B") {
 		t.Errorf("renderIssueRow for bug ticket should contain 'B' type indicator, got: %q", row)
 	}
@@ -1503,7 +1503,7 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 			Title:     "Child epic",
 		},
 	}
-	row := blankModel().renderIssueRow(node, 1, 120)
+	row := blankModel().renderIssueRow(node, 1, "", 120)
 	if !strings.Contains(row, "◦") {
 		t.Errorf("renderIssueRow for depth=1 should contain child bullet ◦, got: %q", row)
 	}
@@ -1569,7 +1569,7 @@ func TestRenderIssueRow_assigneeShownWhenSet(t *testing.T) {
 			Assignee: sql.NullString{String: "copper", Valid: true},
 		},
 	}
-	row := blankModel().renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, "", 120)
 	if !strings.Contains(row, "copper") {
 		t.Errorf("renderIssueRow for assigned ticket should contain assignee name, got: %q", row)
 	}
@@ -1593,8 +1593,8 @@ func TestRenderIssueRow_assigneeBlankWhenUnset(t *testing.T) {
 			Title:  "Same title here",
 		},
 	}
-	rowA := blankModel().renderIssueRow(assigned, 0, 120)
-	rowU := blankModel().renderIssueRow(unassigned, 0, 120)
+	rowA := blankModel().renderIssueRow(assigned, 0, "", 120)
+	rowU := blankModel().renderIssueRow(unassigned, 0, "", 120)
 
 	// Unassigned row must not contain a stray agent name.
 	if strings.Contains(rowU, "iron") {
@@ -1619,7 +1619,7 @@ func TestRenderIssueRow_assigneeTruncatedAt8Chars(t *testing.T) {
 			Assignee: sql.NullString{String: "verylongname", Valid: true},
 		},
 	}
-	row := blankModel().renderIssueRow(node, 0, 120)
+	row := blankModel().renderIssueRow(node, 0, "", 120)
 	// Must contain the first 8 chars of the name.
 	if !strings.Contains(row, "verylong") {
 		t.Errorf("renderIssueRow should contain truncated assignee 'verylong', got: %q", row)

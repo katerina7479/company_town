@@ -568,7 +568,21 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 // Selectable() only catches orphaned repairing tickets.
 func (r *IssueRepo) Selectable() ([]*Issue, error) {
 	rows, err := r.db.Query(
-		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
+		// ancestor_chain maps every issue to each of its transitive ancestors.
+		// Used to check whether any ancestor has unclosed dependencies that would
+		// block a descendant from being selected. Single parent_id means the graph
+		// is a forest; diamond ancestry is not possible with today's data model.
+		`WITH RECURSIVE ancestor_chain(issue_id, ancestor_id) AS (
+		   SELECT id AS issue_id, parent_id AS ancestor_id
+		   FROM issues
+		   WHERE parent_id IS NOT NULL
+		   UNION ALL
+		   SELECT ac.issue_id, p.parent_id AS ancestor_id
+		   FROM ancestor_chain ac
+		   JOIN issues p ON p.id = ac.ancestor_id
+		   WHERE p.parent_id IS NOT NULL
+		 )
+		 SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
 		        i.branch, i.pr_number, i.assignee, i.parent_id, i.priority,
 		        i.created_at, i.updated_at, i.closed_at, i.repair_cycle_count, i.repair_reason
 		 FROM issues i
@@ -581,6 +595,12 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 		             SELECT 1 FROM issue_dependencies d
 		             JOIN issues dep ON dep.id = d.depends_on_id
 		             WHERE d.issue_id = i.id AND dep.status != 'closed'
+		           )
+		           AND NOT EXISTS (
+		             SELECT 1 FROM ancestor_chain ac
+		             JOIN issue_dependencies ad ON ad.issue_id = ac.ancestor_id
+		             JOIN issues dep ON dep.id = ad.depends_on_id
+		             WHERE ac.issue_id = i.id AND dep.status != 'closed'
 		           )
 		         )
 		   )
@@ -657,22 +677,30 @@ func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error)
 }
 
 // ListEpicsWithAllChildrenClosed returns epics that are not closed but have at
-// least one child and all children are closed.
+// least one transitive descendant and all transitive descendants are closed.
+// Uses a recursive CTE so nested epics (Epic → Sub-Epic → Tasks) auto-close as
+// a unit rather than requiring each level to close independently tick-by-tick.
 func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
 	rows, err := r.db.Query(
-		`SELECT id, issue_type, status, title, description, specialty, branch,
-		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at,
-		        repair_cycle_count, repair_reason
-		 FROM issues
-		 WHERE issue_type = 'epic'
-		   AND status != 'closed'
-		   AND EXISTS (
-		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id
-		   )
-		   AND NOT EXISTS (
-		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id AND child.status != 'closed'
-		   )
-		 ORDER BY id`,
+		`WITH RECURSIVE descendants(epic_id, descendant_id, descendant_status) AS (
+		   SELECT epic.id, child.id, child.status
+		   FROM issues epic
+		   JOIN issues child ON child.parent_id = epic.id
+		   WHERE epic.issue_type = 'epic' AND epic.status != 'closed'
+		   UNION ALL
+		   SELECT d.epic_id, grandchild.id, grandchild.status
+		   FROM descendants d
+		   JOIN issues grandchild ON grandchild.parent_id = d.descendant_id
+		 )
+		 SELECT e.id, e.issue_type, e.status, e.title, e.description, e.specialty, e.branch,
+		        e.pr_number, e.assignee, e.parent_id, e.priority, e.created_at, e.updated_at,
+		        e.closed_at, e.repair_cycle_count, e.repair_reason
+		 FROM issues e
+		 WHERE e.issue_type = 'epic'
+		   AND e.status != 'closed'
+		   AND EXISTS (SELECT 1 FROM descendants d WHERE d.epic_id = e.id)
+		   AND NOT EXISTS (SELECT 1 FROM descendants d WHERE d.epic_id = e.id AND d.descendant_status != 'closed')
+		 ORDER BY e.id`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing epics with all children closed: %w", err)
@@ -693,7 +721,9 @@ func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
 // IssueNode wraps an Issue with its children for hierarchical display.
 type IssueNode struct {
 	*Issue
-	Children []*IssueNode
+	Children             []*IssueNode
+	UnmetDeps            []*Issue   // unclosed direct dependencies
+	BlockingAncestorNode *IssueNode // nearest ancestor with unclosed deps (nil if none)
 }
 
 // ListHierarchy returns all issues organized as a forest (slice of root nodes).
@@ -726,6 +756,101 @@ func (r *IssueRepo) ListHierarchy() ([]*IssueNode, error) {
 	}
 
 	return roots, nil
+}
+
+// ListHierarchyWithDeps returns all issues as a forest with dependency
+// information attached to each node. UnmetDeps lists unclosed direct
+// dependencies; BlockingAncestorNode points to the nearest ancestor that has
+// unclosed deps of its own (propagated top-down after the tree is built).
+func (r *IssueRepo) ListHierarchyWithDeps() ([]*IssueNode, error) {
+	issues, err := r.List("")
+	if err != nil {
+		return nil, fmt.Errorf("listing issues for hierarchy with deps: %w", err)
+	}
+
+	nodes := make(map[int]*IssueNode, len(issues))
+	for _, issue := range issues {
+		nodes[issue.ID] = &IssueNode{Issue: issue}
+	}
+
+	// Load all unclosed dependencies in one query: issue_id → [dep issue, ...]
+	depRows, err := r.db.Query(
+		`SELECT d.issue_id, dep.id, dep.issue_type, dep.status, dep.title, dep.description,
+		        dep.specialty, dep.branch, dep.pr_number, dep.assignee, dep.parent_id,
+		        dep.priority, dep.created_at, dep.updated_at, dep.closed_at,
+		        dep.repair_cycle_count, dep.repair_reason
+		 FROM issue_dependencies d
+		 JOIN issues dep ON dep.id = d.depends_on_id
+		 WHERE dep.status != 'closed'
+		 ORDER BY d.issue_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("loading unmet deps for hierarchy: %w", err)
+	}
+	defer depRows.Close()
+	for depRows.Next() {
+		var issueID int
+		dep, err := scanIssueRowWithPrefix(depRows, &issueID)
+		if err != nil {
+			return nil, err
+		}
+		if node, ok := nodes[issueID]; ok {
+			node.UnmetDeps = append(node.UnmetDeps, dep)
+		}
+	}
+	if err := depRows.Err(); err != nil {
+		return nil, err
+	}
+
+	var roots []*IssueNode
+	for _, issue := range issues {
+		node := nodes[issue.ID]
+		if !issue.ParentID.Valid {
+			roots = append(roots, node)
+		} else {
+			parentID := int(issue.ParentID.Int64)
+			if parent, ok := nodes[parentID]; ok {
+				parent.Children = append(parent.Children, node)
+			} else {
+				roots = append(roots, node)
+			}
+		}
+	}
+
+	propagateBlockingAncestor(roots, nil)
+	return roots, nil
+}
+
+// propagateBlockingAncestor traverses the tree top-down, annotating each node
+// with its nearest blocking ancestor (the closest ancestor that has UnmetDeps).
+func propagateBlockingAncestor(nodes []*IssueNode, inherited *IssueNode) {
+	for _, n := range nodes {
+		n.BlockingAncestorNode = inherited
+		var nextAncestor *IssueNode
+		if len(n.UnmetDeps) > 0 {
+			nextAncestor = n
+		} else {
+			nextAncestor = inherited
+		}
+		propagateBlockingAncestor(n.Children, nextAncestor)
+	}
+}
+
+// scanIssueRowWithPrefix scans a row that begins with an extra integer column
+// (the owning issue_id from an issue_dependencies join) followed by the
+// standard issue columns.
+func scanIssueRowWithPrefix(row interface {
+	Scan(...interface{}) error
+}, issueID *int) (*Issue, error) {
+	var i Issue
+	err := row.Scan(
+		issueID,
+		&i.ID, &i.IssueType, &i.Status, &i.Title, &i.Description,
+		&i.Specialty, &i.Branch, &i.PRNumber, &i.Assignee, &i.ParentID,
+		&i.Priority, &i.CreatedAt, &i.UpdatedAt, &i.ClosedAt,
+		&i.RepairCycleCount, &i.RepairReason,
+	)
+	return &i, err
 }
 
 // SetPriority sets the priority on an issue.

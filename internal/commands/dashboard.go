@@ -88,10 +88,12 @@ type spawnAttachResultMsg struct {
 	err         error
 }
 
-// flatNode is an issue node with its render depth, used for cursor navigation.
+// flatNode is an issue node with its render depth and optional tree-drawing
+// prefix, used for cursor navigation and rendering.
 type flatNode struct {
-	node  *repo.IssueNode
-	depth int
+	node       *repo.IssueNode
+	depth      int
+	treePrefix string // empty in flat view; "├─ " / "└─ " etc. in tree view
 }
 
 // dashboardModel is the bubbletea model for the dashboard.
@@ -127,6 +129,9 @@ type dashboardModel struct {
 
 	// showClosed controls whether closed tickets are shown regardless of age.
 	showClosed bool
+
+	// treeView toggles between flat list (default) and tree-with-connectors view.
+	treeView bool
 
 	// Input mode — active when the user is typing a message (e.g. for nudge,
 	// ticket creation, or status change).
@@ -177,7 +182,7 @@ func (m *dashboardModel) fetch() tea.Msg {
 	if err != nil {
 		return dataMsg{err: err}
 	}
-	roots, err := m.issues.ListHierarchy()
+	roots, err := m.issues.ListHierarchyWithDeps()
 	if err != nil {
 		return dataMsg{err: err}
 	}
@@ -415,6 +420,9 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "f":
 			m.showClosed = !m.showClosed
+
+		case "t":
+			m.treeView = !m.treeView
 		}
 
 	case actionResultMsg:
@@ -587,6 +595,9 @@ func (m dashboardModel) flatTickets() []flatNode {
 		cutoff = time.Now().Add(-4 * time.Hour)
 	}
 	filtered := filterStaleClosedNodes(m.data.roots, cutoff)
+	if m.treeView {
+		return flattenTreeWithChars(filtered, 0, "")
+	}
 	return flattenTree(filtered, 0)
 }
 
@@ -594,8 +605,33 @@ func (m dashboardModel) flatTickets() []flatNode {
 func flattenTree(nodes []*repo.IssueNode, depth int) []flatNode {
 	var result []flatNode
 	for _, n := range nodes {
-		result = append(result, flatNode{n, depth})
+		result = append(result, flatNode{node: n, depth: depth})
 		result = append(result, flattenTree(n.Children, depth+1)...)
+	}
+	return result
+}
+
+// flattenTreeWithChars flattens a tree like flattenTree but computes tree-drawing
+// connector characters (├─, └─, │) for each node based on its sibling position.
+func flattenTreeWithChars(nodes []*repo.IssueNode, depth int, parentPrefix string) []flatNode {
+	var result []flatNode
+	for i, n := range nodes {
+		isLast := i == len(nodes)-1
+		var connector, continuation string
+		if depth == 0 {
+			connector = ""
+			continuation = ""
+		} else if isLast {
+			connector = "└─ "
+			continuation = "   "
+		} else {
+			connector = "├─ "
+			continuation = "│  "
+		}
+		treePrefix := parentPrefix + connector
+		result = append(result, flatNode{node: n, depth: depth, treePrefix: treePrefix})
+		childPrefix := parentPrefix + continuation
+		result = append(result, flattenTreeWithChars(n.Children, depth+1, childPrefix)...)
 	}
 	return result
 }
@@ -644,7 +680,11 @@ func (m dashboardModel) View() string {
 			if m.showClosed {
 				filterFlag = "*"
 			}
-			hint += fmt.Sprintf("  enter expand  o open PR  c change status  e edit reason  C new ticket  f[%s]filter closed", filterFlag)
+			treeFlag := " "
+			if m.treeView {
+				treeFlag = "*"
+			}
+			hint += fmt.Sprintf("  enter expand  o open PR  c change status  e edit reason  C new ticket  f[%s]filter closed  t[%s]tree", filterFlag, treeFlag)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
 		if m.statusMsg != "" {
@@ -738,7 +778,7 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		sb.WriteString(m.theme.Footer.Render("(no tickets)"))
 	} else {
 		for i, fn := range flat {
-			line := m.renderIssueRow(fn.node, fn.depth, innerWidth)
+			line := m.renderIssueRow(fn.node, fn.depth, fn.treePrefix, innerWidth)
 			if focused && i == m.ticketCursor {
 				line = m.theme.Selected.Width(rowWidth).Render(line)
 			}
@@ -792,14 +832,20 @@ func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
 }
 
 // renderIssueRow renders a single ticket row as a string (without trailing newline).
-func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width int) string {
-	indent := strings.Repeat("  ", depth)
-	bullet := "●"
-	if depth > 0 {
-		bullet = "◦"
+// treePrefix is empty in flat view and holds tree-drawing characters ("├─ " etc.) in tree view.
+func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, treePrefix string, width int) string {
+	var prefix string
+	if treePrefix != "" {
+		prefix = treePrefix
+	} else {
+		indent := strings.Repeat("  ", depth)
+		bullet := "●"
+		if depth > 0 {
+			bullet = "◦"
+		}
+		prefix = fmt.Sprintf("%s%s", indent, bullet)
 	}
 
-	prefix := fmt.Sprintf("%s%s", indent, bullet)
 	idStr := fmt.Sprintf("%-6d", node.ID)
 	coloredStatus := m.theme.ColorStatus(node.Status)
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
@@ -826,23 +872,57 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 		assigneeRaw = fmt.Sprintf("%-*s", assigneeWidth, name)
 	}
 
+	depMarker := m.renderDepMarker(node)
+
 	// Truncate title so the row fits inside the panel content area. `width` is
 	// the inner content width (outer panel width minus border and padding),
 	// passed in from renderTickets.
-	// prefix + space + type + space + id + space + status + space + priority + space + pr + space + assignee + space + age + space + title
-	// Use lipgloss.Width(prefix) because the selected-row bullet (●) is 3 bytes / 1 cell;
-	// len() would over-count by 2. Use len(node.Status) — the raw status is what the
-	// row actually renders via coloredStatus, not any bracket-framed variant.
-	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + assigneeWidth + 1 + len(ageRaw) + 1
+	// prefix + space + type + space + id + space + status + space + priority + space + pr + space + assignee + space + age + space + title + depMarker
+	// Use lipgloss.Width(prefix) because tree chars and bullets are multi-byte;
+	// len() would over-count. Use len(node.Status) — the raw status string.
+	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + assigneeWidth + 1 + len(ageRaw) + 1 + len(depMarker)
 	titleMax := width - fixedLen
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	return fmt.Sprintf("%s %s %s %s %s %s %s %s %s",
+	row := fmt.Sprintf("%s %s %s %s %s %s %s %s %s",
 		prefix, typ, idStr, coloredStatus, pri, prStr, assigneeRaw, age, title,
 	)
+	if depMarker != "" {
+		row += depMarker
+	}
+	return row
+}
+
+// renderDepMarker returns a short "[blocked by …]" or "[blocked transitively]"
+// annotation for the ticket row, or empty string if the ticket is unblocked.
+// Only shown in tree view mode (treeView is checked by callers via flatNode).
+func (m dashboardModel) renderDepMarker(node *repo.IssueNode) string {
+	if !m.treeView {
+		return ""
+	}
+	if len(node.UnmetDeps) > 0 {
+		ids := make([]string, len(node.UnmetDeps))
+		for i, d := range node.UnmetDeps {
+			ids[i] = fmt.Sprintf("%s-%d", m.ticketPrefix, d.ID)
+		}
+		return m.theme.Footer.Render(" [blocked by " + strings.Join(ids, ", ") + "]")
+	}
+	if node.BlockingAncestorNode != nil {
+		anc := node.BlockingAncestorNode
+		ancStr := fmt.Sprintf("%s-%d", m.ticketPrefix, anc.ID)
+		if len(anc.UnmetDeps) > 0 {
+			depIDs := make([]string, len(anc.UnmetDeps))
+			for i, d := range anc.UnmetDeps {
+				depIDs[i] = fmt.Sprintf("%s-%d", m.ticketPrefix, d.ID)
+			}
+			return m.theme.Footer.Render(" [blocked transitively via " + ancStr + " → " + strings.Join(depIDs, ", ") + "]")
+		}
+		return m.theme.Footer.Render(" [blocked transitively via " + ancStr + "]")
+	}
+	return ""
 }
 
 // renderTicketDetails renders the expanded detail lines for a ticket.
