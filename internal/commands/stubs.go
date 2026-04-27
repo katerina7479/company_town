@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/katerina7479/company_town/internal/agentworktree"
 	"github.com/katerina7479/company_town/internal/config"
@@ -293,7 +294,7 @@ func ArtisanStop(specialty string) error {
 		return fmt.Errorf("writing handoff signal: %w", err)
 	}
 
-	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
+	session.SendKeys(sessionName, fmt.Sprintf("Check for handoff_requested in your memory directory, write handoff.md, run `gt agent status %s stopped`, then exit.", name)) //nolint:errcheck // fire-and-forget signal to agent
 
 	fmt.Printf("Handoff signal sent. artisan-%s will exit after writing handoff.md.\n", specialty)
 	return nil
@@ -324,7 +325,7 @@ func ArchitectStop() error {
 		return fmt.Errorf("writing handoff signal: %w", err)
 	}
 
-	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory and write handoff.md, then exit.") //nolint:errcheck // fire-and-forget signal to agent
+	session.SendKeys(sessionName, "Check for handoff_requested in your memory directory, write handoff.md, run `gt agent status architect stopped`, then exit.") //nolint:errcheck // fire-and-forget signal to agent
 
 	fmt.Println("Handoff signal sent. Architect will exit after writing handoff.md.")
 	return nil
@@ -379,13 +380,22 @@ func Stop(target string, clean bool) error {
 
 	conn, _, connErr := db.OpenFromWorkingDir()
 	var updateStatus func(string, string) error
+	var getStatus func(string) (string, error)
 	if connErr == nil {
 		stopEvents := eventlog.NewLogger(ctDir)
-		updateStatus = repo.NewAgentRepo(conn, stopEvents).UpdateStatus
+		agentRepo := repo.NewAgentRepo(conn, stopEvents)
+		updateStatus = agentRepo.UpdateStatus
+		getStatus = func(name string) (string, error) {
+			a, err := agentRepo.Get(name)
+			if err != nil {
+				return "", err
+			}
+			return a.Status, nil
+		}
 		defer conn.Close()
 	}
 
-	stopCore(sessions, ctDir, clean, session.Kill, session.SendKeys, updateStatus, os.RemoveAll, gitWorktreePrune)
+	stopCore(sessions, ctDir, clean, session.Kill, session.SendKeys, updateStatus, os.RemoveAll, gitWorktreePrune, getStatus, 60*time.Second)
 
 	if target == "" {
 		fmt.Println("\nHandoff signals sent. Agents will exit after saving state.")
@@ -409,9 +419,11 @@ func filterSessions(all []string, wanted string) []string {
 }
 
 // stopCore is the testable shutdown logic used by Stop.
-// updateStatus may be nil when the DB is unavailable.
+// updateStatus and getStatus may be nil when the DB is unavailable.
 // When clean is true, worktree directories for prole sessions are removed after signaling.
-func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) error, sendKeysFn func(string, string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error) {
+// When getStatus is non-nil and clean is false, stopCore polls each signaled agent until
+// it sets its own status to "stopped" (graceful) or stopTimeout expires (warning, no kill).
+func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) error, sendKeysFn func(string, string) error, updateStatus func(string, string) error, removeAll func(string) error, worktreePrune func(string) error, getStatus func(string) (string, error), stopTimeout time.Duration) {
 	var cleanedAny bool
 	for _, s := range sessions {
 		agentName := s[len(session.SessionPrefix):]
@@ -429,17 +441,17 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 			continue
 		case agentName == "architect":
 			signalPath := filepath.Join(ctDir, "agents", "architect", "memory", "handoff_requested")
-			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                //nolint:errcheck // best-effort signal file write
-			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.") //nolint:errcheck // fire-and-forget shutdown signal
+			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                                                                            //nolint:errcheck // best-effort signal file write
+			sendKeysFn(s, fmt.Sprintf("System is shutting down. Write handoff.md, run `gt agent status %s stopped`, then exit cleanly.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 		case agentName == "mayor":
-			sendKeysFn(s, "System is shutting down. Save any state and exit cleanly.") //nolint:errcheck // fire-and-forget shutdown signal
+			sendKeysFn(s, fmt.Sprintf("System is shutting down. Save any state, run `gt agent status %s stopped`, then exit cleanly.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 		case strings.HasPrefix(agentName, "artisan-"):
 			specialty := strings.TrimPrefix(agentName, "artisan-")
 			signalPath := filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
-			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                //nolint:errcheck // best-effort signal file write
-			sendKeysFn(s, "System is shutting down. Write handoff.md and exit cleanly.") //nolint:errcheck // fire-and-forget shutdown signal
+			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                                                                            //nolint:errcheck // best-effort signal file write
+			sendKeysFn(s, fmt.Sprintf("System is shutting down. Write handoff.md, run `gt agent status %s stopped`, then exit cleanly.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 		default:
-			sendKeysFn(s, "System is shutting down. Commit and push any work, then exit.") //nolint:errcheck // fire-and-forget shutdown signal
+			sendKeysFn(s, fmt.Sprintf("System is shutting down. Commit and push any work, run `gt agent status %s stopped`, then exit.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 			if clean && strings.HasPrefix(agentName, "prole-") {
 				proleName := strings.TrimPrefix(agentName, "prole-")
 				worktreeDir := filepath.Join(ctDir, "proles", proleName)
@@ -453,8 +465,47 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 		}
 
 		fmt.Printf("  signaled: %s\n", s)
-		if updateStatus != nil {
-			updateStatus(agentName, "idle") //nolint:errcheck // best-effort status update during shutdown
+
+		// When DB is unavailable or --clean removes the workspace, fall back to
+		// marking idle immediately (old behavior). Otherwise, poll until the agent
+		// sets its own status to "stopped", then kill the session cleanly.
+		shouldWait := getStatus != nil && !clean
+		if !shouldWait {
+			if updateStatus != nil {
+				updateStatus(agentName, repo.StatusIdle) //nolint:errcheck // best-effort status update during shutdown
+			}
+			continue
+		}
+
+		effectiveTimeout := stopTimeout
+		if effectiveTimeout == 0 {
+			effectiveTimeout = 60 * time.Second
+		}
+		deadline := time.Now().Add(effectiveTimeout)
+		reached := false
+		for {
+			status, err := getStatus(agentName)
+			if err == nil && status == repo.StatusStopped {
+				reached = true
+				break
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		if reached {
+			if err := killFn(s); err != nil {
+				fmt.Printf("  error killing %s after stopped signal: %v\n", agentName, err)
+			} else {
+				fmt.Printf("  killed (graceful): %s\n", s)
+				if updateStatus != nil {
+					updateStatus(agentName, repo.StatusDead) //nolint:errcheck // best-effort status update during shutdown
+				}
+			}
+		} else {
+			fmt.Printf("  warning: agent %s did not reach 'stopped' within %s — run 'ct nuke %s' to force-kill\n",
+				agentName, effectiveTimeout, agentName)
 		}
 	}
 

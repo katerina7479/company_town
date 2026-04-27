@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- stopCore tests ---
@@ -31,7 +32,7 @@ func TestStopCore_killsDaemonSession(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	stopCore([]string{"ct-daemon"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-daemon"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(killed) != 1 || killed[0] != "ct-daemon" {
 		t.Errorf("expected daemon session killed, got %v", killed)
@@ -52,7 +53,7 @@ func TestStopCore_marksDaemonDeadAfterKill(t *testing.T) {
 	removeAll := func(string) error { return nil }
 	worktreePrune := func(string) error { return nil }
 
-	stopCore([]string{"ct-daemon"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-daemon"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if updated["daemon"] != "dead" {
 		t.Errorf("expected daemon status set to 'dead', got %q", updated["daemon"])
@@ -77,7 +78,7 @@ func TestStopCore_daemonKillErrorSurfaced(t *testing.T) {
 	old := os.Stdout
 	os.Stdout = w
 
-	stopCore([]string{"ct-daemon"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-daemon"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	w.Close()
 	os.Stdout = old
@@ -113,7 +114,7 @@ func TestStopCore_nonDaemonSessionsNotKilled(t *testing.T) {
 	removeAll := func(string) error { return nil }
 	worktreePrune := func(string) error { return nil }
 
-	stopCore([]string{"ct-mayor", "ct-prole-copper"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-mayor", "ct-prole-copper"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(killed) != 0 {
 		t.Errorf("expected no kills for non-daemon sessions, got %v", killed)
@@ -147,7 +148,7 @@ func TestStopCore_daemonKilledOtherSessionsSignaled(t *testing.T) {
 	removeAll := func(string) error { return nil }
 	worktreePrune := func(string) error { return nil }
 
-	stopCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-daemon", "ct-mayor", "ct-prole-copper"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(killed) != 1 || killed[0] != "ct-daemon" {
 		t.Errorf("expected only daemon killed, got %v", killed)
@@ -184,7 +185,7 @@ func TestStopCore_withoutClean_preservesWorktrees(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	stopCore([]string{"ct-prole-copper"}, ctDir, false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-prole-copper"}, ctDir, false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(removed) != 0 {
 		t.Errorf("expected no worktree removals without --clean, got %v", removed)
@@ -208,7 +209,7 @@ func TestStopCore_withClean_removesProleWorktrees(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	stopCore([]string{"ct-prole-copper", "ct-prole-iron"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-prole-copper", "ct-prole-iron"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(removed) != 2 {
 		t.Errorf("expected 2 worktree removals with --clean, got %v", removed)
@@ -244,7 +245,7 @@ func TestStopCore_withClean_doesNotRemoveNonProleWorktrees(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	stopCore([]string{"ct-mayor", "ct-daemon"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-mayor", "ct-daemon"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(removed) != 0 {
 		t.Errorf("expected no removals for non-prole sessions, got %v", removed)
@@ -729,7 +730,7 @@ func TestStop_cleanNonProle_stopCoreStillRunsNoRemoval(t *testing.T) {
 	pruned := []string{}
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
-	stopCore([]string{"ct-daemon"}, t.TempDir(), true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-daemon"}, t.TempDir(), true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(killed) != 1 || killed[0] != "ct-daemon" {
 		t.Errorf("expected daemon killed, got %v", killed)
@@ -760,7 +761,7 @@ func TestStop_cleanProleTarget_removesWorktree(t *testing.T) {
 	worktreePrune := func(p string) error { pruned = append(pruned, p); return nil }
 
 	ctDir := t.TempDir()
-	stopCore([]string{"ct-prole-copper"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune)
+	stopCore([]string{"ct-prole-copper"}, ctDir, true, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
 
 	if len(killed) != 0 {
 		t.Errorf("prole should be signaled, not killed, got kills: %v", killed)
@@ -774,5 +775,75 @@ func TestStop_cleanProleTarget_removesWorktree(t *testing.T) {
 	}
 	if len(pruned) != 1 {
 		t.Errorf("expected worktree prune called once, got %v", pruned)
+	}
+}
+
+// --- stopCore wait-for-stopped tests ---
+
+func TestStopCore_agentReachesStoppedWithinTimeout_killsAndSetsDead(t *testing.T) {
+	killed := []string{}
+	killFn := func(s string) error { killed = append(killed, s); return nil }
+	sendKeysFn := func(s, msg string) error { return nil }
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error { updated[name] = status; return nil }
+	removeAll := func(string) error { return nil }
+	worktreePrune := func(string) error { return nil }
+
+	getStatus := func(string) (string, error) { return "stopped", nil }
+
+	stopCore([]string{"ct-mayor"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, getStatus, time.Second)
+
+	if len(killed) != 1 || killed[0] != "ct-mayor" {
+		t.Errorf("expected ct-mayor killed after stopped signal, got %v", killed)
+	}
+	if updated["mayor"] != "dead" {
+		t.Errorf("expected mayor status 'dead', got %q", updated["mayor"])
+	}
+}
+
+func TestStopCore_agentDoesNotReachStopped_warnsAndLeaves(t *testing.T) {
+	killed := []string{}
+	killFn := func(s string) error { killed = append(killed, s); return nil }
+	sendKeysFn := func(s, msg string) error { return nil }
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error { updated[name] = status; return nil }
+	removeAll := func(string) error { return nil }
+	worktreePrune := func(string) error { return nil }
+
+	getStatus := func(string) (string, error) { return "working", nil }
+
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+
+	stopCore([]string{"ct-mayor"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, getStatus, time.Millisecond)
+
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	if len(killed) != 0 {
+		t.Errorf("expected no kill when not stopped, got %v", killed)
+	}
+	if updated["mayor"] != "" {
+		t.Errorf("expected no status update when not stopped, got %q", updated["mayor"])
+	}
+	if !strings.Contains(string(out), "did not reach 'stopped'") {
+		t.Errorf("expected warning message, got: %q", string(out))
+	}
+}
+
+func TestStopCore_nilGetStatus_fallsBackToIdle(t *testing.T) {
+	killFn := func(s string) error { return nil }
+	sendKeysFn := func(s, msg string) error { return nil }
+	updated := map[string]string{}
+	updateStatus := func(name, status string) error { updated[name] = status; return nil }
+	removeAll := func(string) error { return nil }
+	worktreePrune := func(string) error { return nil }
+
+	stopCore([]string{"ct-mayor"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, nil, 0)
+
+	if updated["mayor"] != "idle" {
+		t.Errorf("expected mayor status 'idle' when DB unavailable, got %q", updated["mayor"])
 	}
 }

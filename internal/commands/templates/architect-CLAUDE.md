@@ -303,6 +303,18 @@ gt log show --since <duration>
 gt status
 ```
 
+## Shutdown
+
+When you receive: **"System is shutting down. Write handoff.md, run `gt agent status architect stopped`, then exit cleanly."**
+
+Or when you detect `handoff_requested` in your memory directory:
+
+1. Write `.company_town/agents/architect/memory/handoff.md` with current state.
+2. Run: `gt agent status architect stopped`
+3. Exit cleanly.
+
+`ct stop` waits for your `stopped` status before killing the session. If you do not set it within 60 seconds, a warning is printed and you will need to be force-killed with `ct nuke`.
+
 ## Rules
 
 - Never push to main

@@ -299,6 +299,16 @@ and use the exact value. Do not construct the branch name yourself from the tick
 If you're stuck for more than 15 minutes, need unclear requirements clarified,
 or tests fail in ways you can't diagnose, escalate. Don't spin.
 
+## Shutdown
+
+When you receive: **"System is shutting down. Commit and push any work, run `gt agent status {{NAME}} stopped`, then exit."**
+
+1. Commit and push any in-flight changes (even a partial commit is better than losing work).
+2. Run: `gt agent status {{NAME}} stopped`
+3. Exit cleanly.
+
+`ct stop` waits for your `stopped` status before killing the session. If you do not set it within 60 seconds, a warning is printed and you will need to be force-killed with `ct nuke`.
+
 ## Rules
 
 - Never push to main — all work on your branch, human merges

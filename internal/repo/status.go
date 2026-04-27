@@ -24,10 +24,14 @@ const (
 	StatusWorking = "working"
 	StatusIdle    = "idle"
 	StatusDead    = "dead"
+	// StatusStopped means the agent has finished its shutdown protocol
+	// (committed in-flight work, wrote handoff if applicable) and is safe
+	// to kill. Distinct from idle (ready for new work) and dead (already gone).
+	StatusStopped = "stopped"
 )
 
 // ValidAgentStatuses is the complete set of valid agent status values.
-var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead}
+var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead, StatusStopped}
 
 // IsTerminalStatus returns true for statuses that represent final, immutable
 // outcomes — work that landed (closed) or was abandoned (cancelled). A ticket
