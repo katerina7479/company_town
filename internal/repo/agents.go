@@ -260,7 +260,18 @@ var metalNames = []string{
 // FirstAvailableMetalName returns the first metal name not already present in
 // the agents table. Returns empty string if all names are taken.
 func (r *AgentRepo) FirstAvailableMetalName() (string, error) {
+	return r.FirstAvailableMetalNameExcluding(nil)
+}
+
+// FirstAvailableMetalNameExcluding returns the first metal name not already
+// present in the agents table and not in the provided exclusion set. This
+// allows callers to reserve multiple names within a single tick without
+// registering them yet. Returns empty string if all names are taken or excluded.
+func (r *AgentRepo) FirstAvailableMetalNameExcluding(exclude map[string]bool) (string, error) {
 	for _, name := range metalNames {
+		if exclude[name] {
+			continue
+		}
 		var count int
 		if err := r.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE name = ?`, name).Scan(&count); err != nil {
 			return "", fmt.Errorf("checking agent name %s: %w", name, err)

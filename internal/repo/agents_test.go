@@ -268,6 +268,86 @@ func TestAgentRepo_ListAll(t *testing.T) {
 	}
 }
 
+func TestFirstAvailableMetalNameExcluding_returnsFirstUnregistered(t *testing.T) {
+	r := setupAgentRepo(t)
+
+	// Register copper and iron — next should be tin.
+	r.Register("copper", "prole", nil)
+	r.Register("iron", "prole", nil)
+
+	name, err := r.FirstAvailableMetalNameExcluding(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "tin" {
+		t.Errorf("expected tin, got %q", name)
+	}
+}
+
+func TestFirstAvailableMetalNameExcluding_skipsExcluded(t *testing.T) {
+	r := setupAgentRepo(t)
+
+	// copper is registered; tin is excluded via the map — so next available is iron.
+	r.Register("copper", "prole", nil)
+	exclude := map[string]bool{"tin": true}
+
+	name, err := r.FirstAvailableMetalNameExcluding(exclude)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "iron" {
+		t.Errorf("expected iron (tin excluded), got %q", name)
+	}
+}
+
+func TestFirstAvailableMetalNameExcluding_returnsEmptyWhenAllTaken(t *testing.T) {
+	r := setupAgentRepo(t)
+
+	// Register every metal name.
+	for _, name := range metalNames {
+		if err := r.Register(name, "prole", nil); err != nil {
+			t.Fatalf("Register %s: %v", name, err)
+		}
+	}
+
+	name, err := r.FirstAvailableMetalNameExcluding(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("expected empty string when all names taken, got %q", name)
+	}
+}
+
+func TestFirstAvailableMetalNameExcluding_returnsEmptyWhenAllExcluded(t *testing.T) {
+	r := setupAgentRepo(t)
+
+	exclude := make(map[string]bool)
+	for _, name := range metalNames {
+		exclude[name] = true
+	}
+
+	name, err := r.FirstAvailableMetalNameExcluding(exclude)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("expected empty string when all names excluded, got %q", name)
+	}
+}
+
+func TestFirstAvailableMetalNameExcluding_nilMapSameAsEmpty(t *testing.T) {
+	r := setupAgentRepo(t)
+
+	name, err := r.FirstAvailableMetalNameExcluding(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "copper" {
+		t.Errorf("expected copper (first metal) with no exclusions, got %q", name)
+	}
+}
+
 func TestAgentRepo_CountByType(t *testing.T) {
 	repo := setupAgentRepo(t)
 
