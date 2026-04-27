@@ -851,6 +851,8 @@ func (m dashboardModel) renderTicketDetails(node *repo.IssueNode, depth int, wid
 	var sb strings.Builder
 	detailIndent := strings.Repeat("  ", depth+1)
 
+	fmt.Fprintf(&sb, "%s  title: %s\n", detailIndent, m.theme.Footer.Render(node.Title))
+
 	if node.Description.Valid && node.Description.String != "" {
 		wrapped := wordWrap(node.Description.String, width-len(detailIndent)-4)
 		for _, line := range strings.Split(wrapped, "\n") {
