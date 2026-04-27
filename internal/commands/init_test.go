@@ -728,7 +728,7 @@ func TestEnsureGitOrigin_noGitDir_initializesAndAddsRemote(t *testing.T) {
 func TestEnsureGitOrigin_gitDirNoOrigin_addsRemote(t *testing.T) {
 	dir := t.TempDir()
 	// Create a .git directory so the stat check passes.
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0750); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -763,7 +763,7 @@ func TestEnsureGitOrigin_gitDirNoOrigin_addsRemote(t *testing.T) {
 
 func TestEnsureGitOrigin_gitDirWithOrigin_noOp(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0750); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
