@@ -823,3 +823,106 @@ func TestLoadTemplateAllAgentTypes(t *testing.T) {
 		}
 	}
 }
+
+// --- checkRemoteMain tests ---
+
+func TestCheckRemoteMain_emptyRemote_bootstrapOneLiner(t *testing.T) {
+	old := gitLsRemoteMainFn
+	defer func() { gitLsRemoteMainFn = old }()
+	gitLsRemoteMainFn = func(_ string) (string, error) {
+		return "", nil // empty output: no main branch
+	}
+
+	note, showNext := checkRemoteMain("/any/dir", "github", "owner/repo")
+
+	if !strings.Contains(note, "no 'main' branch yet") {
+		t.Errorf("expected note about missing main branch, got %q", note)
+	}
+	if !strings.Contains(note, "git commit --allow-empty") {
+		t.Errorf("expected bootstrap one-liner in note, got %q", note)
+	}
+	if !strings.Contains(note, "git push -u origin main") {
+		t.Errorf("expected push command in note, got %q", note)
+	}
+	if showNext {
+		t.Error("expected showNextStep=false when main branch is missing")
+	}
+}
+
+func TestCheckRemoteMain_unreachableRemote_softNote(t *testing.T) {
+	old := gitLsRemoteMainFn
+	defer func() { gitLsRemoteMainFn = old }()
+	gitLsRemoteMainFn = func(_ string) (string, error) {
+		return "", fmt.Errorf("connection refused")
+	}
+
+	note, showNext := checkRemoteMain("/any/dir", "github", "owner/repo")
+
+	if !strings.Contains(note, "Could not reach") {
+		t.Errorf("expected soft note about unreachable remote, got %q", note)
+	}
+	if !strings.Contains(note, "'ct start' will succeed") {
+		t.Errorf("expected ct-start hint in note, got %q", note)
+	}
+	if !showNext {
+		t.Error("expected showNextStep=true even when remote is unreachable")
+	}
+}
+
+func TestCheckRemoteMain_hasMain_noNote(t *testing.T) {
+	old := gitLsRemoteMainFn
+	defer func() { gitLsRemoteMainFn = old }()
+	gitLsRemoteMainFn = func(_ string) (string, error) {
+		return "abc123\trefs/heads/main", nil
+	}
+
+	note, showNext := checkRemoteMain("/any/dir", "github", "owner/repo")
+
+	if note != "" {
+		t.Errorf("expected no note when main branch exists, got %q", note)
+	}
+	if !showNext {
+		t.Error("expected showNextStep=true when main branch exists")
+	}
+}
+
+func TestCheckRemoteMain_noPlatform_skipsCheck(t *testing.T) {
+	old := gitLsRemoteMainFn
+	defer func() { gitLsRemoteMainFn = old }()
+	called := false
+	gitLsRemoteMainFn = func(_ string) (string, error) {
+		called = true
+		return "", nil
+	}
+
+	note, showNext := checkRemoteMain("/any/dir", "", "owner/repo")
+
+	if called {
+		t.Error("expected ls-remote not called when platform is empty")
+	}
+	if note != "" {
+		t.Errorf("expected no note when platform unset, got %q", note)
+	}
+	if !showNext {
+		t.Error("expected showNextStep=true when platform unset")
+	}
+}
+
+func TestCheckRemoteMain_noRepoRef_skipsCheck(t *testing.T) {
+	old := gitLsRemoteMainFn
+	defer func() { gitLsRemoteMainFn = old }()
+	called := false
+	gitLsRemoteMainFn = func(_ string) (string, error) {
+		called = true
+		return "", nil
+	}
+
+	note, _ := checkRemoteMain("/any/dir", "github", "")
+
+	if called {
+		t.Error("expected ls-remote not called when repoRef is empty")
+	}
+	if note != "" {
+		t.Errorf("expected no note when repoRef unset, got %q", note)
+	}
+}

@@ -6,6 +6,25 @@ import (
 	"github.com/katerina7479/company_town/internal/db"
 )
 
+// --- IsTerminalStatus tests ---
+
+func TestIsTerminalStatus(t *testing.T) {
+	terminal := []string{StatusClosed, StatusCancelled}
+	for _, s := range terminal {
+		if !IsTerminalStatus(s) {
+			t.Errorf("IsTerminalStatus(%q) = false, want true", s)
+		}
+	}
+	nonTerminal := []string{StatusDraft, StatusOpen, StatusInProgress, StatusCIRunning,
+		StatusInReview, StatusUnderReview, StatusPROpen, StatusReviewed,
+		StatusRepairing, StatusOnHold, StatusMergeConflict}
+	for _, s := range nonTerminal {
+		if IsTerminalStatus(s) {
+			t.Errorf("IsTerminalStatus(%q) = true, want false", s)
+		}
+	}
+}
+
 func setupTestRepo(t *testing.T) *IssueRepo {
 	t.Helper()
 	conn, err := db.NewTestDB()
@@ -2151,4 +2170,80 @@ func collectIDs(issues []*Issue) map[int]bool {
 		m[i.ID] = true
 	}
 	return m
+}
+
+// --- Cancelled-as-terminal tests (nc-263) ---
+
+func TestSelectable_CancelledDepDoesNotBlock(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// The dependency is cancelled — should be treated as terminal, not a blocker.
+	cancelledDepID, _ := r.Create("Cancelled dep", "task", nil, nil, nil)
+	r.UpdateStatus(cancelledDepID, StatusCancelled) //nolint:errcheck
+
+	depID, _ := r.Create("Blocked task", "task", nil, nil, nil)
+	r.UpdateStatus(depID, StatusOpen) //nolint:errcheck
+	r.AddDependency(depID, cancelledDepID)
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	ids := make(map[int]bool)
+	for _, i := range result {
+		ids[i.ID] = true
+	}
+	if !ids[depID] {
+		t.Errorf("expected ticket id=%d to be selectable (dep is cancelled), got results: %v", depID, result)
+	}
+}
+
+func TestIssueRepo_ListEpicsWithAllChildrenClosed_MixedCancelledAndClosed(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Epic with one closed child and one cancelled child — all children terminal.
+	epicID, _ := r.Create("Mixed epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, StatusOpen) //nolint:errcheck
+	child1, _ := r.Create("Closed child", "task", &epicID, nil, nil)
+	r.UpdateStatus(child1, StatusClosed) //nolint:errcheck
+	child2, _ := r.Create("Cancelled child", "task", &epicID, nil, nil)
+	r.UpdateStatus(child2, StatusCancelled) //nolint:errcheck
+
+	// Epic with one closed child and one still-open child — should NOT be returned.
+	epic2ID, _ := r.Create("Incomplete epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epic2ID, StatusOpen) //nolint:errcheck
+	child3, _ := r.Create("Closed child 2", "task", &epic2ID, nil, nil)
+	r.UpdateStatus(child3, StatusClosed) //nolint:errcheck
+	child4, _ := r.Create("Open child", "task", &epic2ID, nil, nil)
+	r.UpdateStatus(child4, StatusOpen) //nolint:errcheck
+
+	epics, err := r.ListEpicsWithAllChildrenClosed()
+	if err != nil {
+		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+	}
+	if len(epics) != 1 {
+		t.Fatalf("expected 1 epic, got %d", len(epics))
+	}
+	if epics[0].ID != epicID {
+		t.Errorf("expected mixed epic id=%d, got id=%d", epicID, epics[0].ID)
+	}
+}
+
+func TestIssueRepo_ListEpicsWithAllChildrenClosed_CancelledEpicExcluded(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// A cancelled epic should not be returned even if all its children are closed.
+	epicID, _ := r.Create("Cancelled epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, StatusOpen) //nolint:errcheck
+	child, _ := r.Create("Closed child", "task", &epicID, nil, nil)
+	r.UpdateStatus(child, StatusClosed)     //nolint:errcheck
+	r.UpdateStatus(epicID, StatusCancelled) //nolint:errcheck
+
+	epics, err := r.ListEpicsWithAllChildrenClosed()
+	if err != nil {
+		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+	}
+	if len(epics) != 0 {
+		t.Errorf("expected no epics (cancelled epic excluded), got %d", len(epics))
+	}
 }

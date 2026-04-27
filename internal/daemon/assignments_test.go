@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"io"
 	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -337,5 +339,77 @@ func TestHandleAssignments_assignExecuteErrorContinues(t *testing.T) {
 	}
 	if !issue2.Assignee.Valid || issue2.Assignee.String == "" {
 		t.Errorf("expected ticket %d assigned, got assignee=%v", id2, issue2.Assignee)
+	}
+}
+
+// TestHandleAssignments_zeroExistingProlesSpawnsDistinctNames asserts that
+// spawning from 0 proles to cap allocates distinct metal names. This exercises
+// the FirstAvailableMetalNameExcluding dedup fix: without the fix the headroom
+// loop returns "copper" for every iteration and only one prole gets created.
+func TestHandleAssignments_zeroExistingProlesSpawnsDistinctNames(t *testing.T) {
+	d, issues, agents := newAssignmentDaemon(t)
+	d.cfg.MaxProles = 3
+
+	mustOpen(t, issues, "Feature A")
+	mustOpen(t, issues, "Feature B")
+	mustOpen(t, issues, "Feature C")
+
+	d.handleAssignments()
+
+	all, err := agents.ListAll()
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 proles created, got %d", len(all))
+	}
+
+	// Verify all three names are distinct.
+	seen := make(map[string]bool)
+	for _, a := range all {
+		if seen[a.Name] {
+			t.Errorf("duplicate prole name: %q", a.Name)
+		}
+		seen[a.Name] = true
+	}
+}
+
+// TestHandleAssignments_capReachedWithAllBusyLogsEscalation asserts that when
+// existing >= MaxProles and every prole is busy, the cap-reached escalation
+// log fires rather than silently no-oping.
+func TestHandleAssignments_capReachedWithAllBusyLogsEscalation(t *testing.T) {
+	var logBuf bytes.Buffer
+	d, issues, agents := newAssignmentDaemon(t)
+	d.cfg.MaxProles = 2
+	d.logger = log.New(&logBuf, "", 0)
+
+	// Two proles stuck working on closed tickets — they count toward the cap but
+	// hold no selectable assignment (BusyAssignees returns them, making slots=0).
+	closedID1, _ := issues.Create("done-1", "task", nil, nil, nil)
+	closedID2, _ := issues.Create("done-2", "task", nil, nil, nil)
+	issues.UpdateStatus(closedID1, "closed")
+	issues.UpdateStatus(closedID2, "closed")
+
+	agents.Register("copper", "prole", nil)
+	agents.Register("iron", "prole", nil)
+
+	// Point the proles at the closed tickets so BusyAssignees sees them.
+	// SetCurrentIssue sets status=working and current_issue.
+	copperIssue := closedID1
+	ironIssue := closedID2
+	agents.SetCurrentIssue("copper", &copperIssue)
+	agents.SetCurrentIssue("iron", &ironIssue)
+
+	// A ready ticket that cannot be assigned because cap is reached.
+	mustOpen(t, issues, "Blocked work")
+
+	d.handleAssignments()
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "prole cap reached") {
+		t.Errorf("expected 'prole cap reached' escalation in log, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "ticket(s) blocked") {
+		t.Errorf("expected 'ticket(s) blocked' in log, got:\n%s", logged)
 	}
 }

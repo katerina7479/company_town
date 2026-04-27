@@ -3419,7 +3419,7 @@ func TestClassifyChecks(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotStatus, gotFailing := classifyChecks(tc.checks)
+			gotStatus, gotFailing := classifyChecks(tc.checks, nil)
 			if gotStatus != tc.wantStatus {
 				t.Errorf("status: got %q, want %q", gotStatus, tc.wantStatus)
 			}
@@ -4055,13 +4055,13 @@ func TestHandleCancelledTickets_FullCleanup(t *testing.T) {
 		t.Errorf("expected branch 'prole/copper/nc-999' deleted, got %v", branchesDeleted)
 	}
 
-	// Ticket should now be closed with branch/PR/assignee cleared.
+	// Ticket should stay in cancelled with branch/PR/assignee cleared.
 	updated, err := issues.Get(id)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 	if updated.Assignee.Valid {
 		t.Errorf("expected assignee cleared, got %q", updated.Assignee.String)
@@ -4109,8 +4109,8 @@ func TestHandleCancelledTickets_NoPR(t *testing.T) {
 	}
 
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4141,8 +4141,8 @@ func TestHandleCancelledTickets_NoBranch(t *testing.T) {
 	}
 
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4160,8 +4160,8 @@ func TestHandleCancelledTickets_NoAssignee(t *testing.T) {
 	}
 
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4195,10 +4195,10 @@ func TestHandleCancelledTickets_PRCloseFailsNonFatal(t *testing.T) {
 		t.Errorf("expected branch deleted despite PR close error, got %v", branchesDeleted)
 	}
 
-	// Ticket should still be closed.
+	// Ticket should still be cancelled (cleanup ran despite PR close error).
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4213,6 +4213,43 @@ func TestHandleCancelledTickets_AlreadyClosed(t *testing.T) {
 
 	if len(*sent) != 0 {
 		t.Errorf("expected no-op for no cancelled tickets, got sendKeys calls: %v", *sent)
+	}
+}
+
+func TestHandleCancelledTickets_IdempotentAlreadyCleaned(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	var prClosed []int
+	d.prCloseFn = func(prNum int) error {
+		prClosed = append(prClosed, prNum)
+		return nil
+	}
+	var branchesDeleted []string
+	d.gitDeleteBranchFn = func(_, branch string) error {
+		branchesDeleted = append(branchesDeleted, branch)
+		return nil
+	}
+
+	// Ticket is already cleaned: in cancelled state with no assignee, branch, or PR.
+	id, _ := issues.Create("Already cleaned", "task", nil, nil, nil)
+	issues.UpdateStatus(id, repo.StatusCancelled) //nolint:errcheck
+
+	d.handleCancelledTickets()
+
+	// Nothing should have been called — idempotency guard short-circuits.
+	if len(*sent) != 0 {
+		t.Errorf("expected no sendKeys for already-cleaned ticket, got %v", *sent)
+	}
+	if len(prClosed) != 0 {
+		t.Errorf("expected no PR close for already-cleaned ticket, got %v", prClosed)
+	}
+	if len(branchesDeleted) != 0 {
+		t.Errorf("expected no branch delete for already-cleaned ticket, got %v", branchesDeleted)
+	}
+
+	updated, _ := issues.Get(id)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status unchanged at cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4272,6 +4309,232 @@ func TestDetectBlockingPrompt_onlyInLast20Lines(t *testing.T) {
 	pane := strings.Join(lines, "\n")
 	if got := detectBlockingPrompt(pane); got != "" {
 		t.Errorf("prompt outside last-20-line window should not be detected, got %q", got)
+	}
+}
+
+// --- classifyChecks unknown conclusion logging tests ---
+
+func TestClassifyChecks_unknownConclusionLoggedAndTreatedAsPassing(t *testing.T) {
+	type ciCheck = struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	}
+	var loggedLines []string
+	logger := log.New(logWriterFn(func(line string) { loggedLines = append(loggedLines, line) }), "", 0)
+
+	checks := []ciCheck{
+		{Name: "stale-check", Status: "COMPLETED", Conclusion: "STALE"},
+	}
+	status, failing := classifyChecks(checks, logger)
+
+	if status != "passing" {
+		t.Errorf("expected unknown conclusion treated as passing, got %q", status)
+	}
+	if len(failing) != 0 {
+		t.Errorf("expected no failing checks, got %v", failing)
+	}
+	if len(loggedLines) == 0 {
+		t.Error("expected unknown conclusion to be logged, but no log lines emitted")
+	}
+	if !strings.Contains(loggedLines[0], "STALE") || !strings.Contains(loggedLines[0], "stale-check") {
+		t.Errorf("log line should mention conclusion and check name, got %q", loggedLines[0])
+	}
+}
+
+func TestClassifyChecks_unknownStatusLoggedAndTreatedAsPassing(t *testing.T) {
+	type ciCheck = struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	}
+	var loggedLines []string
+	logger := log.New(logWriterFn(func(line string) { loggedLines = append(loggedLines, line) }), "", 0)
+
+	checks := []ciCheck{
+		{Name: "mystery-check", Status: "UNKNOWN_STATE", Conclusion: ""},
+	}
+	status, failing := classifyChecks(checks, logger)
+
+	if status != "passing" {
+		t.Errorf("expected unknown status treated as passing, got %q", status)
+	}
+	if len(failing) != 0 {
+		t.Errorf("expected no failing checks, got %v", failing)
+	}
+	if len(loggedLines) == 0 {
+		t.Error("expected unknown status to be logged, but no log lines emitted")
+	}
+	if !strings.Contains(loggedLines[0], "UNKNOWN_STATE") || !strings.Contains(loggedLines[0], "mystery-check") {
+		t.Errorf("log line should mention status and check name, got %q", loggedLines[0])
+	}
+}
+
+func TestClassifyChecks_nilLoggerDoesNotPanic(t *testing.T) {
+	type ciCheck = struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	}
+	checks := []ciCheck{
+		{Name: "weird", Status: "COMPLETED", Conclusion: "STALE"},
+	}
+	// Must not panic with nil logger.
+	status, _ := classifyChecks(checks, nil)
+	if status != "passing" {
+		t.Errorf("expected passing, got %q", status)
+	}
+}
+
+// logWriterFn implements io.Writer for capturing log output in tests.
+type logWriterFn func(string)
+
+func (f logWriterFn) Write(p []byte) (int, error) {
+	f(strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
+// --- handleStuckCIRunning tests ---
+
+func TestHandleStuckCIRunning_escalatesToMayor(t *testing.T) {
+	mayorSession := "ct-mayor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+	d.ciRunningStuckThreshold = 30 * time.Minute
+
+	id, _ := issues.Create("Stuck CI ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 42)
+
+	// Simulate the ticket having been in ci_running for >threshold.
+	d.nowFn = func() time.Time {
+		issue, _ := issues.Get(id)
+		return issue.UpdatedAt.Add(35 * time.Minute)
+	}
+
+	d.handleStuckCIRunning()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation to Mayor, got %d", len(*sent))
+	}
+	if (*sent)[0].session != mayorSession {
+		t.Errorf("expected escalation to %q, got %q", mayorSession, (*sent)[0].session)
+	}
+	if !strings.Contains((*sent)[0].msg, "ESCALATION") {
+		t.Errorf("escalation message should contain ESCALATION, got %q", (*sent)[0].msg)
+	}
+	if !strings.Contains((*sent)[0].msg, "NC-"+itoa(id)) {
+		t.Errorf("escalation message should contain ticket ID, got %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleStuckCIRunning_noEscalationWhenBelowThreshold(t *testing.T) {
+	mayorSession := "ct-mayor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+	d.ciRunningStuckThreshold = 30 * time.Minute
+
+	id, _ := issues.Create("Fresh CI ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 43)
+
+	// Only 10 minutes elapsed — below threshold.
+	d.nowFn = func() time.Time {
+		issue, _ := issues.Get(id)
+		return issue.UpdatedAt.Add(10 * time.Minute)
+	}
+
+	d.handleStuckCIRunning()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no escalation below threshold, got %d messages", len(*sent))
+	}
+}
+
+func TestHandleStuckCIRunning_noEscalationWhenMayorNotRunning(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+	d.ciRunningStuckThreshold = 30 * time.Minute
+
+	id, _ := issues.Create("Stuck ticket, no Mayor", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 44)
+
+	d.nowFn = func() time.Time {
+		issue, _ := issues.Get(id)
+		return issue.UpdatedAt.Add(60 * time.Minute)
+	}
+
+	d.handleStuckCIRunning()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no escalation when Mayor not running, got %d messages", len(*sent))
+	}
+}
+
+func TestHandleStuckCIRunning_disabledWhenThresholdZero(t *testing.T) {
+	mayorSession := "ct-mayor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+	// ciRunningStuckThreshold defaults to 0 in test helper — feature disabled.
+
+	id, _ := issues.Create("Ticket, threshold disabled", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 45)
+
+	d.nowFn = func() time.Time {
+		issue, _ := issues.Get(id)
+		return issue.UpdatedAt.Add(24 * time.Hour)
+	}
+
+	d.handleStuckCIRunning()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no escalation when threshold=0, got %d messages", len(*sent))
+	}
+}
+
+func TestHandleStuckCIRunning_cooldownSuppressesRepeat(t *testing.T) {
+	mayorSession := "ct-mayor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+	d.ciRunningStuckThreshold = 30 * time.Minute
+	d.nudgeCooldown = 1 * time.Hour
+
+	id, _ := issues.Create("Stuck CI repeat", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 46)
+
+	d.nowFn = func() time.Time {
+		issue, _ := issues.Get(id)
+		return issue.UpdatedAt.Add(35 * time.Minute)
+	}
+
+	d.handleStuckCIRunning()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation on first call, got %d", len(*sent))
+	}
+
+	d.handleStuckCIRunning()
+	if len(*sent) != 1 {
+		t.Errorf("expected cooldown to suppress second escalation, got %d total", len(*sent))
+	}
+}
+
+func TestHandleStuckCIRunning_skipsNonCIRunningTickets(t *testing.T) {
+	mayorSession := "ct-mayor"
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+	d.ciRunningStuckThreshold = 30 * time.Minute
+
+	// pr_open ticket — should not be treated as stuck ci_running.
+	id, _ := issues.Create("PR open ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 47)
+
+	d.nowFn = func() time.Time {
+		issue, _ := issues.Get(id)
+		return issue.UpdatedAt.Add(60 * time.Minute)
+	}
+
+	d.handleStuckCIRunning()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no escalation for pr_open ticket, got %d messages", len(*sent))
 	}
 }
 
