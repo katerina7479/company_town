@@ -2658,3 +2658,199 @@ func TestAgentWorktreePath_allCases(t *testing.T) {
 		}
 	}
 }
+
+// --- nc-260: tree view rendering ---
+
+func makeIssueNode(id int, issueType, status, title string, children ...*repo.IssueNode) *repo.IssueNode {
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{
+			ID:        id,
+			IssueType: issueType,
+			Status:    status,
+			Title:     title,
+		},
+	}
+	node.Children = children
+	return node
+}
+
+func TestFlattenTreeWithChars_singleRoot(t *testing.T) {
+	root := makeIssueNode(1, "epic", "open", "Root")
+	result := flattenTreeWithChars([]*repo.IssueNode{root}, 0, "")
+	if len(result) != 1 {
+		t.Fatalf("expected 1 flat node, got %d", len(result))
+	}
+	if result[0].treePrefix != "" {
+		t.Errorf("root node should have empty treePrefix, got %q", result[0].treePrefix)
+	}
+}
+
+func TestFlattenTreeWithChars_childrenGetConnectors(t *testing.T) {
+	child1 := makeIssueNode(2, "task", "open", "Child 1")
+	child2 := makeIssueNode(3, "task", "closed", "Child 2")
+	root := makeIssueNode(1, "epic", "open", "Root", child1, child2)
+
+	result := flattenTreeWithChars([]*repo.IssueNode{root}, 0, "")
+
+	if len(result) != 3 {
+		t.Fatalf("expected 3 flat nodes, got %d", len(result))
+	}
+	// root: no prefix at depth 0
+	if result[0].treePrefix != "" {
+		t.Errorf("root treePrefix: want empty, got %q", result[0].treePrefix)
+	}
+	// child1 is NOT last sibling → ├─
+	if result[1].treePrefix != "├─ " {
+		t.Errorf("first child treePrefix: want %q, got %q", "├─ ", result[1].treePrefix)
+	}
+	// child2 IS last sibling → └─
+	if result[2].treePrefix != "└─ " {
+		t.Errorf("last child treePrefix: want %q, got %q", "└─ ", result[2].treePrefix)
+	}
+}
+
+func TestFlattenTreeWithChars_grandchildrenInheritContinuation(t *testing.T) {
+	gc1 := makeIssueNode(4, "task", "closed", "GC 1")
+	gc2 := makeIssueNode(5, "task", "closed", "GC 2")
+	child1 := makeIssueNode(2, "epic", "open", "Child 1", gc1, gc2)
+	child2 := makeIssueNode(3, "task", "closed", "Child 2")
+	root := makeIssueNode(1, "epic", "open", "Root", child1, child2)
+
+	result := flattenTreeWithChars([]*repo.IssueNode{root}, 0, "")
+	// Expected order: root, child1, gc1, gc2, child2
+	// child1 is NOT last → "├─ "; its children inherit "│  " continuation
+	// gc1 is NOT last grandchild → "│  ├─ "
+	// gc2 IS last grandchild → "│  └─ "
+	// child2 IS last child → "└─ "
+	if len(result) != 5 {
+		t.Fatalf("expected 5 flat nodes, got %d", len(result))
+	}
+	wantPrefixes := []string{"", "├─ ", "│  ├─ ", "│  └─ ", "└─ "}
+	for i, want := range wantPrefixes {
+		if result[i].treePrefix != want {
+			t.Errorf("node %d treePrefix: want %q, got %q", i, want, result[i].treePrefix)
+		}
+	}
+}
+
+func TestRenderDepMarker_ownUnmetDeps(t *testing.T) {
+	blocker := &repo.Issue{ID: 50, Status: "open", Title: "Blocker"}
+	node := &repo.IssueNode{
+		Issue:     &repo.Issue{ID: 100, Status: "open", Title: "Blocked"},
+		UnmetDeps: []*repo.Issue{blocker},
+	}
+	m := blankModel()
+	m.treeView = true
+	m.ticketPrefix = "nc"
+
+	marker := m.renderDepMarker(node)
+	if !strings.Contains(marker, "nc-50") {
+		t.Errorf("dep marker should reference blocker nc-50, got: %q", marker)
+	}
+	if !strings.Contains(marker, "blocked by") {
+		t.Errorf("dep marker should say 'blocked by', got: %q", marker)
+	}
+}
+
+func TestRenderDepMarker_transitivelyBlocked(t *testing.T) {
+	dep := &repo.Issue{ID: 50, Status: "open"}
+	ancestorNode := &repo.IssueNode{
+		Issue:     &repo.Issue{ID: 100, Status: "open", Title: "Blocking Epic"},
+		UnmetDeps: []*repo.Issue{dep},
+	}
+	childNode := &repo.IssueNode{
+		Issue:                &repo.Issue{ID: 101, Status: "open", Title: "Child Task"},
+		BlockingAncestorNode: ancestorNode,
+	}
+	m := blankModel()
+	m.treeView = true
+	m.ticketPrefix = "nc"
+
+	marker := m.renderDepMarker(childNode)
+	if !strings.Contains(marker, "blocked transitively") {
+		t.Errorf("dep marker should say 'blocked transitively', got: %q", marker)
+	}
+	if !strings.Contains(marker, "nc-100") {
+		t.Errorf("dep marker should reference blocking ancestor nc-100, got: %q", marker)
+	}
+	if !strings.Contains(marker, "nc-50") {
+		t.Errorf("dep marker should reference dep nc-50, got: %q", marker)
+	}
+}
+
+func TestRenderDepMarker_emptyInFlatView(t *testing.T) {
+	dep := &repo.Issue{ID: 50, Status: "open"}
+	node := &repo.IssueNode{
+		Issue:     &repo.Issue{ID: 1, Status: "open"},
+		UnmetDeps: []*repo.Issue{dep},
+	}
+	m := blankModel()
+	m.treeView = false
+	m.ticketPrefix = "nc"
+
+	marker := m.renderDepMarker(node)
+	if marker != "" {
+		t.Errorf("dep marker should be empty in flat view, got: %q", marker)
+	}
+}
+
+func TestRenderDepMarker_unblocked(t *testing.T) {
+	node := &repo.IssueNode{
+		Issue: &repo.Issue{ID: 1, Status: "open"},
+	}
+	m := blankModel()
+	m.treeView = true
+	m.ticketPrefix = "nc"
+
+	marker := m.renderDepMarker(node)
+	if marker != "" {
+		t.Errorf("dep marker should be empty for unblocked node, got: %q", marker)
+	}
+}
+
+func TestFlatTickets_treeViewUsesChars(t *testing.T) {
+	child := makeIssueNode(2, "task", "open", "Child")
+	root := makeIssueNode(1, "epic", "open", "Root", child)
+
+	m := blankModel()
+	m.treeView = true
+	m.data.roots = []*repo.IssueNode{root}
+
+	flat := m.flatTickets()
+	if len(flat) != 2 {
+		t.Fatalf("expected 2 flat nodes, got %d", len(flat))
+	}
+	// In tree view, child should have a connector prefix.
+	if !strings.Contains(flat[1].treePrefix, "─") {
+		t.Errorf("child in tree view should have connector char, got treePrefix=%q", flat[1].treePrefix)
+	}
+}
+
+func TestFlatTickets_flatViewNoChars(t *testing.T) {
+	child := makeIssueNode(2, "task", "open", "Child")
+	root := makeIssueNode(1, "epic", "open", "Root", child)
+
+	m := blankModel()
+	m.treeView = false
+	m.data.roots = []*repo.IssueNode{root}
+
+	flat := m.flatTickets()
+	for _, fn := range flat {
+		if fn.treePrefix != "" {
+			t.Errorf("flat view should produce empty treePrefix, got %q", fn.treePrefix)
+		}
+	}
+}
+
+func TestRenderIssueRow_treePrefixUsed(t *testing.T) {
+	node := makeIssueNode(42, "task", "open", "A task")
+	m := blankModel()
+	row := m.renderIssueRow(node, 1, "├─ ", 120)
+	if !strings.Contains(row, "├─") {
+		t.Errorf("row rendered with treePrefix should contain '├─', got: %q", row)
+	}
+	// The bullet should NOT appear when treePrefix is set.
+	if strings.Contains(row, "◦") {
+		t.Errorf("row with treePrefix should not contain bullet ◦, got: %q", row)
+	}
+}

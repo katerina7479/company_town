@@ -1845,3 +1845,310 @@ func TestCreateTicket_TDDTestsType(t *testing.T) {
 		t.Errorf("IssueType = %q, want %q", issue.IssueType, "tdd_tests")
 	}
 }
+
+// --- nc-260: recursive auto-close, ancestor-dep gating, hierarchy with deps ---
+
+func TestListEpicsWithAllChildrenClosed_recursive(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Three-level hierarchy: Top Epic → Sub-Epic (open) → Tasks (all closed).
+	// Sub-Epic should be returned (all its descendants are closed).
+	// Top Epic should NOT be returned yet (Sub-Epic is still open).
+	epicID, _ := r.Create("Top Epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+
+	subEpicID, _ := r.Create("Sub-Epic", "epic", &epicID, nil, nil)
+	r.UpdateStatus(subEpicID, "open")
+
+	task1, _ := r.Create("Task 1", "task", &subEpicID, nil, nil)
+	r.UpdateStatus(task1, "closed")
+	task2, _ := r.Create("Task 2", "task", &subEpicID, nil, nil)
+	r.UpdateStatus(task2, "closed")
+
+	epics, err := r.ListEpicsWithAllChildrenClosed()
+	if err != nil {
+		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+	}
+
+	found := make(map[int]bool)
+	for _, e := range epics {
+		found[e.ID] = true
+	}
+	// Sub-epic is ready to close (its task descendants are all closed).
+	if !found[subEpicID] {
+		t.Errorf("expected sub-epic %d in result (all task descendants closed), got %v", subEpicID, found)
+	}
+	// Top epic is NOT ready yet — sub-epic is still open.
+	if found[epicID] {
+		t.Errorf("top-level epic %d should not be returned while sub-epic is still open", epicID)
+	}
+}
+
+func TestListEpicsWithAllChildrenClosed_preventsMidLevelPrematureClose(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Regression: a directly-closed mid-level node with an open child should prevent
+	// the parent epic from auto-closing. Without a recursive descendant check, the
+	// parent would incorrectly be returned (direct child is closed).
+	epicID, _ := r.Create("Top Epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+
+	// Manually close the sub-epic even though it has an open child.
+	subEpicID, _ := r.Create("Sub-Epic (manually closed)", "epic", &epicID, nil, nil)
+	r.UpdateStatus(subEpicID, "closed")
+
+	// The leaf task is still open.
+	leafTask, _ := r.Create("Leaf Task", "task", &subEpicID, nil, nil)
+	r.UpdateStatus(leafTask, "open")
+
+	epics, err := r.ListEpicsWithAllChildrenClosed()
+	if err != nil {
+		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+	}
+	for _, e := range epics {
+		if e.ID == epicID {
+			t.Errorf("top-level epic should not auto-close when a transitive descendant (leaf task) is still open")
+		}
+	}
+}
+
+func TestListEpicsWithAllChildrenClosed_partiallyClosedAtLeaf(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Epic → Sub-Epic → [Task closed, Task open].
+	// The sub-epic has an open descendant, so neither epic should be returned.
+	epicID, _ := r.Create("Top Epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+
+	subEpicID, _ := r.Create("Sub-Epic", "epic", &epicID, nil, nil)
+	r.UpdateStatus(subEpicID, "open")
+
+	task1, _ := r.Create("Task 1", "task", &subEpicID, nil, nil)
+	r.UpdateStatus(task1, "closed")
+	task2, _ := r.Create("Task 2", "task", &subEpicID, nil, nil)
+	r.UpdateStatus(task2, "open")
+
+	epics, err := r.ListEpicsWithAllChildrenClosed()
+	if err != nil {
+		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+	}
+	if len(epics) != 0 {
+		t.Errorf("expected 0 epics when a leaf task is still open, got %d", len(epics))
+	}
+}
+
+func TestSelectable_AncestorDepBlocksDescendant(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Blocker ticket that the epic depends on.
+	blockerID, _ := r.Create("Blocker", "task", nil, nil, nil)
+	r.UpdateStatus(blockerID, "open")
+
+	// Epic depends on blocker; its child task should not be selectable.
+	epicID, _ := r.Create("Blocked Epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+	r.AddDependency(epicID, blockerID)
+
+	childID, _ := r.Create("Child Task", "task", &epicID, nil, nil)
+	r.UpdateStatus(childID, "open")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	for _, tk := range result {
+		if tk.ID == childID {
+			t.Errorf("child task should not be selectable while its ancestor has an open dep, got: %v", tk.ID)
+		}
+	}
+	// The blocker itself (no deps, no epic type) should be selectable.
+	found := false
+	for _, tk := range result {
+		if tk.ID == blockerID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("blocker task (id=%d) should be selectable, result: %v", blockerID, result)
+	}
+}
+
+func TestSelectable_AncestorDepReleasedOnClose(t *testing.T) {
+	r := setupTestRepo(t)
+
+	blockerID, _ := r.Create("Blocker", "task", nil, nil, nil)
+	r.UpdateStatus(blockerID, "open")
+
+	epicID, _ := r.Create("Epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+	r.AddDependency(epicID, blockerID)
+
+	childID, _ := r.Create("Child Task", "task", &epicID, nil, nil)
+	r.UpdateStatus(childID, "open")
+
+	// Close the blocker — child should now become selectable.
+	r.UpdateStatus(blockerID, "closed")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	found := false
+	for _, tk := range result {
+		if tk.ID == childID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("child task should be selectable after ancestor dep closed, result IDs: %v", collectIDs(result))
+	}
+}
+
+func TestSelectable_MidLevelDepBlocksChildrenNotSiblings(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Structure: Epic → [SubA (blocked), SubB (not blocked)]
+	// SubA depends on blocker; SubB does not.
+	// SubB's children should be selectable; SubA's children should not.
+	blockerID, _ := r.Create("Blocker", "task", nil, nil, nil)
+	r.UpdateStatus(blockerID, "open")
+
+	epicID, _ := r.Create("Epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+
+	subAID, _ := r.Create("Sub A (blocked)", "epic", &epicID, nil, nil)
+	r.UpdateStatus(subAID, "open")
+	r.AddDependency(subAID, blockerID)
+
+	subBID, _ := r.Create("Sub B (free)", "epic", &epicID, nil, nil)
+	r.UpdateStatus(subBID, "open")
+
+	childOfA, _ := r.Create("Child of A", "task", &subAID, nil, nil)
+	r.UpdateStatus(childOfA, "open")
+
+	childOfB, _ := r.Create("Child of B", "task", &subBID, nil, nil)
+	r.UpdateStatus(childOfB, "open")
+
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	ids := collectIDs(result)
+	if ids[childOfA] {
+		t.Errorf("child of blocked subtree (id=%d) must not be selectable", childOfA)
+	}
+	if !ids[childOfB] {
+		t.Errorf("child of unblocked subtree (id=%d) must be selectable", childOfB)
+	}
+}
+
+func TestListHierarchyWithDeps_unmetDepsAnnotated(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// blocker is an unclosed dep that task1 depends on.
+	blockerID, _ := r.Create("Blocker", "task", nil, nil, nil)
+	r.UpdateStatus(blockerID, "open")
+
+	task1ID, _ := r.Create("Blocked Task", "task", nil, nil, nil)
+	r.UpdateStatus(task1ID, "open")
+	r.AddDependency(task1ID, blockerID)
+
+	roots, err := r.ListHierarchyWithDeps()
+	if err != nil {
+		t.Fatalf("ListHierarchyWithDeps: %v", err)
+	}
+
+	nodeMap := make(map[int]*IssueNode)
+	for _, root := range roots {
+		nodeMap[root.ID] = root
+	}
+
+	if node, ok := nodeMap[task1ID]; ok {
+		if len(node.UnmetDeps) != 1 || node.UnmetDeps[0].ID != blockerID {
+			t.Errorf("expected task1 UnmetDeps=[%d], got %v", blockerID, node.UnmetDeps)
+		}
+	} else {
+		t.Errorf("task1 (id=%d) not found in hierarchy roots", task1ID)
+	}
+	// Blocker has no deps of its own.
+	if node, ok := nodeMap[blockerID]; ok {
+		if len(node.UnmetDeps) != 0 {
+			t.Errorf("blocker should have no UnmetDeps, got %v", node.UnmetDeps)
+		}
+	}
+}
+
+func TestListHierarchyWithDeps_closedDepNotAnnotated(t *testing.T) {
+	r := setupTestRepo(t)
+
+	closedDepID, _ := r.Create("Closed dep", "task", nil, nil, nil)
+	r.UpdateStatus(closedDepID, "closed")
+
+	taskID, _ := r.Create("Task with closed dep", "task", nil, nil, nil)
+	r.UpdateStatus(taskID, "open")
+	r.AddDependency(taskID, closedDepID)
+
+	roots, err := r.ListHierarchyWithDeps()
+	if err != nil {
+		t.Fatalf("ListHierarchyWithDeps: %v", err)
+	}
+	for _, root := range roots {
+		if root.ID == taskID && len(root.UnmetDeps) != 0 {
+			t.Errorf("closed dep should not appear in UnmetDeps, got %v", root.UnmetDeps)
+		}
+	}
+}
+
+func TestListHierarchyWithDeps_blockingAncestorPropagated(t *testing.T) {
+	r := setupTestRepo(t)
+
+	blockerID, _ := r.Create("Blocker", "task", nil, nil, nil)
+	r.UpdateStatus(blockerID, "open")
+
+	epicID, _ := r.Create("Epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, "open")
+	r.AddDependency(epicID, blockerID)
+
+	childID, _ := r.Create("Child", "task", &epicID, nil, nil)
+	r.UpdateStatus(childID, "open")
+
+	roots, err := r.ListHierarchyWithDeps()
+	if err != nil {
+		t.Fatalf("ListHierarchyWithDeps: %v", err)
+	}
+
+	var epicNode *IssueNode
+	for _, root := range roots {
+		if root.ID == epicID {
+			epicNode = root
+		}
+	}
+	if epicNode == nil {
+		t.Fatalf("epic (id=%d) not found in hierarchy roots", epicID)
+	}
+	if len(epicNode.UnmetDeps) != 1 || epicNode.UnmetDeps[0].ID != blockerID {
+		t.Errorf("epic UnmetDeps should be [%d], got %v", blockerID, epicNode.UnmetDeps)
+	}
+	if epicNode.BlockingAncestorNode != nil {
+		t.Errorf("epic has no parent, BlockingAncestorNode should be nil")
+	}
+
+	if len(epicNode.Children) == 0 {
+		t.Fatalf("epic has no children in hierarchy")
+	}
+	childNode := epicNode.Children[0]
+	if childNode.BlockingAncestorNode == nil {
+		t.Errorf("child should have BlockingAncestorNode set (epic is blocking ancestor)")
+	} else if childNode.BlockingAncestorNode.ID != epicID {
+		t.Errorf("child BlockingAncestorNode should be epic (id=%d), got id=%d", epicID, childNode.BlockingAncestorNode.ID)
+	}
+}
+
+// collectIDs returns a set of IDs from a slice of issues.
+func collectIDs(issues []*Issue) map[int]bool {
+	m := make(map[int]bool, len(issues))
+	for _, i := range issues {
+		m[i.ID] = true
+	}
+	return m
+}

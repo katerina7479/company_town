@@ -618,13 +618,13 @@ func flattenTreeWithChars(nodes []*repo.IssueNode, depth int, parentPrefix strin
 	for i, n := range nodes {
 		isLast := i == len(nodes)-1
 		var connector, continuation string
-		if depth == 0 {
-			connector = ""
-			continuation = ""
-		} else if isLast {
+		switch {
+		case depth == 0:
+			// root nodes need no connector
+		case isLast:
 			connector = "└─ "
 			continuation = "   "
-		} else {
+		default:
 			connector = "├─ "
 			continuation = "│  "
 		}
