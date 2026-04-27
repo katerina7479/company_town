@@ -299,6 +299,26 @@ and use the exact value. Do not construct the branch name yourself from the tick
 If you're stuck for more than 15 minutes, need unclear requirements clarified,
 or tests fail in ways you can't diagnose, escalate. Don't spin.
 
+## Shutdown
+
+`ct stop` uses two parallel signals — whichever reaches you first:
+
+- **File signal** (primary): `.company_town/proles/{{NAME}}/stop_requested` is written to disk. After each commit/push step, check whether this file exists.
+- **Send-keys** (tap-on-shoulder): you will receive "System is shutting down. Commit and push any work, run `gt agent status {{NAME}} stopped`, then exit." as a message in the conversation.
+
+When you detect either signal:
+
+1. Commit and push any in-flight changes (even a partial commit is better than losing work).
+2. Run: `gt agent status {{NAME}} stopped`
+3. Exit cleanly.
+
+`ct stop` waits up to 60 seconds for your `stopped` status, then kills the session. If you do not reach `stopped` in time, a warning is printed and `ct nuke {{NAME}}` will be needed to force-kill.
+
+**Checking for the stop signal:** After each git commit/push, add a quick check:
+```bash
+[ -f .company_town/proles/{{NAME}}/stop_requested ] && gt agent status {{NAME}} stopped && exit
+```
+
 ## Rules
 
 - Never push to main — all work on your branch, human merges
