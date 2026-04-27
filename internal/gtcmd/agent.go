@@ -3,6 +3,8 @@ package gtcmd
 import (
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/katerina7479/company_town/internal/cmdlog"
 	"github.com/katerina7479/company_town/internal/db"
@@ -84,8 +86,8 @@ func agentStatus(agents *repo.AgentRepo, args []string) error {
 	name := args[0]
 	status := args[1]
 
-	if status != repo.StatusIdle && status != repo.StatusWorking && status != repo.StatusDead {
-		return fmt.Errorf("invalid status %q: must be one of idle, working, dead", status)
+	if !slices.Contains(repo.ValidAgentStatuses, status) {
+		return fmt.Errorf("invalid status %q: must be one of %s", status, strings.Join(repo.ValidAgentStatuses, ", "))
 	}
 
 	var issueID *int
