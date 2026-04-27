@@ -125,6 +125,29 @@ func TestCheckDrift_pointingAtOtherAgentsTicket(t *testing.T) {
 	}
 }
 
+func TestCheckDrift_workingOnCancelledTicket(t *testing.T) {
+	agents, issues := newDriftDB(t)
+	agents.Register("iron", "prole", nil)
+
+	id, _ := issues.Create("cancelled work", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "cancelled")
+	agents.SetCurrentIssue("iron", &id)
+
+	entries, err := repo.CheckDrift(agents, issues, "nc")
+	if err != nil {
+		t.Fatalf("CheckDrift: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.AgentName == "iron" && strings.Contains(e.Reason, "cancelled") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected drift entry for iron working on cancelled ticket, got: %v", entries)
+	}
+}
+
 func TestCheckDrift_noPointerSkipped(t *testing.T) {
 	agents, issues := newDriftDB(t)
 	agents.Register("copper", "prole", nil)

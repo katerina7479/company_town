@@ -373,13 +373,13 @@ func (r *IssueRepo) SetPR(id, prNumber int) error {
 	return err
 }
 
-// ListWithPRs returns non-closed issues that have a PR number set.
+// ListWithPRs returns non-terminal issues that have a PR number set.
 func (r *IssueRepo) ListWithPRs() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
 		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at,
 		        repair_cycle_count, repair_reason
-		 FROM issues WHERE pr_number IS NOT NULL AND status != 'closed'
+		 FROM issues WHERE pr_number IS NOT NULL AND status NOT IN ('closed', 'cancelled')
 		 ORDER BY id`,
 	)
 	if err != nil {
@@ -398,14 +398,14 @@ func (r *IssueRepo) ListWithPRs() ([]*Issue, error) {
 	return issues, rows.Err()
 }
 
-// ListMissingPR returns non-closed issues that have a branch set but no pr_number.
+// ListMissingPR returns non-terminal issues that have a branch set but no pr_number.
 func (r *IssueRepo) ListMissingPR() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
 		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at,
 		        repair_cycle_count, repair_reason
 		 FROM issues
-		 WHERE pr_number IS NULL AND branch IS NOT NULL AND status != 'closed'
+		 WHERE pr_number IS NULL AND branch IS NOT NULL AND status NOT IN ('closed', 'cancelled')
 		 ORDER BY id`,
 	)
 	if err != nil {
@@ -440,7 +440,7 @@ func (r *IssueRepo) SetBranch(id int, branch string) error {
 
 // GetDependents returns issues whose work depends on the given issue ID — that
 // is, issues where a row exists in issue_dependencies with depends_on_id equal
-// to the given ID. Only open (non-closed) dependents are returned.
+// to the given ID. Only non-terminal (non-closed, non-cancelled) dependents are returned.
 func (r *IssueRepo) GetDependents(dependsOnID int) ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
@@ -448,7 +448,7 @@ func (r *IssueRepo) GetDependents(dependsOnID int) ([]*Issue, error) {
 		        i.created_at, i.updated_at, i.closed_at, i.repair_cycle_count, i.repair_reason
 		 FROM issues i
 		 JOIN issue_dependencies d ON d.issue_id = i.id
-		 WHERE d.depends_on_id = ? AND i.status != 'closed'
+		 WHERE d.depends_on_id = ? AND i.status NOT IN ('closed', 'cancelled')
 		 ORDER BY i.id`,
 		dependsOnID,
 	)
@@ -527,7 +527,7 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 		   AND NOT EXISTS (
 		     SELECT 1 FROM issue_dependencies d
 		     JOIN issues dep ON dep.id = d.depends_on_id
-		     WHERE d.issue_id = i.id AND dep.status != 'closed'
+		     WHERE d.issue_id = i.id AND dep.status NOT IN ('closed', 'cancelled')
 		   )
 		 ORDER BY CASE
 		   WHEN i.priority = 'P0' THEN 0
@@ -580,7 +580,7 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 		           AND NOT EXISTS (
 		             SELECT 1 FROM issue_dependencies d
 		             JOIN issues dep ON dep.id = d.depends_on_id
-		             WHERE d.issue_id = i.id AND dep.status != 'closed'
+		             WHERE d.issue_id = i.id AND dep.status NOT IN ('closed', 'cancelled')
 		           )
 		         )
 		   )
@@ -656,8 +656,8 @@ func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error)
 	return issues, rows.Err()
 }
 
-// ListEpicsWithAllChildrenClosed returns epics that are not closed but have at
-// least one child and all children are closed.
+// ListEpicsWithAllChildrenClosed returns epics that are not terminal but have at
+// least one child and all children are in a terminal status (closed or cancelled).
 func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
@@ -665,12 +665,12 @@ func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
 		        repair_cycle_count, repair_reason
 		 FROM issues
 		 WHERE issue_type = 'epic'
-		   AND status != 'closed'
+		   AND status NOT IN ('closed', 'cancelled')
 		   AND EXISTS (
 		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id
 		   )
 		   AND NOT EXISTS (
-		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id AND child.status != 'closed'
+		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id AND child.status NOT IN ('closed', 'cancelled')
 		   )
 		 ORDER BY id`,
 	)

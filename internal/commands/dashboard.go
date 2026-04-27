@@ -130,10 +130,11 @@ type dashboardModel struct {
 
 	// Input mode — active when the user is typing a message (e.g. for nudge,
 	// ticket creation, or status change).
-	inputMode   bool
-	inputBuffer string
-	inputAction string // "nudge", "create_ticket", "status"
-	inputTarget string // agent name (nudge) or ticket ID string (status)
+	inputMode    bool
+	inputBuffer  string
+	inputAction  string // "nudge", "create_ticket", "status", "unassign_confirm"
+	inputTarget  string // agent name (nudge) or ticket ID string (status/unassign_confirm)
+	inputTarget2 string // secondary context: assignee name for unassign_confirm
 
 	theme StyleTheme
 }
@@ -251,6 +252,19 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.statusMsg = "internal error: bad ticket id"
 					} else if err := m.issues.SetRepairReason(id, m.inputBuffer); err != nil {
 						m.statusMsg = "set repair_reason failed: " + err.Error()
+					}
+				case "unassign_confirm":
+					if m.inputBuffer == "y" {
+						id, err := strconv.Atoi(m.inputTarget)
+						if err != nil {
+							m.statusMsg = "internal error: bad ticket id"
+							m.inputMode = false
+							m.inputBuffer = ""
+							return m, nil
+						}
+						m.inputMode = false
+						m.inputBuffer = ""
+						return m, m.unassignCmd(id, m.inputTarget2)
 					}
 				}
 				m.inputMode = false
@@ -415,6 +429,23 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "f":
 			m.showClosed = !m.showClosed
+
+		case "u":
+			if m.focusedPanel == 1 {
+				flat := m.flatTickets()
+				if len(flat) > 0 {
+					node := flat[m.ticketCursor].node
+					if !node.Assignee.Valid || node.Assignee.String == "" {
+						m.statusMsg = fmt.Sprintf("ticket %s-%d has no assignee", m.ticketPrefix, node.ID)
+					} else {
+						m.inputMode = true
+						m.inputAction = "unassign_confirm"
+						m.inputTarget = strconv.Itoa(node.ID)
+						m.inputTarget2 = node.Assignee.String
+						m.inputBuffer = ""
+					}
+				}
+			}
 		}
 
 	case actionResultMsg:
@@ -578,6 +609,37 @@ func (m *dashboardModel) openPRCmd(prNumber int) tea.Cmd {
 	}
 }
 
+// unassignCmd clears the assignee on the given ticket, clears the agent's
+// current_issue if it still points at that ticket, and signals the agent's
+// tmux session (if running) to go idle.
+func (m dashboardModel) unassignCmd(ticketID int, agentName string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.issues.ClearAssignee(ticketID); err != nil {
+			return actionResultMsg{err: fmt.Errorf("clear assignee on ticket %d: %w", ticketID, err)}
+		}
+		// Clear the agent's current_issue only if it still points at this ticket.
+		for _, a := range m.data.agents {
+			if a.Name == agentName && a.CurrentIssue.Valid && a.CurrentIssue.Int64 == int64(ticketID) {
+				if err := m.agents.ClearCurrentIssue(agentName); err != nil {
+					return actionResultMsg{err: fmt.Errorf("clear current issue for %s: %w", agentName, err)}
+				}
+				break
+			}
+		}
+		// Signal the agent's tmux session if it is running.
+		for _, a := range m.data.agents {
+			if a.Name == agentName && a.TmuxSession.Valid && a.TmuxSession.String != "" {
+				if m.sessionExists(a.TmuxSession.String) {
+					signal := fmt.Sprintf("UNASSIGNED: ticket %d has been unassigned from you. Run: gt agent status %s idle", ticketID, agentName)
+					_ = m.sendKeys(a.TmuxSession.String, signal) //nolint:errcheck // non-fatal; agent may have died
+				}
+				break
+			}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Unassigned %s from ticket %d", agentName, ticketID)}
+	}
+}
+
 // flatTickets returns the flat ordered list of visible ticket nodes (same order as rendered).
 func (m dashboardModel) flatTickets() []flatNode {
 	var cutoff time.Time
@@ -633,6 +695,8 @@ func (m dashboardModel) View() string {
 			label = fmt.Sprintf("status %s-%s  [draft/open/in_progress/in_review/pr_open/repairing/closed]", m.ticketPrefix, m.inputTarget)
 		case "repair_reason":
 			label = fmt.Sprintf("repair_reason %s-%s", m.ticketPrefix, m.inputTarget)
+		case "unassign_confirm":
+			label = fmt.Sprintf("Unassign %s from %s-%s? [y/N]", m.inputTarget2, m.ticketPrefix, m.inputTarget)
 		}
 		footer = m.theme.Bold.Render(fmt.Sprintf(" [%s] > %s█", label, m.inputBuffer))
 	} else {
@@ -644,7 +708,7 @@ func (m dashboardModel) View() string {
 			if m.showClosed {
 				filterFlag = "*"
 			}
-			hint += fmt.Sprintf("  enter expand  o open PR  c change status  e edit reason  C new ticket  f[%s]filter closed", filterFlag)
+			hint += fmt.Sprintf("  enter expand  o open PR  c change status  e edit reason  u unassign  C new ticket  f[%s]filter closed", filterFlag)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
 		if m.statusMsg != "" {
@@ -760,9 +824,9 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		Render(inner)
 }
 
-// filterStaleClosedNodes returns a copy of the tree with closed tickets
-// older than cutoff removed. Non-closed nodes are always kept; parent nodes
-// are kept if they have any surviving children.
+// filterStaleClosedNodes returns a copy of the tree with terminal (closed or
+// cancelled) tickets older than cutoff removed. Non-terminal nodes are always
+// kept; parent nodes are kept if they have any surviving children.
 func filterStaleClosedNodes(roots []*repo.IssueNode, cutoff time.Time) []*repo.IssueNode {
 	var result []*repo.IssueNode
 	for _, root := range roots {
@@ -781,7 +845,7 @@ func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
 		}
 	}
 
-	isStale := node.Status == repo.StatusClosed && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
+	isStale := repo.IsTerminalStatus(node.Status) && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
 	if isStale && len(children) == 0 {
 		return nil
 	}
@@ -850,6 +914,8 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 func (m dashboardModel) renderTicketDetails(node *repo.IssueNode, depth int, width int) string {
 	var sb strings.Builder
 	detailIndent := strings.Repeat("  ", depth+1)
+
+	fmt.Fprintf(&sb, "%s  title: %s\n", detailIndent, m.theme.Footer.Render(node.Title))
 
 	if node.Description.Valid && node.Description.String != "" {
 		wrapped := wordWrap(node.Description.String, width-len(detailIndent)-4)

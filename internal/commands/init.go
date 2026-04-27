@@ -67,6 +67,33 @@ var gitRemoteGetURLInDirFn = func(dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// gitLsRemoteMainFn is injectable for tests — runs `git ls-remote --heads origin main`
+// in dir and returns stdout. An error means the remote is unreachable or invalid.
+var gitLsRemoteMainFn = func(dir string) (string, error) {
+	out, err := exec.Command("git", "-C", dir, "ls-remote", "--heads", "origin", "main").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// checkRemoteMain tests whether origin has a main branch. Returns a note to
+// display (or "" if none needed) and whether `ct start` is the right next step.
+// When platform or repoRef is unset, origin was not configured — no check needed.
+func checkRemoteMain(projectRoot, platform, repoRef string) (note string, showNextStep bool) {
+	if platform == "" || repoRef == "" {
+		return "", true
+	}
+	out, err := gitLsRemoteMainFn(projectRoot)
+	if err != nil {
+		return "Note: Could not reach 'origin' to verify setup. When the remote exists and has a main branch, 'ct start' will succeed.", true
+	}
+	if out == "" {
+		return "Note: 'origin' has no 'main' branch yet. Before running 'ct start', create an initial commit and push:\n\n  git commit --allow-empty -m \"initial commit\" && git push -u origin main", false
+	}
+	return "", true
+}
+
 // buildOriginURL constructs an HTTPS clone URL from the platform and repoRef.
 func buildOriginURL(platform, repoRef string) string {
 	switch platform {
@@ -519,7 +546,14 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 	}
 
 	fmt.Println("\nCompany Town initialized.")
-	fmt.Println("Next: run `ct start`")
+	note, hasMain := checkRemoteMain(projectRoot, cfg.Platform, cfg.Repo)
+	if note != "" {
+		fmt.Println()
+		fmt.Println(note)
+	}
+	if hasMain {
+		fmt.Println("Next: run `ct start`")
+	}
 	return nil
 }
 
