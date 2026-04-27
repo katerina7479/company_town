@@ -565,6 +565,10 @@ func SwitchToBranch(wtPath, barePath, branch string) error {
 // incarnation), it is reset to origin/main before the worktree is created.
 // This makes prole creation idempotent with respect to stale standby branches.
 func addWorktreeForProle(barePath, branch, wtPath string) error {
+	if err := EnsureOriginMain(barePath); err != nil {
+		return err
+	}
+
 	// Detect whether the standby branch already exists.
 	checkCmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	checkCmd.Dir = barePath
@@ -592,6 +596,17 @@ func addWorktreeForProle(barePath, branch, wtPath string) error {
 	addCmd.Stdout = os.Stdout
 	addCmd.Stderr = os.Stderr
 	return addCmd.Run()
+}
+
+// EnsureOriginMain checks whether origin/main resolves in the bare repo and
+// returns an actionable error if it does not.
+func EnsureOriginMain(barePath string) error {
+	cmd := exec.Command("git", "rev-parse", "--verify", "origin/main")
+	cmd.Dir = barePath
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("remote 'origin' has no 'main' branch yet — create an initial commit and push it:\n  git commit --allow-empty -m \"initial commit\" && git push -u origin main\nthen retry 'ct start'")
+	}
+	return nil
 }
 
 func getOriginURL(projectRoot string) (string, error) {
