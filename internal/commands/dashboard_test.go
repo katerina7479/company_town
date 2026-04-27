@@ -2781,6 +2781,47 @@ func TestUnassign_confirmY_executesUnassign(t *testing.T) {
 	}
 }
 
+func TestUnassign_confirmUppercaseY_executesUnassign(t *testing.T) {
+	m, sent, issues, issueID := makeModelWithAssignedTicket(t)
+
+	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
+	dm := upd.(dashboardModel)
+	if !dm.inputMode {
+		t.Fatal("expected inputMode after pressing u")
+	}
+
+	// Type uppercase "Y".
+	upd, _ = dm.Update(tea.KeyMsg{Type: -1, Runes: []rune("Y")})
+	dm = upd.(dashboardModel)
+
+	upd, cmd := dm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	dm = upd.(dashboardModel)
+
+	if dm.inputMode {
+		t.Error("expected inputMode=false after Enter")
+	}
+	if cmd == nil {
+		t.Fatal("expected a command after uppercase Y confirm, got nil")
+	}
+	result := cmd().(actionResultMsg)
+	if result.err != nil {
+		t.Fatalf("unassignCmd returned error: %v", result.err)
+	}
+
+	issue, err := issues.Get(issueID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Assignee.Valid && issue.Assignee.String != "" {
+		t.Errorf("expected assignee cleared, still got %q", issue.Assignee.String)
+	}
+	if len(*sent) == 0 {
+		t.Error("expected sendKeys to be called with unassign signal")
+	} else if !strings.Contains((*sent)[0].msg, "UNASSIGNED") {
+		t.Errorf("expected UNASSIGNED in signal message, got %q", (*sent)[0].msg)
+	}
+}
+
 func TestUnassign_confirmNonY_noOp(t *testing.T) {
 	m, _, issues, issueID := makeModelWithAssignedTicket(t)
 
