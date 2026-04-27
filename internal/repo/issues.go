@@ -567,6 +567,8 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 // repairing branch returns nothing for tickets whose prole is still alive.
 // Selectable() only catches orphaned repairing tickets.
 func (r *IssueRepo) Selectable() ([]*Issue, error) {
+	// Step 1: candidates without the deps filter (deps checked Go-side to include
+	// ancestor-level dependencies per nc-267). Ordering preserved unchanged.
 	rows, err := r.db.Query(
 		`SELECT i.id, i.issue_type, i.status, i.title, i.description, i.specialty,
 		        i.branch, i.pr_number, i.assignee, i.parent_id, i.priority,
@@ -575,14 +577,7 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 		 WHERE i.issue_type != 'epic'
 		   AND (
 		         i.status = 'repairing'
-		      OR (
-		           i.status = 'open'
-		           AND NOT EXISTS (
-		             SELECT 1 FROM issue_dependencies d
-		             JOIN issues dep ON dep.id = d.depends_on_id
-		             WHERE d.issue_id = i.id AND dep.status NOT IN ('closed', 'cancelled')
-		           )
-		         )
+		      OR i.status = 'open'
 		   )
 		   AND (i.assignee IS NULL OR i.assignee = '')
 		 ORDER BY
@@ -604,15 +599,80 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 	}
 	defer rows.Close()
 
-	var issues []*Issue
+	var candidates []*Issue
 	for rows.Next() {
 		issue, err := scanIssueRow(rows)
 		if err != nil {
 			return nil, err
 		}
-		issues = append(issues, issue)
+		candidates = append(candidates, issue)
 	}
-	return issues, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Step 2: filter by self-and-ancestor deps. Repairing tickets skip the dep
+	// check — they already had a prole assigned; blocking them again is wrong.
+	var out []*Issue
+	for _, c := range candidates {
+		if c.Status == StatusRepairing {
+			out = append(out, c)
+			continue
+		}
+		ok, err := r.allDepsClosed(c.ID)
+		if err != nil {
+			return nil, fmt.Errorf("checking deps for %d: %w", c.ID, err)
+		}
+		if ok {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// allDepsClosed reports whether every direct dependency of issue id AND every
+// direct dependency of every ancestor is in a terminal status.
+func (r *IssueRepo) allDepsClosed(id int) (bool, error) {
+	ancestors, err := r.ListAncestors(id)
+	if err != nil {
+		return false, err
+	}
+	chain := append([]int{id}, ancestors...)
+	for _, nodeID := range chain {
+		ok, err := r.directDepsClosed(nodeID)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// directDepsClosed reports whether every direct dependency of issue id is in a
+// terminal status (closed or cancelled). Returns true when there are no deps.
+func (r *IssueRepo) directDepsClosed(id int) (bool, error) {
+	rows, err := r.db.Query(
+		`SELECT dep.status
+		 FROM issue_dependencies d
+		 JOIN issues dep ON dep.id = d.depends_on_id
+		 WHERE d.issue_id = ?`, id,
+	)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close() //nolint:errcheck
+	for rows.Next() {
+		var status string
+		if err := rows.Scan(&status); err != nil {
+			return false, err
+		}
+		if !IsTerminalStatus(status) {
+			return false, nil
+		}
+	}
+	return true, rows.Err()
 }
 
 // ListAssignedInStatuses returns issues whose status is one of the given values
