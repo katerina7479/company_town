@@ -546,12 +546,12 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 	}
 
 	fmt.Println("\nCompany Town initialized.")
-	note, hasMain := checkRemoteMain(projectRoot, cfg.Platform, cfg.Repo)
+	note, canTryStart := checkRemoteMain(projectRoot, cfg.Platform, cfg.Repo)
 	if note != "" {
 		fmt.Println()
 		fmt.Println(note)
 	}
-	if hasMain {
+	if canTryStart {
 		fmt.Println("Next: run `ct start`")
 	}
 	return nil
