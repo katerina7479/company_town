@@ -130,7 +130,8 @@ Agents talk to the system through the internal `gt` CLI. Users talk to the Mayor
 draft ─► open ─► in_progress ─► in_review ─► under_review ─► pr_open ─► closed
   │                                │              │             │
   │                           repairing ◄───-─────┴─────────────┘ 
-  └──► on_hold
+  ├──► on_hold
+  └──► cancelled (any stage)
 ```
 
 | Status | Owner | Meaning |
@@ -142,7 +143,8 @@ draft ─► open ─► in_progress ─► in_review ─► under_review ─►
 | `under_review` | Reviewer | Actively being reviewed. |
 | `pr_open` | Human | Reviewer approved. Human reviews and merges on GitHub. |
 | `repairing` | Prole | Reviewer or human requested changes. Prole fixes and re-pushes. |
-| `closed` | Daemon | PR merged (auto-detected) or manually closed. |
+| `closed` | Daemon | PR merged (auto-detected) or manually closed. Work landed in main. |
+| `cancelled` | Any | Work was abandoned, did not land. Terminal — treated like `closed` for dependency gating and epic auto-close. |
 | `on_hold` | Any | Blocked by an external input. |
 
 Epics are containers, never workable. Proles don't touch them.
