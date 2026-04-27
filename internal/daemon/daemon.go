@@ -435,7 +435,7 @@ func (d *Daemon) poll() {
 	d.handleStuckCIRunning()
 	d.handleRepairCycleEscalation()
 	d.handleStuckPrompts()
-	d.handleEpicAutoClose()
+	d.handleAutoClose()
 	d.handleQualityBaseline()
 
 	logTickSummary(d.logger, *d.obs)
@@ -748,41 +748,54 @@ func pickMostRecentPR(entries []prListEntry) int {
 	return best.Number
 }
 
-// handleEpicAutoClose closes epics whose sub-tasks are all closed.
-func (d *Daemon) handleEpicAutoClose() {
-	epics, err := d.issues.ListEpicsWithAllChildrenClosed()
+// handleAutoClose closes any non-closed issue (epic, task, bug, etc.) whose
+// transitive descendants are all closed. Generalises the previous epic-only
+// behaviour per nc-260.
+func (d *Daemon) handleAutoClose() {
+	issues, err := d.issues.ListIssuesWithAllDescendantsClosed()
 	if err != nil {
-		d.logger.Printf("error listing completable epics: %v", err)
+		d.logger.Printf("error listing auto-closeable issues: %v", err)
 		return
 	}
 
 	if d.obs != nil {
-		d.obs.epics = len(epics)
+		d.obs.epics = len(issues) // counter field preserved for back-compat
 	}
-	for _, epic := range epics {
-		d.logger.Printf("auto-closing epic %s-%d (%s): all sub-tasks resolved (closed or cancelled)",
-			d.cfg.TicketPrefix, epic.ID, epic.Title)
+	for _, issue := range issues {
+		d.logger.Printf("auto-closing %s-%d (%s, type=%s): all descendants resolved (closed or cancelled)",
+			d.cfg.TicketPrefix, issue.ID, issue.Title, issue.IssueType)
 
-		if err := d.issues.UpdateStatus(epic.ID, repo.StatusClosed); err != nil {
-			d.logger.Printf("error closing epic %d: %v", epic.ID, err)
+		if err := d.issues.UpdateStatus(issue.ID, repo.StatusClosed); err != nil {
+			d.logger.Printf("error closing issue %d: %v", issue.ID, err)
 			continue
 		}
 
-		msg := fmt.Sprintf("Epic %s-%d (%s) auto-closed: all sub-tasks are complete.",
-			d.cfg.TicketPrefix, epic.ID, epic.Title)
+		msg := fmt.Sprintf("%s %s-%d (%s) auto-closed: all descendants are complete.",
+			capitalise(issue.IssueType), d.cfg.TicketPrefix, issue.ID, issue.Title)
 		mayorSession := session.SessionName("mayor")
 		if d.sessionExists(mayorSession) {
 			if err := d.sendKeys(mayorSession, msg); err != nil {
-				d.logger.Printf("error notifying Mayor of epic %d closure: %v", epic.ID, err)
+				d.logger.Printf("error notifying Mayor of issue %d closure: %v", issue.ID, err)
 			}
 		}
 		architectSession := session.SessionName("architect")
 		if d.sessionExists(architectSession) {
 			if err := d.sendKeys(architectSession, msg); err != nil {
-				d.logger.Printf("error notifying Architect of epic %d closure: %v", epic.ID, err)
+				d.logger.Printf("error notifying Architect of issue %d closure: %v", issue.ID, err)
 			}
 		}
 	}
+}
+
+// capitalise returns s with the first byte uppercased (ASCII only).
+func capitalise(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-32) + s[1:]
+	}
+	return s
 }
 
 // handleStuckAgents detects working agents that have not changed status for longer than
