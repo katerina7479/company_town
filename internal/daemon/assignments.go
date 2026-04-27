@@ -27,6 +27,8 @@ func (d *Daemon) handleAssignments() {
 		return
 	}
 
+	d.logger.Printf("handleAssignments: %d candidate(s) ready for assignment", len(candidates))
+
 	busy, err := d.issues.BusyAssignees()
 	if err != nil {
 		d.logger.Printf("error listing busy assignees: %v", err)
@@ -49,35 +51,58 @@ func (d *Daemon) handleAssignments() {
 		slots = append(slots, a.Name)
 	}
 
+	d.logger.Printf("handleAssignments: %d idle prole slot(s) available", len(slots))
+
 	existing, err := d.agents.CountByType("prole")
 	if err != nil {
 		d.logger.Printf("error counting proles: %v", err)
 		return
 	}
+
+	d.logger.Printf("handleAssignments: %d existing prole(s), cap=%d", existing, d.cfg.MaxProles)
+
+	headroomAdded := 0
 	if d.cfg.MaxProles > 0 && existing < d.cfg.MaxProles {
 		headroom := d.cfg.MaxProles - existing
+		pendingNames := make(map[string]bool)
 		for i := 0; i < headroom; i++ {
-			name, err := d.agents.FirstAvailableMetalName()
+			name, err := d.agents.FirstAvailableMetalNameExcluding(pendingNames)
 			if err != nil {
 				d.logger.Printf("error finding available prole name: %v", err)
 				break
 			}
 			if name == "" {
-				break // all metal names taken
+				d.logger.Printf("handleAssignments: metal name list exhausted — cannot expand further")
+				break
 			}
 			if busy[name] {
+				d.logger.Printf("handleAssignments: metal name %q already busy, skipping headroom slot", name)
+				pendingNames[name] = true
 				continue
 			}
+			d.logger.Printf("handleAssignments: adding headroom slot %q (will be created on assign)", name)
 			slots = append(slots, name)
+			pendingNames[name] = true
+			headroomAdded++
 		}
 	}
 
 	if d.obs != nil {
 		d.obs.assignSlots = len(slots)
 	}
+
 	if len(slots) == 0 {
+		if d.cfg.MaxProles > 0 && existing >= d.cfg.MaxProles {
+			d.logger.Printf("handleAssignments: prole cap reached (%d/%d), all proles appear busy — %d ticket(s) blocked; check for stuck proles with 'gt status'",
+				existing, d.cfg.MaxProles, len(candidates))
+		} else {
+			d.logger.Printf("handleAssignments: no slots available for %d candidate(s) (cap disabled, no idle proles)", len(candidates))
+		}
 		return
 	}
+
+	d.logger.Printf("handleAssignments: %d total slot(s) (%d idle, %d new headroom)",
+		len(slots), len(slots)-headroomAdded, headroomAdded)
 
 	n := len(candidates)
 	if len(slots) < n {
@@ -98,4 +123,5 @@ func (d *Daemon) handleAssignments() {
 	if d.obs != nil {
 		d.obs.assignPaired = assigned
 	}
+	d.logger.Printf("handleAssignments: assigned %d/%d candidate(s)", assigned, len(candidates))
 }
