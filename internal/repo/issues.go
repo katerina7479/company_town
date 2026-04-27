@@ -656,38 +656,136 @@ func (r *IssueRepo) ListAssignedInStatuses(statuses ...string) ([]*Issue, error)
 	return issues, rows.Err()
 }
 
-// ListEpicsWithAllChildrenClosed returns epics that are not terminal but have at
-// least one child and all children are in a terminal status (closed or cancelled).
-func (r *IssueRepo) ListEpicsWithAllChildrenClosed() ([]*Issue, error) {
+// maxHierarchyDepth caps ancestor/descendant walks to prevent infinite loops
+// from accidental cycles in the parent_id chain.
+const maxHierarchyDepth = 32
+
+// ListAncestors returns the parent_id chain from the immediate parent up to
+// the root, root-first. Returns an empty slice for issues with no parent.
+// Stops at maxHierarchyDepth; returns an error if a cycle is detected.
+func (r *IssueRepo) ListAncestors(id int) ([]int, error) {
+	var ancestors []int
+	visited := map[int]bool{id: true}
+	cur := id
+	for range maxHierarchyDepth {
+		var parent sql.NullInt64
+		err := r.db.QueryRow(`SELECT parent_id FROM issues WHERE id = ?`, cur).Scan(&parent)
+		if err == sql.ErrNoRows {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing ancestors of %d: %w", id, err)
+		}
+		if !parent.Valid {
+			break
+		}
+		pid := int(parent.Int64)
+		if visited[pid] {
+			return ancestors, fmt.Errorf("cycle in parent_id chain at issue %d", pid)
+		}
+		ancestors = append([]int{pid}, ancestors...) // prepend to keep root-first order
+		visited[pid] = true
+		cur = pid
+	}
+	return ancestors, nil
+}
+
+// ListDescendants returns all transitive descendants of id, depth-first.
+// The id itself is not included. Cycles are silently skipped via a visited map.
+func (r *IssueRepo) ListDescendants(id int) ([]int, error) {
+	var out []int
+	visited := map[int]bool{id: true}
+	return r.collectDescendants(id, visited, 0, &out)
+}
+
+func (r *IssueRepo) collectDescendants(id int, visited map[int]bool, depth int, out *[]int) ([]int, error) {
+	if depth >= maxHierarchyDepth {
+		return *out, fmt.Errorf("descendant walk hit depth cap at id %d", id)
+	}
+	rows, err := r.db.Query(`SELECT id FROM issues WHERE parent_id = ?`, id)
+	if err != nil {
+		return *out, fmt.Errorf("listing children of %d: %w", id, err)
+	}
+	defer rows.Close()
+
+	var childIDs []int
+	for rows.Next() {
+		var cid int
+		if err := rows.Scan(&cid); err != nil {
+			return *out, err
+		}
+		childIDs = append(childIDs, cid)
+	}
+	if err := rows.Err(); err != nil {
+		return *out, err
+	}
+
+	for _, cid := range childIDs {
+		if visited[cid] {
+			continue
+		}
+		visited[cid] = true
+		*out = append(*out, cid)
+		if _, err := r.collectDescendants(cid, visited, depth+1, out); err != nil {
+			return *out, err
+		}
+	}
+	return *out, nil
+}
+
+// ListIssuesWithAllDescendantsClosed returns non-terminal issues that have at
+// least one child AND all transitive descendants are in a terminal status
+// (closed or cancelled). Applies to any issue_type.
+func (r *IssueRepo) ListIssuesWithAllDescendantsClosed() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
 		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at,
 		        repair_cycle_count, repair_reason
 		 FROM issues
-		 WHERE issue_type = 'epic'
-		   AND status NOT IN ('closed', 'cancelled')
-		   AND EXISTS (
-		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id
-		   )
-		   AND NOT EXISTS (
-		     SELECT 1 FROM issues child WHERE child.parent_id = issues.id AND child.status NOT IN ('closed', 'cancelled')
-		   )
+		 WHERE status NOT IN ('closed', 'cancelled')
+		   AND EXISTS (SELECT 1 FROM issues child WHERE child.parent_id = issues.id)
 		 ORDER BY id`,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("listing epics with all children closed: %w", err)
+		return nil, fmt.Errorf("listing candidate issues: %w", err)
 	}
 	defer rows.Close()
 
-	var epics []*Issue
+	var candidates []*Issue
 	for rows.Next() {
 		issue, err := scanIssueRow(rows)
 		if err != nil {
 			return nil, err
 		}
-		epics = append(epics, issue)
+		candidates = append(candidates, issue)
 	}
-	return epics, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var ready []*Issue
+	for _, c := range candidates {
+		descIDs, err := r.ListDescendants(c.ID)
+		if err != nil {
+			return nil, fmt.Errorf("listing descendants of %d: %w", c.ID, err)
+		}
+		allClosed := true
+		for _, did := range descIDs {
+			var status string
+			if err := r.db.QueryRow(`SELECT status FROM issues WHERE id = ?`, did).Scan(&status); err != nil {
+				allClosed = false
+				break
+			}
+			if !IsTerminalStatus(status) {
+				allClosed = false
+				break
+			}
+		}
+		if allClosed && len(descIDs) > 0 {
+			ready = append(ready, c)
+		}
+	}
+	return ready, nil
 }
 
 // IssueNode wraps an Issue with its children for hierarchical display.

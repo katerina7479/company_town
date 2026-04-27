@@ -1514,7 +1514,7 @@ func TestHandleStaleWorktrees_respectsInterval(t *testing.T) {
 	}
 }
 
-func TestHandleEpicAutoClose_closesEpicWhenAllChildrenClosed(t *testing.T) {
+func TestHandleAutoClose_closesEpicWhenAllDescendantsClosed(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
 	epicID, _ := issues.Create("Epic A", "epic", nil, nil, nil)
@@ -1524,7 +1524,7 @@ func TestHandleEpicAutoClose_closesEpicWhenAllChildrenClosed(t *testing.T) {
 	child2, _ := issues.Create("Task 2", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child2, "closed")
 
-	d.handleEpicAutoClose()
+	d.handleAutoClose()
 
 	epic, err := issues.Get(epicID)
 	if err != nil {
@@ -1535,7 +1535,7 @@ func TestHandleEpicAutoClose_closesEpicWhenAllChildrenClosed(t *testing.T) {
 	}
 }
 
-func TestHandleEpicAutoClose_noopWhenOpenChildExists(t *testing.T) {
+func TestHandleAutoClose_noopWhenOpenChildExists(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
 	epicID, _ := issues.Create("Epic B", "epic", nil, nil, nil)
@@ -1545,7 +1545,7 @@ func TestHandleEpicAutoClose_noopWhenOpenChildExists(t *testing.T) {
 	child2, _ := issues.Create("Task 2", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child2, "open")
 
-	d.handleEpicAutoClose()
+	d.handleAutoClose()
 
 	epic, _ := issues.Get(epicID)
 	if epic.Status != "open" {
@@ -1553,13 +1553,13 @@ func TestHandleEpicAutoClose_noopWhenOpenChildExists(t *testing.T) {
 	}
 }
 
-func TestHandleEpicAutoClose_noopWhenNoChildren(t *testing.T) {
+func TestHandleAutoClose_noopWhenNoChildren(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
 	epicID, _ := issues.Create("Epic C", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
 
-	d.handleEpicAutoClose()
+	d.handleAutoClose()
 
 	epic, _ := issues.Get(epicID)
 	if epic.Status != "open" {
@@ -1567,7 +1567,7 @@ func TestHandleEpicAutoClose_noopWhenNoChildren(t *testing.T) {
 	}
 }
 
-func TestHandleEpicAutoClose_noopWhenAlreadyClosed(t *testing.T) {
+func TestHandleAutoClose_noopWhenAlreadyClosed(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
 	epicID, _ := issues.Create("Epic D", "epic", nil, nil, nil)
@@ -1576,7 +1576,7 @@ func TestHandleEpicAutoClose_noopWhenAlreadyClosed(t *testing.T) {
 	issues.UpdateStatus(child1, "closed")
 	issues.UpdateStatus(epicID, "closed")
 
-	d.handleEpicAutoClose()
+	d.handleAutoClose()
 
 	epic, _ := issues.Get(epicID)
 	if epic.Status != "closed" {
@@ -1584,36 +1584,15 @@ func TestHandleEpicAutoClose_noopWhenAlreadyClosed(t *testing.T) {
 	}
 }
 
-func TestHandleEpicAutoClose_notifiesMayor(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+func TestHandleAutoClose_notifiesMayorAndArchitect(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-architect"})
 
 	epicID, _ := issues.Create("Big Feature", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
 	child1, _ := issues.Create("Task 1", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child1, "closed")
 
-	d.handleEpicAutoClose()
-
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 mayor message, got %d", len(*sent))
-	}
-	if !strings.Contains((*sent)[0].msg, "Big Feature") {
-		t.Errorf("expected message to mention epic title, got %q", (*sent)[0].msg)
-	}
-	if (*sent)[0].session != "ct-mayor" {
-		t.Errorf("expected message to mayor session, got %q", (*sent)[0].session)
-	}
-}
-
-func TestHandleEpicAutoClose_notifiesBothMayorAndArchitect(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-architect"})
-
-	epicID, _ := issues.Create("Grand Plan", "epic", nil, nil, nil)
-	issues.UpdateStatus(epicID, "open")
-	child1, _ := issues.Create("Sub 1", "task", &epicID, nil, nil)
-	issues.UpdateStatus(child1, "closed")
-
-	d.handleEpicAutoClose()
+	d.handleAutoClose()
 
 	if len(*sent) != 2 {
 		t.Fatalf("expected 2 messages (Mayor + Architect), got %d", len(*sent))
@@ -1626,22 +1605,22 @@ func TestHandleEpicAutoClose_notifiesBothMayorAndArchitect(t *testing.T) {
 		t.Errorf("expected message to ct-architect, sessions: %v", sessions)
 	}
 	if (*sent)[0].msg != (*sent)[1].msg {
-		t.Errorf("expected identical message to both, got %q vs %q", (*sent)[0].msg, (*sent)[1].msg)
+		t.Errorf("expected identical message to both agents, got %q vs %q", (*sent)[0].msg, (*sent)[1].msg)
 	}
-	if !strings.Contains((*sent)[0].msg, "Grand Plan") {
-		t.Errorf("expected epic title in message, got %q", (*sent)[0].msg)
+	if !strings.Contains((*sent)[0].msg, "Big Feature") {
+		t.Errorf("expected message to mention epic title, got %q", (*sent)[0].msg)
 	}
 }
 
-func TestHandleEpicAutoClose_notifiesOnlyArchitectWhenMayorAbsent(t *testing.T) {
+func TestHandleAutoClose_notifiesOnlyArchitectWhenMayorAbsent(t *testing.T) {
 	d, issues, _, sent := newTestDaemonWithSessions(t, []string{"ct-architect"})
 
-	epicID, _ := issues.Create("Architect Only Epic", "epic", nil, nil, nil)
+	epicID, _ := issues.Create("Architect Only", "epic", nil, nil, nil)
 	issues.UpdateStatus(epicID, "open")
 	child1, _ := issues.Create("Sub task", "task", &epicID, nil, nil)
 	issues.UpdateStatus(child1, "closed")
 
-	d.handleEpicAutoClose()
+	d.handleAutoClose()
 
 	if len(*sent) != 1 {
 		t.Fatalf("expected 1 message (Architect only), got %d", len(*sent))
@@ -1649,8 +1628,55 @@ func TestHandleEpicAutoClose_notifiesOnlyArchitectWhenMayorAbsent(t *testing.T) 
 	if (*sent)[0].session != "ct-architect" {
 		t.Errorf("expected message to ct-architect, got %q", (*sent)[0].session)
 	}
-	if !strings.Contains((*sent)[0].msg, "Architect Only Epic") {
+	if !strings.Contains((*sent)[0].msg, "Architect Only") {
 		t.Errorf("expected epic title in message, got %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleAutoClose_nonEpicParentAutoCloses(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	// A non-epic parent (task type) should also auto-close when its child is closed.
+	parentID, _ := issues.Create("Task Parent", "task", nil, nil, nil)
+	issues.UpdateStatus(parentID, "open")
+	childID, _ := issues.Create("Subtask", "task", &parentID, nil, nil)
+	issues.UpdateStatus(childID, "closed")
+
+	d.handleAutoClose()
+
+	parent, _ := issues.Get(parentID)
+	if parent.Status != "closed" {
+		t.Errorf("expected non-epic parent status=closed, got %q", parent.Status)
+	}
+}
+
+func TestHandleAutoClose_recursiveClosesCascade(t *testing.T) {
+	d, issues, _ := newTestDaemon(t)
+
+	// 3-level hierarchy: epic → sub → task. Two handleAutoClose ticks are needed
+	// to cascade: tick 1 closes sub (all its descendants done), tick 2 closes
+	// epic (all its descendants, including sub, now done).
+	epicID, _ := issues.Create("Epic", "epic", nil, nil, nil)
+	issues.UpdateStatus(epicID, "open")
+	subID, _ := issues.Create("Sub", "epic", &epicID, nil, nil)
+	issues.UpdateStatus(subID, "open")
+	taskID, _ := issues.Create("Task", "task", &subID, nil, nil)
+	issues.UpdateStatus(taskID, "closed")
+
+	d.handleAutoClose() // tick 1: closes sub
+	sub, _ := issues.Get(subID)
+	if sub.Status != "closed" {
+		t.Errorf("tick 1: expected sub status=closed, got %q", sub.Status)
+	}
+	epic, _ := issues.Get(epicID)
+	if epic.Status == "closed" {
+		t.Errorf("tick 1: epic should not be closed yet (sub was just closed this tick)")
+	}
+
+	d.handleAutoClose() // tick 2: closes epic
+	epic, _ = issues.Get(epicID)
+	if epic.Status != "closed" {
+		t.Errorf("tick 2: expected epic status=closed, got %q", epic.Status)
 	}
 }
 

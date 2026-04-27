@@ -1,6 +1,9 @@
 package repo
 
 import (
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/db"
@@ -908,45 +911,186 @@ func TestIssueRepo_UpdateDescription_notFound(t *testing.T) {
 	}
 }
 
-func TestIssueRepo_ListEpicsWithAllChildrenClosed(t *testing.T) {
+func TestListAncestors_threeLevels(t *testing.T) {
 	r := setupTestRepo(t)
 
-	// Epic with all children closed → should be returned.
-	epicID, _ := r.Create("Epic A", "epic", nil, nil, nil)
-	r.UpdateStatus(epicID, "open")
-	child1, _ := r.Create("Task 1", "task", &epicID, nil, nil)
-	r.UpdateStatus(child1, "closed")
-	child2, _ := r.Create("Task 2", "task", &epicID, nil, nil)
-	r.UpdateStatus(child2, "closed")
+	epic, _ := r.Create("epic", "epic", nil, nil, nil)
+	sub, _ := r.Create("sub", "epic", &epic, nil, nil)
+	task, _ := r.Create("task", "task", &sub, nil, nil)
 
-	// Epic with one open child → should NOT be returned.
-	epic2ID, _ := r.Create("Epic B", "epic", nil, nil, nil)
-	r.UpdateStatus(epic2ID, "open")
-	child3, _ := r.Create("Task 3", "task", &epic2ID, nil, nil)
-	r.UpdateStatus(child3, "closed")
-	child4, _ := r.Create("Task 4", "task", &epic2ID, nil, nil)
-	r.UpdateStatus(child4, "open")
-
-	// Epic with no children → should NOT be returned.
-	epic3ID, _ := r.Create("Epic C", "epic", nil, nil, nil)
-	r.UpdateStatus(epic3ID, "open")
-
-	// Already-closed epic with all children closed → should NOT be returned.
-	epic4ID, _ := r.Create("Epic D", "epic", nil, nil, nil)
-	r.UpdateStatus(epic4ID, "open")
-	child5, _ := r.Create("Task 5", "task", &epic4ID, nil, nil)
-	r.UpdateStatus(child5, "closed")
-	r.UpdateStatus(epic4ID, "closed")
-
-	epics, err := r.ListEpicsWithAllChildrenClosed()
+	got, err := r.ListAncestors(task)
 	if err != nil {
-		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+		t.Fatalf("ListAncestors: %v", err)
 	}
-	if len(epics) != 1 {
-		t.Fatalf("expected 1 epic, got %d", len(epics))
+	want := []int{epic, sub}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListAncestors = %v, want %v", got, want)
 	}
-	if epics[0].ID != epicID {
-		t.Errorf("expected epic ID %d, got %d", epicID, epics[0].ID)
+}
+
+func TestListAncestors_noParent(t *testing.T) {
+	r := setupTestRepo(t)
+
+	root, _ := r.Create("root", "task", nil, nil, nil)
+	got, err := r.ListAncestors(root)
+	if err != nil {
+		t.Fatalf("ListAncestors: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty for root issue, got %v", got)
+	}
+}
+
+func TestListAncestors_cycleDetected(t *testing.T) {
+	r := setupTestRepo(t)
+
+	a, _ := r.Create("a", "task", nil, nil, nil)
+	b, _ := r.Create("b", "task", &a, nil, nil)
+	// Force a cycle: a.parent = b
+	if err := r.SetParent(a, b); err != nil {
+		t.Fatalf("SetParent cycle setup: %v", err)
+	}
+	_, err := r.ListAncestors(a)
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("expected cycle error, got %v", err)
+	}
+}
+
+func TestListDescendants_threeLevels(t *testing.T) {
+	r := setupTestRepo(t)
+
+	epic, _ := r.Create("epic", "epic", nil, nil, nil)
+	sub, _ := r.Create("sub", "epic", &epic, nil, nil)
+	task1, _ := r.Create("task1", "task", &sub, nil, nil)
+	task2, _ := r.Create("task2", "task", &sub, nil, nil)
+
+	got, err := r.ListDescendants(epic)
+	if err != nil {
+		t.Fatalf("ListDescendants: %v", err)
+	}
+	want := []int{sub, task1, task2}
+	sort.Ints(got)
+	sort.Ints(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListDescendants = %v, want %v", got, want)
+	}
+}
+
+func TestListDescendants_noChildren(t *testing.T) {
+	r := setupTestRepo(t)
+
+	leaf, _ := r.Create("leaf", "task", nil, nil, nil)
+	got, err := r.ListDescendants(leaf)
+	if err != nil {
+		t.Fatalf("ListDescendants: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty for leaf, got %v", got)
+	}
+}
+
+func TestListIssuesWithAllDescendantsClosed_recursive(t *testing.T) {
+	r := setupTestRepo(t)
+
+	epic, _ := r.Create("epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epic, "open")
+	sub, _ := r.Create("sub", "epic", &epic, nil, nil)
+	r.UpdateStatus(sub, "open")
+	task1, _ := r.Create("task1", "task", &sub, nil, nil)
+	task2, _ := r.Create("task2", "task", &sub, nil, nil)
+
+	// Close only task1 — nothing should be ready yet.
+	r.UpdateStatus(task1, "closed")
+	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ready) != 0 {
+		t.Errorf("expected no auto-closeable issues yet, got %d", len(ready))
+	}
+
+	// Close task2 — sub qualifies (all its descendants are closed). Epic does NOT
+	// qualify yet because sub is still open; it qualifies only after sub is closed.
+	r.UpdateStatus(task2, "closed")
+	ready, err = r.ListIssuesWithAllDescendantsClosed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int
+	for _, issue := range ready {
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) != 1 || ids[0] != sub {
+		t.Errorf("expected only sub (id=%d) to be ready, got IDs=%v", sub, ids)
+	}
+
+	// Close sub — now epic qualifies.
+	r.UpdateStatus(sub, "closed")
+	ready, err = r.ListIssuesWithAllDescendantsClosed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids = ids[:0]
+	for _, issue := range ready {
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) != 1 || ids[0] != epic {
+		t.Errorf("expected only epic (id=%d) to be ready after sub closed, got IDs=%v", epic, ids)
+	}
+}
+
+func TestListIssuesWithAllDescendantsClosed_nonEpicQualifies(t *testing.T) {
+	r := setupTestRepo(t)
+
+	parent, _ := r.Create("task-with-children", "task", nil, nil, nil)
+	r.UpdateStatus(parent, "open")
+	child, _ := r.Create("subtask", "task", &parent, nil, nil)
+	r.UpdateStatus(child, "closed")
+
+	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int
+	for _, issue := range ready {
+		ids = append(ids, issue.ID)
+	}
+	if len(ids) != 1 || ids[0] != parent {
+		t.Errorf("expected non-epic parent to be auto-closeable, got %v", ids)
+	}
+}
+
+func TestListIssuesWithAllDescendantsClosed_noChildrenExcluded(t *testing.T) {
+	r := setupTestRepo(t)
+
+	// Issue with no children should not appear even in "open" status.
+	orphan, _ := r.Create("orphan", "task", nil, nil, nil)
+	r.UpdateStatus(orphan, "open")
+
+	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ready) != 0 {
+		t.Errorf("expected no issues, got %d", len(ready))
+	}
+}
+
+func TestListIssuesWithAllDescendantsClosed_alreadyClosedExcluded(t *testing.T) {
+	r := setupTestRepo(t)
+
+	epic, _ := r.Create("epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epic, "open")
+	child, _ := r.Create("task", "task", &epic, nil, nil)
+	r.UpdateStatus(child, "closed")
+	r.UpdateStatus(epic, "closed")
+
+	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ready) != 0 {
+		t.Errorf("expected closed parent to be excluded, got %d", len(ready))
 	}
 }
 
@@ -1891,7 +2035,7 @@ func TestSelectable_CancelledDepDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestIssueRepo_ListEpicsWithAllChildrenClosed_MixedCancelledAndClosed(t *testing.T) {
+func TestIssueRepo_ListIssuesWithAllDescendantsClosed_MixedCancelledAndClosed(t *testing.T) {
 	r := setupTestRepo(t)
 
 	// Epic with one closed child and one cancelled child — all children terminal.
@@ -1910,9 +2054,9 @@ func TestIssueRepo_ListEpicsWithAllChildrenClosed_MixedCancelledAndClosed(t *tes
 	child4, _ := r.Create("Open child", "task", &epic2ID, nil, nil)
 	r.UpdateStatus(child4, StatusOpen) //nolint:errcheck
 
-	epics, err := r.ListEpicsWithAllChildrenClosed()
+	epics, err := r.ListIssuesWithAllDescendantsClosed()
 	if err != nil {
-		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+		t.Fatalf("ListIssuesWithAllDescendantsClosed: %v", err)
 	}
 	if len(epics) != 1 {
 		t.Fatalf("expected 1 epic, got %d", len(epics))
@@ -1922,7 +2066,7 @@ func TestIssueRepo_ListEpicsWithAllChildrenClosed_MixedCancelledAndClosed(t *tes
 	}
 }
 
-func TestIssueRepo_ListEpicsWithAllChildrenClosed_CancelledEpicExcluded(t *testing.T) {
+func TestIssueRepo_ListIssuesWithAllDescendantsClosed_CancelledEpicExcluded(t *testing.T) {
 	r := setupTestRepo(t)
 
 	// A cancelled epic should not be returned even if all its children are closed.
@@ -1932,9 +2076,9 @@ func TestIssueRepo_ListEpicsWithAllChildrenClosed_CancelledEpicExcluded(t *testi
 	r.UpdateStatus(child, StatusClosed)     //nolint:errcheck
 	r.UpdateStatus(epicID, StatusCancelled) //nolint:errcheck
 
-	epics, err := r.ListEpicsWithAllChildrenClosed()
+	epics, err := r.ListIssuesWithAllDescendantsClosed()
 	if err != nil {
-		t.Fatalf("ListEpicsWithAllChildrenClosed: %v", err)
+		t.Fatalf("ListIssuesWithAllDescendantsClosed: %v", err)
 	}
 	if len(epics) != 0 {
 		t.Errorf("expected no epics (cancelled epic excluded), got %d", len(epics))
