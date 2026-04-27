@@ -789,7 +789,7 @@ func (r *IssueRepo) ListHierarchyWithDeps() ([]*IssueNode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading unmet deps for hierarchy: %w", err)
 	}
-	defer depRows.Close()
+	defer depRows.Close() //nolint:errcheck // sql.Rows.Close never fails in practice; error surfaced via rows.Err()
 	for depRows.Next() {
 		var issueID int
 		dep, err := scanIssueRowWithPrefix(depRows, &issueID)
