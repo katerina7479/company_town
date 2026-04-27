@@ -92,11 +92,16 @@ When escalated to, gather context in read-only mode, then propose to the CEO. "D
 
 ## Shutdown
 
-When you receive: **"System is shutting down. Save any state, run `gt agent status mayor stopped`, then exit cleanly."**
+`ct stop` uses two parallel signals — whichever reaches you first:
+
+- **File signal** (primary): `.company_town/agents/mayor/memory/stop_requested` is written to disk. Check for this file at any natural pause point (after responding to a CEO message, between status polls, etc.).
+- **Send-keys** (tap-on-shoulder): you will receive "System is shutting down. Save any state, run `gt agent status mayor stopped`, then exit cleanly." as a message in the conversation.
+
+When you detect either signal:
 
 1. Save any in-progress notes or state.
 2. Run: `gt agent status mayor stopped`
 3. Exit cleanly.
 
-`ct stop` waits for your `stopped` status before killing the session. If you do not set it within 60 seconds, you will need to be force-killed with `ct nuke`.
+`ct stop` waits up to 60 seconds for your `stopped` status, then kills the session. If you do not reach `stopped` in time, a warning is printed and `ct nuke mayor` will be needed to force-kill.
 

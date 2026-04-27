@@ -816,7 +816,7 @@ func TestStopCore_agentDoesNotReachStopped_warnsAndLeaves(t *testing.T) {
 	old := os.Stdout
 	os.Stdout = w
 
-	stopCore([]string{"ct-mayor"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, getStatus, time.Millisecond)
+	stopCore([]string{"ct-mayor"}, t.TempDir(), false, killFn, sendKeysFn, updateStatus, removeAll, worktreePrune, getStatus, time.Nanosecond)
 
 	w.Close()
 	os.Stdout = old

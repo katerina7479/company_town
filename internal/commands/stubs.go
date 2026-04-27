@@ -444,6 +444,8 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                                                                            //nolint:errcheck // best-effort signal file write
 			sendKeysFn(s, fmt.Sprintf("System is shutting down. Write handoff.md, run `gt agent status %s stopped`, then exit cleanly.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 		case agentName == "mayor":
+			mayorSignalPath := filepath.Join(ctDir, "agents", "mayor", "memory", "stop_requested")
+			os.WriteFile(mayorSignalPath, []byte("stop requested\n"), 0644)                                                                        //nolint:errcheck // best-effort signal file write
 			sendKeysFn(s, fmt.Sprintf("System is shutting down. Save any state, run `gt agent status %s stopped`, then exit cleanly.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 		case strings.HasPrefix(agentName, "artisan-"):
 			specialty := strings.TrimPrefix(agentName, "artisan-")
@@ -451,6 +453,11 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 			os.WriteFile(signalPath, []byte("handoff requested\n"), 0644)                                                                            //nolint:errcheck // best-effort signal file write
 			sendKeysFn(s, fmt.Sprintf("System is shutting down. Write handoff.md, run `gt agent status %s stopped`, then exit cleanly.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 		default:
+			if strings.HasPrefix(agentName, "prole-") {
+				proleName := strings.TrimPrefix(agentName, "prole-")
+				proleSignalPath := filepath.Join(ctDir, "proles", proleName, "stop_requested")
+				os.WriteFile(proleSignalPath, []byte("stop requested\n"), 0644) //nolint:errcheck // best-effort signal file write
+			}
 			sendKeysFn(s, fmt.Sprintf("System is shutting down. Commit and push any work, run `gt agent status %s stopped`, then exit.", agentName)) //nolint:errcheck // fire-and-forget shutdown signal
 			if clean && strings.HasPrefix(agentName, "prole-") {
 				proleName := strings.TrimPrefix(agentName, "prole-")
@@ -485,7 +492,9 @@ func stopCore(sessions []string, ctDir string, clean bool, killFn func(string) e
 		reached := false
 		for {
 			status, err := getStatus(agentName)
-			if err == nil && status == repo.StatusStopped {
+			if err != nil {
+				fmt.Printf("  warning: status read for %s failed: %v\n", agentName, err)
+			} else if status == repo.StatusStopped {
 				reached = true
 				break
 			}
