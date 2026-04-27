@@ -663,6 +663,152 @@ func TestDefaultConfigRepoPlaceholder(t *testing.T) {
 	}
 }
 
+// --- buildOriginURL tests ---
+
+func TestBuildOriginURL_github(t *testing.T) {
+	got := buildOriginURL("github", "owner/myrepo")
+	want := "https://github.com/owner/myrepo.git"
+	if got != want {
+		t.Errorf("buildOriginURL = %q, want %q", got, want)
+	}
+}
+
+func TestBuildOriginURL_gitlab(t *testing.T) {
+	got := buildOriginURL("gitlab", "mygroup/myproject")
+	want := "https://gitlab.com/mygroup/myproject.git"
+	if got != want {
+		t.Errorf("buildOriginURL = %q, want %q", got, want)
+	}
+}
+
+func TestBuildOriginURL_unknownPlatform(t *testing.T) {
+	got := buildOriginURL("bitbucket", "owner/repo")
+	if got != "" {
+		t.Errorf("buildOriginURL unknown platform = %q, want empty", got)
+	}
+}
+
+// --- ensureGitOrigin tests ---
+
+func TestEnsureGitOrigin_noGitDir_initializesAndAddsRemote(t *testing.T) {
+	dir := t.TempDir() // no .git present
+
+	var calls []string
+	oldExec := gitExecFn
+	defer func() { gitExecFn = oldExec }()
+	gitExecFn = func(_ string, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+
+	oldGetURL := gitRemoteGetURLInDirFn
+	defer func() { gitRemoteGetURLInDirFn = oldGetURL }()
+	gitRemoteGetURLInDirFn = func(_ string) (string, error) {
+		return "", fmt.Errorf("no origin")
+	}
+
+	if err := ensureGitOrigin(dir, "github", "owner/myrepo"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(calls) < 2 {
+		t.Fatalf("expected at least 2 git calls, got %v", calls)
+	}
+	if calls[0] != "init" {
+		t.Errorf("first call = %q, want %q", calls[0], "init")
+	}
+	if !strings.HasPrefix(calls[1], "remote add origin") {
+		t.Errorf("second call = %q, want 'remote add origin ...'", calls[1])
+	}
+	if !strings.Contains(calls[1], "github.com/owner/myrepo") {
+		t.Errorf("remote URL missing from call: %q", calls[1])
+	}
+}
+
+func TestEnsureGitOrigin_gitDirNoOrigin_addsRemote(t *testing.T) {
+	dir := t.TempDir()
+	// Create a .git directory so the stat check passes.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var calls []string
+	oldExec := gitExecFn
+	defer func() { gitExecFn = oldExec }()
+	gitExecFn = func(_ string, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+
+	oldGetURL := gitRemoteGetURLInDirFn
+	defer func() { gitRemoteGetURLInDirFn = oldGetURL }()
+	gitRemoteGetURLInDirFn = func(_ string) (string, error) {
+		return "", fmt.Errorf("no origin configured")
+	}
+
+	if err := ensureGitOrigin(dir, "gitlab", "mygroup/myproject"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 git call (remote add), got %v", calls)
+	}
+	if !strings.HasPrefix(calls[0], "remote add origin") {
+		t.Errorf("call = %q, want 'remote add origin ...'", calls[0])
+	}
+	if !strings.Contains(calls[0], "gitlab.com/mygroup/myproject") {
+		t.Errorf("remote URL missing from call: %q", calls[0])
+	}
+}
+
+func TestEnsureGitOrigin_gitDirWithOrigin_noOp(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var calls []string
+	oldExec := gitExecFn
+	defer func() { gitExecFn = oldExec }()
+	gitExecFn = func(_ string, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+
+	oldGetURL := gitRemoteGetURLInDirFn
+	defer func() { gitRemoteGetURLInDirFn = oldGetURL }()
+	gitRemoteGetURLInDirFn = func(_ string) (string, error) {
+		return "https://github.com/owner/myrepo.git", nil
+	}
+
+	if err := ensureGitOrigin(dir, "github", "owner/myrepo"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(calls) != 0 {
+		t.Errorf("expected no git exec calls (origin exists), got %v", calls)
+	}
+}
+
+func TestEnsureGitOrigin_emptyPlatform_noOp(t *testing.T) {
+	dir := t.TempDir()
+
+	var calls []string
+	oldExec := gitExecFn
+	defer func() { gitExecFn = oldExec }()
+	gitExecFn = func(_ string, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+
+	if err := ensureGitOrigin(dir, "", "owner/myrepo"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("expected no calls when platform is empty, got %v", calls)
+	}
+}
+
 func TestLoadTemplateAllAgentTypes(t *testing.T) {
 	types := []string{"mayor", "architect", "reviewer", "artisan",
 		"artisan-frontend", "artisan-backend", "artisan-qa_coder"}

@@ -156,10 +156,15 @@ func EnsureBareRepo(cfg *config.Config) error {
 		return cmd.Run()
 	}
 
+	// Distinguish the two failure cases before calling git so the error is actionable.
+	if _, statErr := os.Stat(filepath.Join(cfg.ProjectRoot, ".git")); os.IsNotExist(statErr) {
+		return fmt.Errorf("%s is not a git repository — run 'git init' and add an 'origin' remote pointing at %s, then retry", cfg.ProjectRoot, cfg.Repo)
+	}
+
 	// Get the real remote URL from the project repo
 	originURL, err := getOriginURL(cfg.ProjectRoot)
 	if err != nil || originURL == "" {
-		return fmt.Errorf("could not determine origin URL: %w", err)
+		return fmt.Errorf("git repository has no 'origin' remote — run 'git remote add origin <url>' and retry: %w", err)
 	}
 
 	// Clone bare directly from the remote, then set up fetch refspec

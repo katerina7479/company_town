@@ -51,6 +51,75 @@ var gitRemoteURLFn = func() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// gitExecFn is injectable for tests — runs a git command in dir.
+var gitExecFn = func(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Run()
+}
+
+// gitRemoteGetURLInDirFn is injectable for tests — returns the origin URL for dir.
+var gitRemoteGetURLInDirFn = func(dir string) (string, error) {
+	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// buildOriginURL constructs an HTTPS clone URL from the platform and repoRef.
+func buildOriginURL(platform, repoRef string) string {
+	switch platform {
+	case "github":
+		return "https://github.com/" + repoRef + ".git"
+	case "gitlab":
+		return "https://gitlab.com/" + repoRef + ".git"
+	}
+	return ""
+}
+
+// ensureGitOrigin checks the git state in projectRoot and sets up git + origin
+// when needed. It is a no-op when origin is already configured. All three states
+// are handled:
+//   - no .git/      → git init + git remote add origin
+//   - .git, no origin → git remote add origin
+//   - .git + origin  → no-op
+func ensureGitOrigin(projectRoot, platform, repoRef string) error {
+	if platform == "" || repoRef == "" {
+		return nil
+	}
+	originURL := buildOriginURL(platform, repoRef)
+	if originURL == "" {
+		return nil
+	}
+
+	gitDir := filepath.Join(projectRoot, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		if err := gitExecFn(projectRoot, "init"); err != nil {
+			return fmt.Errorf("git init: %w", err)
+		}
+		fmt.Println("  git init: initialized repository")
+		if err := gitExecFn(projectRoot, "remote", "add", "origin", originURL); err != nil {
+			return fmt.Errorf("git remote add origin: %w", err)
+		}
+		fmt.Printf("  git remote add origin %s\n", originURL)
+		fmt.Println("  (to use SSH instead: git remote set-url origin git@<host>:<owner>/<repo>.git)")
+		return nil
+	}
+
+	if _, err := gitRemoteGetURLInDirFn(projectRoot); err != nil {
+		if err := gitExecFn(projectRoot, "remote", "add", "origin", originURL); err != nil {
+			return fmt.Errorf("git remote add origin: %w", err)
+		}
+		fmt.Printf("  git remote add origin %s\n", originURL)
+		fmt.Println("  (to use SSH instead: git remote set-url origin git@<host>:<owner>/<repo>.git)")
+		return nil
+	}
+
+	fmt.Println("  exists:  git remote origin (unchanged)")
+	return nil
+}
+
 // deriveTicketPrefix extracts a lowercase alpha prefix from the project directory name.
 // Returns "" if nothing usable can be extracted.
 func deriveTicketPrefix(projectRoot string) string {
@@ -403,6 +472,11 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 	cfg, err := config.Load(projectRoot)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
+	}
+
+	// 5a. Ensure git repo + origin are set up (idempotent).
+	if err := ensureGitOrigin(projectRoot, cfg.Platform, cfg.Repo); err != nil {
+		return fmt.Errorf("setting up git origin: %w", err)
 	}
 
 	// 6. Connect to Dolt server (start it if not running)
