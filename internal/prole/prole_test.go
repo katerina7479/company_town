@@ -1186,3 +1186,52 @@ func TestEnsureBareRepo_fetchesWhenBareRepoExists(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestEnsureBareRepo_notAGitRepo_actionableError(t *testing.T) {
+	// ProjectRoot has no .git directory — not a git repo at all.
+	dir := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot: dir,
+		Repo:        "owner/myrepo",
+	}
+	// barePath = dir/.company_town/repo.git doesn't exist → clone path is taken.
+	// Before cloning, the code checks for .git in ProjectRoot.
+
+	err := EnsureBareRepo(cfg)
+	if err == nil {
+		t.Fatal("expected error for non-git directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("error should mention 'not a git repository': %v", err)
+	}
+	if !strings.Contains(err.Error(), "git init") {
+		t.Errorf("error should mention 'git init': %v", err)
+	}
+}
+
+func TestEnsureBareRepo_noOriginRemote_actionableError(t *testing.T) {
+	dir := t.TempDir()
+	// Create a real git repo with no remote.
+	cmd := exec.Command("git", "init", dir)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	cfg := &config.Config{
+		ProjectRoot: dir,
+		Repo:        "owner/myrepo",
+	}
+	// barePath = dir/.company_town/repo.git doesn't exist → clone path is taken.
+	// .git exists but no origin → actionable error.
+
+	err := EnsureBareRepo(cfg)
+	if err == nil {
+		t.Fatal("expected error for repo with no origin, got nil")
+	}
+	if !strings.Contains(err.Error(), "no 'origin' remote") {
+		t.Errorf("error should mention \"no 'origin' remote\": %v", err)
+	}
+	if !strings.Contains(err.Error(), "git remote add origin") {
+		t.Errorf("error should mention 'git remote add origin': %v", err)
+	}
+}
