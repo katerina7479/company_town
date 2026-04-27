@@ -706,7 +706,7 @@ func (r *IssueRepo) collectDescendants(id int, visited map[int]bool, depth int, 
 	if err != nil {
 		return *out, fmt.Errorf("listing children of %d: %w", id, err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var childIDs []int
 	for rows.Next() {
