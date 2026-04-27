@@ -2639,12 +2639,12 @@ func TestUpdate_enterExpandsTicket(t *testing.T) {
 
 // makeModelWithAssignedTicket returns a model with the ticket panel focused on a
 // ticket assigned to "copper", plus the copper agent in the agent snapshot.
-func makeModelWithAssignedTicket(t *testing.T, sessionLive bool) (*dashboardModel, *[]struct{ session, msg string }, *repo.IssueRepo, int) {
+func makeModelWithAssignedTicket(t *testing.T) (*dashboardModel, *[]struct{ session, msg string }, *repo.IssueRepo, int) {
 	t.Helper()
 	sent := &[]struct{ session, msg string }{}
 	m, agents := newTestModel(t,
 		func(string) error { return nil },
-		func(string) bool { return sessionLive },
+		func(string) bool { return true },
 		func(name, msg string) error {
 			*sent = append(*sent, struct{ session, msg string }{name, msg})
 			return nil
@@ -2686,7 +2686,7 @@ func makeModelWithAssignedTicket(t *testing.T, sessionLive bool) (*dashboardMode
 }
 
 func TestUnassign_entersInputModeForAssignedTicket(t *testing.T) {
-	m, _, _, _ := makeModelWithAssignedTicket(t, true)
+	m, _, _, _ := makeModelWithAssignedTicket(t)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
 	dm := updated.(dashboardModel)
@@ -2706,7 +2706,7 @@ func TestUnassign_entersInputModeForAssignedTicket(t *testing.T) {
 }
 
 func TestUnassign_noAssigneeShowsStatusMsg(t *testing.T) {
-	m, _, _, _ := makeModelWithAssignedTicket(t, true)
+	m, _, _, _ := makeModelWithAssignedTicket(t)
 	// Replace the ticket data with an unassigned ticket.
 	m.data.roots = []*repo.IssueNode{{Issue: &repo.Issue{ID: 99, Status: "open"}}}
 
@@ -2722,7 +2722,7 @@ func TestUnassign_noAssigneeShowsStatusMsg(t *testing.T) {
 }
 
 func TestUnassign_agentPanelNoOp(t *testing.T) {
-	m, _, _, _ := makeModelWithAssignedTicket(t, true)
+	m, _, _, _ := makeModelWithAssignedTicket(t)
 	m.focusedPanel = 0
 
 	updated, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
@@ -2734,7 +2734,7 @@ func TestUnassign_agentPanelNoOp(t *testing.T) {
 }
 
 func TestUnassign_confirmY_executesUnassign(t *testing.T) {
-	m, sent, issues, issueID := makeModelWithAssignedTicket(t, true)
+	m, sent, issues, issueID := makeModelWithAssignedTicket(t)
 
 	// Press u to enter confirm mode.
 	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
@@ -2782,7 +2782,7 @@ func TestUnassign_confirmY_executesUnassign(t *testing.T) {
 }
 
 func TestUnassign_confirmNonY_noOp(t *testing.T) {
-	m, _, issues, issueID := makeModelWithAssignedTicket(t, true)
+	m, _, issues, issueID := makeModelWithAssignedTicket(t)
 
 	// Press u to enter confirm mode.
 	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
@@ -2804,7 +2804,7 @@ func TestUnassign_confirmNonY_noOp(t *testing.T) {
 }
 
 func TestUnassign_escapeClears(t *testing.T) {
-	m, _, _, _ := makeModelWithAssignedTicket(t, true)
+	m, _, _, _ := makeModelWithAssignedTicket(t)
 
 	// Press u to enter confirm mode.
 	upd, _ := m.Update(tea.KeyMsg{Type: -1, Runes: []rune("u")})
