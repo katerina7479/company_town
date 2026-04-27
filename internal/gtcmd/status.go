@@ -68,6 +68,17 @@ func Status() error {
 		}
 	}
 
+	// Terminal statuses — always shown so the operator can see history at a glance.
+	for _, status := range []string{repo.StatusClosed, repo.StatusCancelled} {
+		list, err := issues.List(status)
+		if err != nil {
+			return err
+		}
+		if len(list) > 0 {
+			fmt.Printf("  %s: %d\n", status, len(list))
+		}
+	}
+
 	return nil
 }
 

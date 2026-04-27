@@ -108,16 +108,20 @@ func printTicketFlow(events []eventlog.Event) {
 		})
 	}
 
-	// Throughput: count transitions to "closed"
-	closed := 0
+	// Throughput: count transitions to terminal statuses (closed = landed, cancelled = abandoned).
+	closedCount := 0
+	cancelledCount := 0
 	for _, transitions := range byTicket {
 		for _, t := range transitions {
-			if t.to == repo.StatusClosed {
-				closed++
+			switch t.to {
+			case repo.StatusClosed:
+				closedCount++
+			case repo.StatusCancelled:
+				cancelledCount++
 			}
 		}
 	}
-	fmt.Printf("  Throughput:        %d tickets closed\n", closed)
+	fmt.Printf("  Throughput:        %d closed, %d cancelled\n", closedCount, cancelledCount)
 
 	var closeTimes []time.Duration
 	repairCount := 0
@@ -133,7 +137,7 @@ func printTicketFlow(events []eventlog.Event) {
 			if t.to == repo.StatusOpen && firstOpen.IsZero() {
 				firstOpen = t.at
 			}
-			if t.to == repo.StatusClosed {
+			if repo.IsTerminalStatus(t.to) {
 				lastClose = t.at
 			}
 			if t.to == repo.StatusInReview {
@@ -267,7 +271,7 @@ func printPRCycle(events []eventlog.Event) {
 			if t.to == repo.StatusInReview {
 				rounds++
 			}
-			if t.to == repo.StatusClosed && !prOpen.IsZero() {
+			if repo.IsTerminalStatus(t.to) && !prOpen.IsZero() {
 				cycleTimes = append(cycleTimes, t.at.Sub(prOpen))
 			}
 		}

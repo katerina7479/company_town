@@ -4055,13 +4055,13 @@ func TestHandleCancelledTickets_FullCleanup(t *testing.T) {
 		t.Errorf("expected branch 'prole/copper/nc-999' deleted, got %v", branchesDeleted)
 	}
 
-	// Ticket should now be closed with branch/PR/assignee cleared.
+	// Ticket should stay in cancelled with branch/PR/assignee cleared.
 	updated, err := issues.Get(id)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 	if updated.Assignee.Valid {
 		t.Errorf("expected assignee cleared, got %q", updated.Assignee.String)
@@ -4109,8 +4109,8 @@ func TestHandleCancelledTickets_NoPR(t *testing.T) {
 	}
 
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4141,8 +4141,8 @@ func TestHandleCancelledTickets_NoBranch(t *testing.T) {
 	}
 
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4160,8 +4160,8 @@ func TestHandleCancelledTickets_NoAssignee(t *testing.T) {
 	}
 
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4195,10 +4195,10 @@ func TestHandleCancelledTickets_PRCloseFailsNonFatal(t *testing.T) {
 		t.Errorf("expected branch deleted despite PR close error, got %v", branchesDeleted)
 	}
 
-	// Ticket should still be closed.
+	// Ticket should still be cancelled (cleanup ran despite PR close error).
 	updated, _ := issues.Get(id)
-	if updated.Status != repo.StatusClosed {
-		t.Errorf("expected status=closed, got %q", updated.Status)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status=cancelled, got %q", updated.Status)
 	}
 }
 
@@ -4213,6 +4213,43 @@ func TestHandleCancelledTickets_AlreadyClosed(t *testing.T) {
 
 	if len(*sent) != 0 {
 		t.Errorf("expected no-op for no cancelled tickets, got sendKeys calls: %v", *sent)
+	}
+}
+
+func TestHandleCancelledTickets_IdempotentAlreadyCleaned(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
+
+	var prClosed []int
+	d.prCloseFn = func(prNum int) error {
+		prClosed = append(prClosed, prNum)
+		return nil
+	}
+	var branchesDeleted []string
+	d.gitDeleteBranchFn = func(_, branch string) error {
+		branchesDeleted = append(branchesDeleted, branch)
+		return nil
+	}
+
+	// Ticket is already cleaned: in cancelled state with no assignee, branch, or PR.
+	id, _ := issues.Create("Already cleaned", "task", nil, nil, nil)
+	issues.UpdateStatus(id, repo.StatusCancelled) //nolint:errcheck
+
+	d.handleCancelledTickets()
+
+	// Nothing should have been called — idempotency guard short-circuits.
+	if len(*sent) != 0 {
+		t.Errorf("expected no sendKeys for already-cleaned ticket, got %v", *sent)
+	}
+	if len(prClosed) != 0 {
+		t.Errorf("expected no PR close for already-cleaned ticket, got %v", prClosed)
+	}
+	if len(branchesDeleted) != 0 {
+		t.Errorf("expected no branch delete for already-cleaned ticket, got %v", branchesDeleted)
+	}
+
+	updated, _ := issues.Get(id)
+	if updated.Status != repo.StatusCancelled {
+		t.Errorf("expected status unchanged at cancelled, got %q", updated.Status)
 	}
 }
 
