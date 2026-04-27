@@ -52,20 +52,21 @@ type tickObservations struct {
 
 // Daemon polls for state changes and routes work to agents.
 type Daemon struct {
-	cfg                 *config.Config
-	issues              *repo.IssueRepo
-	agents              *repo.AgentRepo
-	logger              *log.Logger
-	stop                chan struct{}
-	sendKeys            func(session, msg string) error
-	sessionExists       func(session string) bool
-	killSession         func(session string) error
-	capturePane         func(session string) (string, error)
-	lastNudged          map[string]time.Time
-	lastNudgeDigest     map[string]string // hash of ticket IDs from last nudge per key
-	nudgeCooldown       time.Duration
-	stuckAgentThreshold time.Duration
-	nowFn               func() time.Time
+	cfg                     *config.Config
+	issues                  *repo.IssueRepo
+	agents                  *repo.AgentRepo
+	logger                  *log.Logger
+	stop                    chan struct{}
+	sendKeys                func(session, msg string) error
+	sessionExists           func(session string) bool
+	killSession             func(session string) error
+	capturePane             func(session string) (string, error)
+	lastNudged              map[string]time.Time
+	lastNudgeDigest         map[string]string // hash of ticket IDs from last nudge per key
+	nudgeCooldown           time.Duration
+	stuckAgentThreshold     time.Duration
+	ciRunningStuckThreshold time.Duration
+	nowFn                   func() time.Time
 
 	// obs accumulates per-handler observations for the tick summary line.
 	// Set at the start of poll() and cleared afterwards; nil outside a poll.
@@ -150,20 +151,21 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 	}
 
 	return &Daemon{
-		cfg:                 cfg,
-		issues:              repo.NewIssueRepo(db, events),
-		agents:              agentRepo,
-		logger:              logger,
-		stop:                make(chan struct{}),
-		sendKeys:            session.SendKeys,
-		sessionExists:       session.Exists,
-		killSession:         session.Kill,
-		capturePane:         session.CapturePane,
-		lastNudged:          make(map[string]time.Time),
-		lastNudgeDigest:     make(map[string]string),
-		nudgeCooldown:       time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
-		stuckAgentThreshold: time.Duration(cfg.StuckAgentThresholdSeconds) * time.Second,
-		nowFn:               time.Now,
+		cfg:                     cfg,
+		issues:                  repo.NewIssueRepo(db, events),
+		agents:                  agentRepo,
+		logger:                  logger,
+		stop:                    make(chan struct{}),
+		sendKeys:                session.SendKeys,
+		sessionExists:           session.Exists,
+		killSession:             session.Kill,
+		capturePane:             session.CapturePane,
+		lastNudged:              make(map[string]time.Time),
+		lastNudgeDigest:         make(map[string]string),
+		nudgeCooldown:           time.Duration(cfg.NudgeCooldownSeconds) * time.Second,
+		stuckAgentThreshold:     time.Duration(cfg.StuckAgentThresholdSeconds) * time.Second,
+		ciRunningStuckThreshold: time.Duration(cfg.CIRunningStuckThresholdSeconds) * time.Second,
+		nowFn:                   time.Now,
 		runQualityBaseline: func() error {
 			return runAndPersistBaseline(runner, cfg.Quality.Checks, metrics, logger)
 		},
@@ -421,6 +423,7 @@ func (d *Daemon) poll() {
 	d.handleStaleWorktrees()
 	d.handleIdleProleWorktrees()
 	d.handleCancelledTickets()
+	d.handleStaleAssignments()
 	d.handleBackfillPRNumbers()
 	d.handleDraftTickets()
 	d.handleAssignments()
@@ -429,6 +432,7 @@ func (d *Daemon) poll() {
 	d.handleInReviewTickets()
 	d.handleFollowUpReminder()
 	d.handlePREvents()
+	d.handleStuckCIRunning()
 	d.handleRepairCycleEscalation()
 	d.handleStuckPrompts()
 	d.handleEpicAutoClose()
@@ -831,6 +835,57 @@ func (d *Daemon) handleStuckAgents() {
 	}
 }
 
+// handleStuckCIRunning detects tickets that have been in ci_running longer than
+// ciRunningStuckThreshold and escalates each one to Mayor. A ticket is "stuck"
+// when the daemon stopped advancing it — e.g. because getPRState returned a
+// persistent error, the check conclusion was unrecognised, or a VCS auth issue
+// caused every poll to be skipped silently.
+func (d *Daemon) handleStuckCIRunning() {
+	if d.ciRunningStuckThreshold == 0 {
+		return // disabled
+	}
+
+	mayorSession := session.SessionName("mayor")
+	if !d.sessionExists(mayorSession) {
+		return // Mayor not running, nowhere to escalate
+	}
+
+	tickets, err := d.issues.ListWithPRs()
+	if err != nil {
+		d.logger.Printf("handleStuckCIRunning: error listing tickets with PRs: %v", err)
+		return
+	}
+
+	now := d.nowFn()
+	for _, issue := range tickets {
+		if issue.Status != repo.StatusCIRunning {
+			continue
+		}
+		elapsed := now.Sub(issue.UpdatedAt)
+		if elapsed < d.ciRunningStuckThreshold {
+			continue
+		}
+
+		nudgeKey := fmt.Sprintf("stuck_ci_running:%d", issue.ID)
+		if !d.shouldNudge(nudgeKey) {
+			continue
+		}
+
+		d.logger.Printf("ticket %s-%d has been in ci_running for %s — escalating to Mayor",
+			d.cfg.TicketPrefix, issue.ID, elapsed.Round(time.Minute))
+
+		msg := fmt.Sprintf("ESCALATION: Ticket %s-%d (%s) has been in ci_running for %s with no CI signal. "+
+			"The daemon may have missed a CI event. Check the daemon log for PR #%d and verify VCS connectivity.",
+			d.cfg.TicketPrefix, issue.ID, issue.Title, elapsed.Round(time.Minute), int(issue.PRNumber.Int64))
+
+		if err := d.sendKeys(mayorSession, msg); err != nil {
+			d.logger.Printf("error escalating stuck ci_running ticket %d to Mayor: %v", issue.ID, err)
+		} else {
+			d.recordNudge(nudgeKey, "")
+		}
+	}
+}
+
 // promptPattern describes a single stuck-prompt heuristic.
 // When anchored is true the pattern must appear at the start of the trimmed,
 // lowercased line; when false it may appear anywhere. Anchoring is used for
@@ -998,6 +1053,27 @@ func (d *Daemon) handleRepairCycleEscalation() {
 			continue
 		}
 
+		// Signal the assigned prole to stop, then clear assignment fields.
+		if issue.Assignee.Valid && issue.Assignee.String != "" {
+			agentName := issue.Assignee.String
+			sess := session.SessionName(agentName)
+			if d.sessionExists(sess) {
+				holdMsg := fmt.Sprintf(
+					"TICKET ON HOLD: %s-%d has exceeded the repair cycle threshold and is now on hold. "+
+						"Stop all work immediately. Run: gt agent status %s idle",
+					d.cfg.TicketPrefix, issue.ID, agentName)
+				if err := d.sendKeys(sess, holdMsg); err != nil {
+					d.logger.Printf("error signaling %s for on_hold ticket %d: %v", agentName, issue.ID, err)
+				}
+			}
+			if err := d.agents.ClearCurrentIssue(agentName); err != nil {
+				d.logger.Printf("error clearing current_issue for %s (ticket %d): %v", agentName, issue.ID, err)
+			}
+			if err := d.issues.ClearAssignee(issue.ID); err != nil {
+				d.logger.Printf("error clearing assignee for ticket %d: %v", issue.ID, err)
+			}
+		}
+
 		reason := fmt.Sprintf("escalated: bounced %d times (threshold %d) — human review required",
 			issue.RepairCycleCount, d.repairCycleThreshold)
 		if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
@@ -1017,6 +1093,47 @@ func (d *Daemon) handleRepairCycleEscalation() {
 
 		if d.obs != nil {
 			d.obs.repairCycleEscalations++
+		}
+	}
+}
+
+// handleStaleAssignments is a periodic reconciler that clears assignee and
+// current_issue on tickets that have reached a terminal or human-attention
+// state (closed, on_hold) but still carry an assignee. This catches tickets
+// that bypassed the in-process handlers (direct SQL close, race conditions,
+// or older bugs from before these handlers existed).
+func (d *Daemon) handleStaleAssignments() {
+	tickets, err := d.issues.ListAssignedInStatuses(repo.StatusClosed, repo.StatusOnHold)
+	if err != nil {
+		d.logger.Printf("error listing stale-assigned tickets: %v", err)
+		return
+	}
+
+	for _, ticket := range tickets {
+		if !ticket.Assignee.Valid || ticket.Assignee.String == "" {
+			continue
+		}
+		agentName := ticket.Assignee.String
+
+		// Only clear the agent's current_issue if it still points at this ticket
+		// (the agent may already have been reassigned to a different ticket).
+		agent, err := d.agents.Get(agentName)
+		if err == nil && agent.CurrentIssue.Valid && agent.CurrentIssue.Int64 == int64(ticket.ID) {
+			if err := d.agents.ClearCurrentIssue(agentName); err != nil {
+				d.logger.Printf("stale-assignment reconciler: error clearing current_issue for %s (ticket %d): %v",
+					agentName, ticket.ID, err)
+			} else {
+				d.logger.Printf("stale-assignment reconciler: cleared current_issue for %s (ticket %d status=%s)",
+					agentName, ticket.ID, ticket.Status)
+			}
+		}
+
+		if err := d.issues.ClearAssignee(ticket.ID); err != nil {
+			d.logger.Printf("stale-assignment reconciler: error clearing assignee for ticket %d: %v",
+				ticket.ID, err)
+		} else {
+			d.logger.Printf("stale-assignment reconciler: cleared assignee %q from ticket %d (status=%s)",
+				agentName, ticket.ID, ticket.Status)
 		}
 	}
 }
@@ -1468,15 +1585,24 @@ func (d *Daemon) handlePREvents() {
 func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable, checks string, failing []string) {
 	switch {
 	case mergeable == "CONFLICTING" && (issue.Status == repo.StatusPROpen || issue.Status == repo.StatusCIRunning):
+		d.logger.Printf("handleOpenPR: PR #%d ticket %s-%d → conflict (mergeable=%s, status=%s)",
+			prNum, d.cfg.TicketPrefix, issue.ID, mergeable, issue.Status)
 		d.handlePRConflict(issue, prNum)
 	case mergeable == "MERGEABLE" && issue.Status == repo.StatusMergeConflict:
+		d.logger.Printf("handleOpenPR: PR #%d ticket %s-%d → conflict-resolved (mergeable=%s, checks=%s)",
+			prNum, d.cfg.TicketPrefix, issue.ID, mergeable, checks)
 		d.handlePRConflictResolved(issue, prNum, checks)
 	case (issue.Status == repo.StatusCIRunning || issue.Status == repo.StatusPROpen) && checks == "failing":
+		d.logger.Printf("handleOpenPR: PR #%d ticket %s-%d → ci-fail (status=%s, failing=%v)",
+			prNum, d.cfg.TicketPrefix, issue.ID, issue.Status, failing)
 		d.handleCIFailure(issue, prNum, failing)
 	case issue.Status == repo.StatusCIRunning && checks == "passing":
+		d.logger.Printf("handleOpenPR: PR #%d ticket %s-%d → ci-pass (status=%s)",
+			prNum, d.cfg.TicketPrefix, issue.ID, issue.Status)
 		d.handleCIPass(issue, prNum)
-	// ci_running + pending: no-op, wait for checks to complete.
 	default:
+		d.logger.Printf("handleOpenPR: PR #%d ticket %s-%d → no-op (status=%s, mergeable=%s, checks=%s)",
+			prNum, d.cfg.TicketPrefix, issue.ID, issue.Status, mergeable, checks)
 		d.checkForHumanComments(issue, prNum)
 	}
 }
@@ -1824,7 +1950,7 @@ func (d *Daemon) getPRState(prNum int) (state, mergeable, checks string, failing
 		return "", "", "", nil, false, fmt.Errorf("parsing PR state: %w", err)
 	}
 
-	checksStatus, failingNames := classifyChecks(result.StatusCheckRollup)
+	checksStatus, failingNames := classifyChecks(result.StatusCheckRollup, d.logger)
 	return result.State, result.Mergeable, checksStatus, failingNames, result.MergedAt != nil, nil
 }
 
@@ -1835,11 +1961,14 @@ func (d *Daemon) getPRState(prNum int) (state, mergeable, checks string, failing
 // Failing conclusions: FAILURE, CANCELLED, TIMED_OUT, STARTUP_FAILURE, ACTION_REQUIRED.
 // Pending statuses: IN_PROGRESS, QUEUED, WAITING.
 // Passing conclusions: SUCCESS, NEUTRAL, SKIPPED.
+//
+// Unknown status/conclusion combinations are logged (if logger non-nil) and treated
+// as passing so that novel GitHub values do not silently block ticket advancement.
 func classifyChecks(checks []struct {
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
-}) (status string, failing []string) {
+}, logger *log.Logger) (status string, failing []string) {
 	hasPending := false
 	for _, c := range checks {
 		switch c.Status {
@@ -1849,6 +1978,18 @@ func classifyChecks(checks []struct {
 			switch c.Conclusion {
 			case "FAILURE", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
 				failing = append(failing, c.Name)
+			case "SUCCESS", "NEUTRAL", "SKIPPED":
+				// known passing conclusions — no action needed
+			default:
+				if logger != nil {
+					logger.Printf("classifyChecks: unknown conclusion %q for check %q (status=COMPLETED) — treating as passing",
+						c.Conclusion, c.Name)
+				}
+			}
+		default:
+			if logger != nil {
+				logger.Printf("classifyChecks: unknown status %q for check %q (conclusion=%q) — treating as passing",
+					c.Status, c.Name, c.Conclusion)
 			}
 		}
 	}
