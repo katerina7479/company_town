@@ -25,3 +25,6 @@ const (
 	StatusIdle    = "idle"
 	StatusDead    = "dead"
 )
+
+// ValidAgentStatuses is the complete set of valid agent status values.
+var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead}

@@ -83,6 +83,11 @@ func agentStatus(agents *repo.AgentRepo, args []string) error {
 
 	name := args[0]
 	status := args[1]
+
+	if status != repo.StatusIdle && status != repo.StatusWorking && status != repo.StatusDead {
+		return fmt.Errorf("invalid status %q: must be one of idle, working, dead", status)
+	}
+
 	var issueID *int
 
 	for i := 2; i < len(args); i++ {

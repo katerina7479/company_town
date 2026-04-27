@@ -251,3 +251,57 @@ func TestAgentStatus_badIssueID(t *testing.T) {
 		t.Errorf("expected 'invalid issue ID' in error, got: %v", err)
 	}
 }
+
+// TestAgentStatus_invalidStatus verifies that an unknown status is rejected with
+// a helpful error message and does NOT mutate the agent row.
+func TestAgentStatus_invalidStatus(t *testing.T) {
+	agents := newAgentRepo(t)
+	if err := agents.Register("reviewer", "reviewer", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	err := agentStatus(agents, []string{"reviewer", "active"})
+	if err == nil {
+		t.Fatal("expected error for invalid status 'active', got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid status") {
+		t.Errorf("expected 'invalid status' in error message, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "active") {
+		t.Errorf("expected status value in error message, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "idle") {
+		t.Errorf("expected 'idle' in error message, got: %v", err)
+	}
+
+	// Row must not have been mutated — status stays at the default (idle after Register).
+	a, err := agents.Get("reviewer")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if a.Status == "active" {
+		t.Error("agent row was mutated to invalid status 'active'")
+	}
+}
+
+// TestAgentStatus_validStatuses confirms each of the three canonical values is accepted.
+func TestAgentStatus_validStatuses(t *testing.T) {
+	for _, status := range []string{"idle", "working", "dead"} {
+		t.Run(status, func(t *testing.T) {
+			agents := newAgentRepo(t)
+			if err := agents.Register("iron", "prole", nil); err != nil {
+				t.Fatalf("Register: %v", err)
+			}
+			// working requires --issue; give it one so the path doesn't fail for the wrong reason.
+			var args []string
+			if status == "working" {
+				args = []string{"iron", "working", "--issue", "1"}
+			} else {
+				args = []string{"iron", status}
+			}
+			if err := agentStatus(agents, args); err != nil {
+				t.Fatalf("agentStatus(%q): unexpected error: %v", status, err)
+			}
+		})
+	}
+}
