@@ -26,6 +26,9 @@ const (
 	StatusDead    = "dead"
 )
 
+// ValidAgentStatuses is the complete set of valid agent status values.
+var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead}
+
 // IsTerminalStatus returns true for statuses that represent final, immutable
 // outcomes — work that landed (closed) or was abandoned (cancelled). A ticket
 // in a terminal status will never be re-opened, re-assigned, or block other work.

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/katerina7479/company_town/internal/eventlog"
@@ -77,8 +79,12 @@ func (r *AgentRepo) Get(name string) (*Agent, error) {
 	return &a, nil
 }
 
-// UpdateStatus changes an agent's status.
+// UpdateStatus changes an agent's status. Status must be one of idle, working, or dead.
 func (r *AgentRepo) UpdateStatus(name, status string) error {
+	if !isValidAgentStatus(status) {
+		return fmt.Errorf("invalid agent status %q: must be one of %s", status, strings.Join(ValidAgentStatuses, ", "))
+	}
+
 	var oldStatus string
 	if r.events != nil {
 		r.db.QueryRow(`SELECT status FROM agents WHERE name = ?`, name).Scan(&oldStatus) //nolint:errcheck // event pre-read; scan failure is non-fatal
@@ -306,4 +312,9 @@ func scanAgentRows(rows *sql.Rows) ([]*Agent, error) {
 		agents = append(agents, &a)
 	}
 	return agents, rows.Err()
+}
+
+// isValidAgentStatus returns true when s is one of the canonical agent statuses.
+func isValidAgentStatus(s string) bool {
+	return slices.Contains(ValidAgentStatuses, s)
 }
