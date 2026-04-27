@@ -768,12 +768,18 @@ func (d *Daemon) handleEpicAutoClose() {
 			continue
 		}
 
+		msg := fmt.Sprintf("Epic %s-%d (%s) auto-closed: all sub-tasks are complete.",
+			d.cfg.TicketPrefix, epic.ID, epic.Title)
 		mayorSession := session.SessionName("mayor")
 		if d.sessionExists(mayorSession) {
-			msg := fmt.Sprintf("Epic %s-%d (%s) auto-closed: all sub-tasks are complete.",
-				d.cfg.TicketPrefix, epic.ID, epic.Title)
 			if err := d.sendKeys(mayorSession, msg); err != nil {
 				d.logger.Printf("error notifying Mayor of epic %d closure: %v", epic.ID, err)
+			}
+		}
+		architectSession := session.SessionName("architect")
+		if d.sessionExists(architectSession) {
+			if err := d.sendKeys(architectSession, msg); err != nil {
+				d.logger.Printf("error notifying Architect of epic %d closure: %v", epic.ID, err)
 			}
 		}
 	}
@@ -1692,11 +1698,15 @@ func (d *Daemon) handlePRMerged(issue *repo.Issue) {
 		d.obs.prEventsMerged++
 	}
 
+	msg := fmt.Sprintf("PR #%d merged. Ticket %s-%d (%s) is now closed.",
+		issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
 	mayorSession := session.SessionName("mayor")
 	if d.sessionExists(mayorSession) {
-		msg := fmt.Sprintf("PR #%d merged. Ticket %s-%d (%s) is now closed.",
-			issue.PRNumber.Int64, d.cfg.TicketPrefix, issue.ID, issue.Title)
-		d.sendKeys(mayorSession, msg) //nolint:errcheck // fire-and-forget notification to Mayor
+		d.sendKeys(mayorSession, msg) //nolint:errcheck
+	}
+	architectSession := session.SessionName("architect")
+	if d.sessionExists(architectSession) {
+		d.sendKeys(architectSession, msg) //nolint:errcheck
 	}
 }
 
