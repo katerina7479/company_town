@@ -78,6 +78,9 @@ func createWorktree(barePath, wtPath string) error {
 	if err := os.MkdirAll(filepath.Dir(wtPath), 0750); err != nil {
 		return fmt.Errorf("creating parent dir for worktree: %w", err)
 	}
+	if err := prole.EnsureOriginMain(barePath); err != nil {
+		return err
+	}
 	cmd := exec.Command("git", "worktree", "add", "--detach", wtPath, "origin/main")
 	cmd.Dir = barePath
 	cmd.Stdout = os.Stdout

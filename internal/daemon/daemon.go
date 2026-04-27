@@ -423,6 +423,7 @@ func (d *Daemon) poll() {
 	d.handleStaleWorktrees()
 	d.handleIdleProleWorktrees()
 	d.handleCancelledTickets()
+	d.handleStaleAssignments()
 	d.handleBackfillPRNumbers()
 	d.handleDraftTickets()
 	d.handleAssignments()
@@ -1052,6 +1053,27 @@ func (d *Daemon) handleRepairCycleEscalation() {
 			continue
 		}
 
+		// Signal the assigned prole to stop, then clear assignment fields.
+		if issue.Assignee.Valid && issue.Assignee.String != "" {
+			agentName := issue.Assignee.String
+			sess := session.SessionName(agentName)
+			if d.sessionExists(sess) {
+				holdMsg := fmt.Sprintf(
+					"TICKET ON HOLD: %s-%d has exceeded the repair cycle threshold and is now on hold. "+
+						"Stop all work immediately. Run: gt agent status %s idle",
+					d.cfg.TicketPrefix, issue.ID, agentName)
+				if err := d.sendKeys(sess, holdMsg); err != nil {
+					d.logger.Printf("error signaling %s for on_hold ticket %d: %v", agentName, issue.ID, err)
+				}
+			}
+			if err := d.agents.ClearCurrentIssue(agentName); err != nil {
+				d.logger.Printf("error clearing current_issue for %s (ticket %d): %v", agentName, issue.ID, err)
+			}
+			if err := d.issues.ClearAssignee(issue.ID); err != nil {
+				d.logger.Printf("error clearing assignee for ticket %d: %v", issue.ID, err)
+			}
+		}
+
 		reason := fmt.Sprintf("escalated: bounced %d times (threshold %d) — human review required",
 			issue.RepairCycleCount, d.repairCycleThreshold)
 		if err := d.issues.SetRepairReason(issue.ID, reason); err != nil {
@@ -1071,6 +1093,47 @@ func (d *Daemon) handleRepairCycleEscalation() {
 
 		if d.obs != nil {
 			d.obs.repairCycleEscalations++
+		}
+	}
+}
+
+// handleStaleAssignments is a periodic reconciler that clears assignee and
+// current_issue on tickets that have reached a terminal or human-attention
+// state (closed, on_hold) but still carry an assignee. This catches tickets
+// that bypassed the in-process handlers (direct SQL close, race conditions,
+// or older bugs from before these handlers existed).
+func (d *Daemon) handleStaleAssignments() {
+	tickets, err := d.issues.ListAssignedInStatuses(repo.StatusClosed, repo.StatusOnHold)
+	if err != nil {
+		d.logger.Printf("error listing stale-assigned tickets: %v", err)
+		return
+	}
+
+	for _, ticket := range tickets {
+		if !ticket.Assignee.Valid || ticket.Assignee.String == "" {
+			continue
+		}
+		agentName := ticket.Assignee.String
+
+		// Only clear the agent's current_issue if it still points at this ticket
+		// (the agent may already have been reassigned to a different ticket).
+		agent, err := d.agents.Get(agentName)
+		if err == nil && agent.CurrentIssue.Valid && agent.CurrentIssue.Int64 == int64(ticket.ID) {
+			if err := d.agents.ClearCurrentIssue(agentName); err != nil {
+				d.logger.Printf("stale-assignment reconciler: error clearing current_issue for %s (ticket %d): %v",
+					agentName, ticket.ID, err)
+			} else {
+				d.logger.Printf("stale-assignment reconciler: cleared current_issue for %s (ticket %d status=%s)",
+					agentName, ticket.ID, ticket.Status)
+			}
+		}
+
+		if err := d.issues.ClearAssignee(ticket.ID); err != nil {
+			d.logger.Printf("stale-assignment reconciler: error clearing assignee for ticket %d: %v",
+				ticket.ID, err)
+		} else {
+			d.logger.Printf("stale-assignment reconciler: cleared assignee %q from ticket %d (status=%s)",
+				agentName, ticket.ID, ticket.Status)
 		}
 	}
 }

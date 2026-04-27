@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/agentworktree"
@@ -189,6 +190,42 @@ func TestEnsure_CopiesPreCommitHook(t *testing.T) {
 	}
 	if info.Mode()&0111 == 0 {
 		t.Errorf("pre-commit hook at %s is not executable (mode %v)", hookDst, info.Mode())
+	}
+}
+
+func TestEnsure_NoMainBranch_ActionableError(t *testing.T) {
+	root := t.TempDir()
+
+	// Create a bare remote with no commits (no main branch).
+	remoteDir := filepath.Join(root, "remote.git")
+	runGit(t, root, "init", "--bare", remoteDir)
+
+	// Clone to produce a project repo with origin configured but no main branch.
+	projectDir := filepath.Join(root, "project")
+	runGit(t, root, "clone", remoteDir, projectDir)
+
+	// Create .company_town so config root detection works.
+	ctDir := filepath.Join(projectDir, ".company_town")
+	if err := os.MkdirAll(ctDir, 0750); err != nil {
+		t.Fatalf("creating .company_town: %v", err)
+	}
+
+	cfg := &config.Config{ProjectRoot: projectDir}
+
+	agentDir := filepath.Join(projectDir, ".company_town", "agents", "architect")
+	if err := os.MkdirAll(agentDir, 0750); err != nil {
+		t.Fatalf("creating agentDir: %v", err)
+	}
+
+	_, err := agentworktree.Ensure(cfg, agentDir)
+	if err == nil {
+		t.Fatal("expected error when remote has no main branch, got nil")
+	}
+	if !strings.Contains(err.Error(), "no 'main' branch") {
+		t.Errorf("error should mention \"no 'main' branch\": %v", err)
+	}
+	if !strings.Contains(err.Error(), "git commit --allow-empty") {
+		t.Errorf("error should include the bootstrap one-liner: %v", err)
 	}
 }
 

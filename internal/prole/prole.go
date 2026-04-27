@@ -156,10 +156,15 @@ func EnsureBareRepo(cfg *config.Config) error {
 		return cmd.Run()
 	}
 
+	// Distinguish the two failure cases before calling git so the error is actionable.
+	if _, statErr := os.Stat(filepath.Join(cfg.ProjectRoot, ".git")); os.IsNotExist(statErr) {
+		return fmt.Errorf("%s is not a git repository — run 'git init' and add an 'origin' remote pointing at %s, then retry", cfg.ProjectRoot, cfg.Repo)
+	}
+
 	// Get the real remote URL from the project repo
 	originURL, err := getOriginURL(cfg.ProjectRoot)
 	if err != nil || originURL == "" {
-		return fmt.Errorf("could not determine origin URL: %w", err)
+		return fmt.Errorf("git repository has no 'origin' remote — run 'git remote add origin <url>' and retry: %w", err)
 	}
 
 	// Clone bare directly from the remote, then set up fetch refspec
@@ -565,6 +570,10 @@ func SwitchToBranch(wtPath, barePath, branch string) error {
 // incarnation), it is reset to origin/main before the worktree is created.
 // This makes prole creation idempotent with respect to stale standby branches.
 func addWorktreeForProle(barePath, branch, wtPath string) error {
+	if err := EnsureOriginMain(barePath); err != nil {
+		return err
+	}
+
 	// Detect whether the standby branch already exists.
 	checkCmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	checkCmd.Dir = barePath
@@ -592,6 +601,17 @@ func addWorktreeForProle(barePath, branch, wtPath string) error {
 	addCmd.Stdout = os.Stdout
 	addCmd.Stderr = os.Stderr
 	return addCmd.Run()
+}
+
+// EnsureOriginMain checks whether origin/main resolves in the bare repo and
+// returns an actionable error if it does not.
+func EnsureOriginMain(barePath string) error {
+	cmd := exec.Command("git", "rev-parse", "--verify", "origin/main")
+	cmd.Dir = barePath
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("remote 'origin' has no 'main' branch yet — create an initial commit and push it:\n  git commit --allow-empty -m \"initial commit\" && git push -u origin main\nthen retry 'ct start'")
+	}
+	return nil
 }
 
 func getOriginURL(projectRoot string) (string, error) {
