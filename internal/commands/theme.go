@@ -77,6 +77,7 @@ func DefaultTheme() StyleTheme {
 			repo.StatusOnHold:        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
 			repo.StatusMergeConflict: lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution
 			repo.StatusClosed:        lipgloss.NewStyle().Foreground(lipgloss.Color("242")), // medium gray
+			repo.StatusCancelled:     lipgloss.NewStyle().Foreground(lipgloss.Color("240")), // dark gray — abandoned, never landed
 		},
 	}
 }

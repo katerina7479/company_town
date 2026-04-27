@@ -1127,6 +1127,22 @@ func TestRenderTicketDetails_depthAffectsIndentation(t *testing.T) {
 	}
 }
 
+func TestRenderTicketDetails_fullTitleAlwaysShown(t *testing.T) {
+	longTitle := "This is an extremely long ticket title that would definitely be truncated in the ticket row"
+	issue := &repo.Issue{
+		ID:     99,
+		Title:  longTitle,
+		Status: "open",
+	}
+	node := &repo.IssueNode{Issue: issue}
+
+	out := blankModel().renderTicketDetails(node, 0, 80)
+
+	if !containsAll(out, "title:", longTitle) {
+		t.Errorf("expected full title in expanded details, got:\n%s", out)
+	}
+}
+
 // --- wordWrap tests (NC-10) ---
 
 func TestWordWrap_zeroWidthReturnsUnchanged(t *testing.T) {

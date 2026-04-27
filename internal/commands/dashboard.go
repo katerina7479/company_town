@@ -760,9 +760,9 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		Render(inner)
 }
 
-// filterStaleClosedNodes returns a copy of the tree with closed tickets
-// older than cutoff removed. Non-closed nodes are always kept; parent nodes
-// are kept if they have any surviving children.
+// filterStaleClosedNodes returns a copy of the tree with terminal (closed or
+// cancelled) tickets older than cutoff removed. Non-terminal nodes are always
+// kept; parent nodes are kept if they have any surviving children.
 func filterStaleClosedNodes(roots []*repo.IssueNode, cutoff time.Time) []*repo.IssueNode {
 	var result []*repo.IssueNode
 	for _, root := range roots {
@@ -781,7 +781,7 @@ func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
 		}
 	}
 
-	isStale := node.Status == repo.StatusClosed && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
+	isStale := repo.IsTerminalStatus(node.Status) && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
 	if isStale && len(children) == 0 {
 		return nil
 	}
@@ -850,6 +850,8 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 func (m dashboardModel) renderTicketDetails(node *repo.IssueNode, depth int, width int) string {
 	var sb strings.Builder
 	detailIndent := strings.Repeat("  ", depth+1)
+
+	fmt.Fprintf(&sb, "%s  title: %s\n", detailIndent, m.theme.Footer.Render(node.Title))
 
 	if node.Description.Valid && node.Description.String != "" {
 		wrapped := wordWrap(node.Description.String, width-len(detailIndent)-4)

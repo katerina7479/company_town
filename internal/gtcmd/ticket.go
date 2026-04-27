@@ -390,14 +390,14 @@ func ticketStatus(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string)
 
 	status := args[1]
 
-	// Prevent cancelling a ticket that is already closed — no work to undo.
+	// Prevent cancelling a ticket that is already terminal — no work to undo.
 	if status == repo.StatusCancelled {
 		issue, err := issues.Get(id)
 		if err != nil {
 			return err
 		}
-		if issue.Status == repo.StatusClosed {
-			return fmt.Errorf("ticket %d is already closed and cannot be cancelled", id)
+		if repo.IsTerminalStatus(issue.Status) {
+			return fmt.Errorf("ticket %d is already %s and cannot be cancelled", id, issue.Status)
 		}
 	}
 
