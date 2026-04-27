@@ -760,7 +760,7 @@ func (d *Daemon) handleEpicAutoClose() {
 		d.obs.epics = len(epics)
 	}
 	for _, epic := range epics {
-		d.logger.Printf("auto-closing epic %s-%d (%s): all sub-tasks closed",
+		d.logger.Printf("auto-closing epic %s-%d (%s): all sub-tasks resolved (closed or cancelled)",
 			d.cfg.TicketPrefix, epic.ID, epic.Title)
 
 		if err := d.issues.UpdateStatus(epic.ID, repo.StatusClosed); err != nil {
@@ -1220,8 +1220,9 @@ func (d *Daemon) handleDeadSessions() {
 
 // handleCancelledTickets picks up tickets in the `cancelled` status and runs
 // full cleanup: signal the assigned prole, close the PR, delete the remote
-// branch, clear ticket fields, and move the ticket to `closed`. Each step is
-// non-fatal — errors are logged and cleanup continues.
+// branch, and clear ticket fields. Cancelled is terminal — tickets stay in
+// cancelled after cleanup. Each step is non-fatal; errors are logged and
+// cleanup continues.
 func (d *Daemon) handleCancelledTickets() {
 	tickets, err := d.issues.List(repo.StatusCancelled)
 	if err != nil {
@@ -1235,6 +1236,14 @@ func (d *Daemon) handleCancelledTickets() {
 
 func (d *Daemon) cleanupCancelledTicket(ticket repo.Issue) {
 	prefix := fmt.Sprintf("[cancel %s-%d]", d.cfg.TicketPrefix, ticket.ID)
+
+	// Skip already-cleaned tickets: all three cleanup fields cleared means
+	// prior cleanup ran to completion — nothing to do this cycle.
+	if (!ticket.Assignee.Valid || ticket.Assignee.String == "") &&
+		(!ticket.Branch.Valid || ticket.Branch.String == "") &&
+		!ticket.PRNumber.Valid {
+		return
+	}
 
 	// 1. Signal the assigned prole to stop and clear its current_issue.
 	if ticket.Assignee.Valid && ticket.Assignee.String != "" {
@@ -1286,12 +1295,7 @@ func (d *Daemon) cleanupCancelledTicket(ticket repo.Issue) {
 		}
 	}
 
-	// 5. Move to closed — cancelled is a transient cleanup state; closed is terminal.
-	if err := d.issues.UpdateStatus(ticket.ID, repo.StatusClosed); err != nil {
-		d.logger.Printf("%s error moving to closed: %v", prefix, err)
-	} else {
-		d.logger.Printf("%s cleanup complete, ticket closed", prefix)
-	}
+	d.logger.Printf("%s cleanup complete, ticket remains cancelled", prefix)
 }
 
 // handleDraftTickets prompts the Architect to pick up draft tickets.
