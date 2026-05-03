@@ -35,67 +35,61 @@ func makeNode(status string, closedAt *time.Time, children ...*repo.IssueNode) *
 	return &repo.IssueNode{Issue: issue, Children: children}
 }
 
-func TestFilterNode(t *testing.T) {
-	now := time.Now()
-	cutoff := now.Add(-4 * time.Hour)
-	staleTime := now.Add(-5 * time.Hour) // before cutoff → stale
-	freshTime := now.Add(-1 * time.Hour) // after cutoff → not stale
-
-	t.Run("stale leaf is removed", func(t *testing.T) {
-		node := makeNode("closed", &staleTime)
-		if got := filterNode(node, cutoff); got != nil {
-			t.Errorf("expected nil for stale leaf, got %+v", got)
+func TestFilterTerminalNode(t *testing.T) {
+	t.Run("closed leaf is removed", func(t *testing.T) {
+		node := makeNode("closed", nil)
+		if got := filterTerminalNode(node); got != nil {
+			t.Errorf("expected nil for closed leaf, got %+v", got)
 		}
 	})
 
-	t.Run("non-stale leaf is kept", func(t *testing.T) {
+	t.Run("cancelled leaf is removed", func(t *testing.T) {
+		node := makeNode("cancelled", nil)
+		if got := filterTerminalNode(node); got != nil {
+			t.Errorf("expected nil for cancelled leaf, got %+v", got)
+		}
+	})
+
+	t.Run("open leaf is kept", func(t *testing.T) {
 		node := makeNode("open", nil)
-		got := filterNode(node, cutoff)
+		got := filterTerminalNode(node)
 		if got == nil {
-			t.Fatal("expected non-nil for non-stale leaf")
+			t.Fatal("expected non-nil for open leaf")
 		}
 		if len(got.Children) != 0 {
 			t.Errorf("expected no children, got %d", len(got.Children))
 		}
 	})
 
-	t.Run("recently closed leaf is kept", func(t *testing.T) {
-		node := makeNode("closed", &freshTime)
-		got := filterNode(node, cutoff)
-		if got == nil {
-			t.Fatal("expected non-nil for recently closed leaf")
-		}
-	})
-
-	t.Run("stale node with live child is kept", func(t *testing.T) {
+	t.Run("closed node with open child is kept", func(t *testing.T) {
 		child := makeNode("open", nil)
-		parent := makeNode("closed", &staleTime, child)
-		got := filterNode(parent, cutoff)
+		parent := makeNode("closed", nil, child)
+		got := filterTerminalNode(parent)
 		if got == nil {
-			t.Fatal("expected stale parent with live child to be kept")
+			t.Fatal("expected closed parent with open child to be kept")
 		}
 		if len(got.Children) != 1 {
 			t.Errorf("expected 1 surviving child, got %d", len(got.Children))
 		}
 	})
 
-	t.Run("non-stale node with stale child has child removed", func(t *testing.T) {
-		staleChild := makeNode("closed", &staleTime)
-		parent := makeNode("open", nil, staleChild)
-		got := filterNode(parent, cutoff)
+	t.Run("open node with closed child removes child", func(t *testing.T) {
+		closedChild := makeNode("closed", nil)
+		parent := makeNode("open", nil, closedChild)
+		got := filterTerminalNode(parent)
 		if got == nil {
-			t.Fatal("expected non-stale parent to be kept")
+			t.Fatal("expected open parent to be kept")
 		}
 		if len(got.Children) != 0 {
-			t.Errorf("expected stale child removed, got %d children", len(got.Children))
+			t.Errorf("expected closed child removed, got %d children", len(got.Children))
 		}
 	})
 
 	t.Run("original node is not mutated", func(t *testing.T) {
-		staleChild := makeNode("closed", &staleTime)
-		liveChild := makeNode("open", nil)
-		parent := makeNode("open", nil, staleChild, liveChild)
-		_ = filterNode(parent, cutoff)
+		closedChild := makeNode("closed", nil)
+		openChild := makeNode("open", nil)
+		parent := makeNode("open", nil, closedChild, openChild)
+		_ = filterTerminalNode(parent)
 		if len(parent.Children) != 2 {
 			t.Errorf("original node mutated: expected 2 children, got %d", len(parent.Children))
 		}
@@ -161,36 +155,32 @@ func TestFlattenTree(t *testing.T) {
 	})
 }
 
-func TestFilterStaleClosedNodes(t *testing.T) {
-	now := time.Now()
-	cutoff := now.Add(-4 * time.Hour)
-	staleTime := now.Add(-5 * time.Hour)
-
+func TestFilterTerminalNodes(t *testing.T) {
 	t.Run("empty input returns nil", func(t *testing.T) {
-		result := filterStaleClosedNodes(nil, cutoff)
+		result := filterTerminalNodes(nil)
 		if result != nil {
 			t.Errorf("expected nil for empty input, got %v", result)
 		}
 	})
 
-	t.Run("all stale roots removed", func(t *testing.T) {
+	t.Run("all terminal roots removed", func(t *testing.T) {
 		roots := []*repo.IssueNode{
-			makeNode("closed", &staleTime),
-			makeNode("closed", &staleTime),
+			makeNode("closed", nil),
+			makeNode("cancelled", nil),
 		}
-		result := filterStaleClosedNodes(roots, cutoff)
+		result := filterTerminalNodes(roots)
 		if len(result) != 0 {
-			t.Errorf("expected 0 roots after filtering all stale, got %d", len(result))
+			t.Errorf("expected 0 roots after filtering all terminal, got %d", len(result))
 		}
 	})
 
-	t.Run("live roots kept, stale roots removed", func(t *testing.T) {
+	t.Run("live roots kept, terminal roots removed", func(t *testing.T) {
 		roots := []*repo.IssueNode{
 			makeNode("open", nil),
-			makeNode("closed", &staleTime),
+			makeNode("closed", nil),
 			makeNode("in_progress", nil),
 		}
-		result := filterStaleClosedNodes(roots, cutoff)
+		result := filterTerminalNodes(roots)
 		if len(result) != 2 {
 			t.Errorf("expected 2 roots, got %d", len(result))
 		}
@@ -856,9 +846,9 @@ func TestShowClosed_toggleOnF(t *testing.T) {
 	}
 }
 
-func TestShowClosed_zeroTimeCutoffIncludesAll(t *testing.T) {
-	// With showClosed=true, flatTickets uses a zero-time cutoff so all closed
-	// nodes are kept regardless of age.
+func TestShowClosed_strictToggle(t *testing.T) {
+	// f is now a strict binary toggle: off=hide all terminal tickets regardless
+	// of age, on=show everything.
 	m, _ := newTestModel(t,
 		func(string) error { return nil },
 		func(string) bool { return false },
@@ -866,18 +856,20 @@ func TestShowClosed_zeroTimeCutoffIncludesAll(t *testing.T) {
 		func(string, string) error { return nil },
 	)
 
-	staleTime := time.Now().Add(-48 * time.Hour)
-	staleNode := makeNode("closed", &staleTime)
-	m.data.roots = []*repo.IssueNode{staleNode}
+	// A ticket closed just seconds ago — old 4h cutoff would have kept it.
+	justNow := time.Now()
+	closedNode := makeNode("closed", &justNow)
+	cancelledNode := makeNode("cancelled", &justNow)
+	m.data.roots = []*repo.IssueNode{closedNode, cancelledNode}
 
 	m.showClosed = false
 	if len(m.flatTickets()) != 0 {
-		t.Errorf("expected stale closed node hidden when showClosed=false")
+		t.Errorf("expected terminal tickets hidden when showClosed=false, got %d", len(m.flatTickets()))
 	}
 
 	m.showClosed = true
-	if len(m.flatTickets()) != 1 {
-		t.Errorf("expected stale closed node shown when showClosed=true")
+	if len(m.flatTickets()) != 2 {
+		t.Errorf("expected terminal tickets shown when showClosed=true, got %d", len(m.flatTickets()))
 	}
 }
 
@@ -3196,6 +3188,135 @@ func TestDashboard_treeRowsRespectShowClosed(t *testing.T) {
 	rows = m.flatTreeRows()
 	if len(rows) != 2 {
 		t.Errorf("expected 2 rows with showClosed=true, got %d", len(rows))
+	}
+}
+
+// --- nc-280: strict f-toggle filter tests ---
+
+func refreshListRows(t *testing.T, m *dashboardModel) {
+	t.Helper()
+	msg := m.fetch().(dataMsg)
+	m.data = dashboardData(msg)
+}
+
+func TestFlatListRows_showClosedFalse_hidesTerminalTickets(t *testing.T) {
+	m := newTestDashboardModel(t)
+	_ = insertIssue(t, m, "open task", nil)
+	closedID := insertClosedIssue(t, m, "closed task", nil)
+	cancelledID, _ := m.issues.Create("cancelled task", "task", nil, nil, nil)
+	m.issues.UpdateStatus(cancelledID, repo.StatusOpen)      //nolint:errcheck
+	m.issues.UpdateStatus(cancelledID, repo.StatusCancelled) //nolint:errcheck
+	refreshListRows(t, m)
+
+	m.treeMode = false
+	m.showClosed = false
+	rows := m.flatListRows()
+
+	for _, r := range rows {
+		if r.node.ID == closedID {
+			t.Errorf("closed ticket should be hidden when showClosed=false")
+		}
+		if r.node.ID == cancelledID {
+			t.Errorf("cancelled ticket should be hidden when showClosed=false")
+		}
+	}
+}
+
+func TestFlatListRows_showClosedTrue_showsTerminalTickets(t *testing.T) {
+	m := newTestDashboardModel(t)
+	_ = insertIssue(t, m, "open task", nil)
+	closedID := insertClosedIssue(t, m, "closed task", nil)
+	refreshListRows(t, m)
+
+	m.treeMode = false
+	m.showClosed = true
+	rows := m.flatListRows()
+
+	found := false
+	for _, r := range rows {
+		if r.node.ID == closedID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("closed ticket should be visible when showClosed=true")
+	}
+}
+
+func TestFlatTreeRows_showClosedFalse_hidesCancelledTickets(t *testing.T) {
+	m := newTestDashboardModel(t)
+	_ = insertIssue(t, m, "open task", nil)
+	cancelledID, _ := m.issues.Create("cancelled task", "task", nil, nil, nil)
+	m.issues.UpdateStatus(cancelledID, repo.StatusOpen)      //nolint:errcheck
+	m.issues.UpdateStatus(cancelledID, repo.StatusCancelled) //nolint:errcheck
+
+	m.treeMode = true
+	m.showClosed = false
+	rows := m.flatTreeRows()
+
+	for _, r := range rows {
+		if r.node.ID == cancelledID {
+			t.Errorf("cancelled ticket should be hidden in tree mode when showClosed=false")
+		}
+	}
+}
+
+func TestFlatTreeRows_showClosedTrue_showsCancelledTickets(t *testing.T) {
+	m := newTestDashboardModel(t)
+	cancelledID, _ := m.issues.Create("cancelled task", "task", nil, nil, nil)
+	m.issues.UpdateStatus(cancelledID, repo.StatusOpen)      //nolint:errcheck
+	m.issues.UpdateStatus(cancelledID, repo.StatusCancelled) //nolint:errcheck
+
+	m.treeMode = true
+	m.showClosed = true
+	rows := m.flatTreeRows()
+
+	found := false
+	for _, r := range rows {
+		if r.node.ID == cancelledID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("cancelled ticket should be visible in tree mode when showClosed=true")
+	}
+}
+
+func TestFlatListRows_openParentWithMixedChildren_closedChildHidden(t *testing.T) {
+	m := newTestDashboardModel(t)
+	parentID := insertIssue(t, m, "parent epic", nil)
+	closedChildID := insertClosedIssue(t, m, "closed child", &parentID)
+	openChildID := insertIssue(t, m, "open child", &parentID)
+	refreshListRows(t, m)
+
+	m.treeMode = false
+	m.showClosed = false
+	rows := m.flatListRows()
+
+	var ids []int
+	for _, r := range rows {
+		ids = append(ids, r.node.ID)
+	}
+
+	foundParent, foundOpen, foundClosed := false, false, false
+	for _, id := range ids {
+		switch id {
+		case parentID:
+			foundParent = true
+		case openChildID:
+			foundOpen = true
+		case closedChildID:
+			foundClosed = true
+		}
+	}
+	if !foundParent {
+		t.Errorf("open parent should be visible; ids=%v", ids)
+	}
+	if !foundOpen {
+		t.Errorf("open child should be visible; ids=%v", ids)
+	}
+	if foundClosed {
+		t.Errorf("closed child should be hidden; ids=%v", ids)
 	}
 }
 
