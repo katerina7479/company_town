@@ -666,14 +666,10 @@ func (m dashboardModel) flatTickets() []flatTicketRow {
 
 // flatListRows is the original flatTickets logic for non-tree mode.
 func (m dashboardModel) flatListRows() []flatTicketRow {
-	var cutoff time.Time
 	if m.showClosed {
-		cutoff = time.Time{}
-	} else {
-		cutoff = time.Now().Add(-4 * time.Hour)
+		return flattenTree(m.data.roots, 0)
 	}
-	filtered := filterStaleClosedNodes(m.data.roots, cutoff)
-	return flattenTree(filtered, 0)
+	return flattenTree(filterTerminalNodes(m.data.roots), 0)
 }
 
 // flatTreeRows returns a depth-first walk of the full hierarchy with depth and blockedBy populated.
@@ -685,7 +681,7 @@ func (m dashboardModel) flatTreeRows() []flatTicketRow {
 	var out []flatTicketRow
 	var walk func(node *repo.IssueNode, depth int)
 	walk = func(node *repo.IssueNode, depth int) {
-		if !m.showClosed && node.Status == repo.StatusClosed {
+		if !m.showClosed && repo.IsTerminalStatus(node.Status) {
 			return
 		}
 		out = append(out, flatTicketRow{
@@ -914,32 +910,29 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		Render(inner)
 }
 
-// filterStaleClosedNodes returns a copy of the tree with terminal (closed or
-// cancelled) tickets older than cutoff removed. Non-terminal nodes are always
-// kept; parent nodes are kept if they have any surviving children.
-func filterStaleClosedNodes(roots []*repo.IssueNode, cutoff time.Time) []*repo.IssueNode {
+// filterTerminalNodes returns a copy of the tree with terminal-status (closed or
+// cancelled) nodes removed. Non-terminal nodes are always kept; parent nodes are
+// kept if they have any surviving non-terminal children.
+func filterTerminalNodes(roots []*repo.IssueNode) []*repo.IssueNode {
 	var result []*repo.IssueNode
 	for _, root := range roots {
-		if filtered := filterNode(root, cutoff); filtered != nil {
+		if filtered := filterTerminalNode(root); filtered != nil {
 			result = append(result, filtered)
 		}
 	}
 	return result
 }
 
-func filterNode(node *repo.IssueNode, cutoff time.Time) *repo.IssueNode {
+func filterTerminalNode(node *repo.IssueNode) *repo.IssueNode {
 	var children []*repo.IssueNode
 	for _, child := range node.Children {
-		if filtered := filterNode(child, cutoff); filtered != nil {
+		if filtered := filterTerminalNode(child); filtered != nil {
 			children = append(children, filtered)
 		}
 	}
-
-	isStale := repo.IsTerminalStatus(node.Status) && node.ClosedAt.Valid && node.ClosedAt.Time.Before(cutoff)
-	if isStale && len(children) == 0 {
+	if repo.IsTerminalStatus(node.Status) && len(children) == 0 {
 		return nil
 	}
-
 	clone := *node
 	clone.Children = children
 	return &clone
