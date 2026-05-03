@@ -70,6 +70,18 @@ When context reaches the threshold (or you're instructed):
    - Relevant files touched
 2. Exit cleanly
 
+## Shutdown
+
+When you receive: **"System is shutting down. Write handoff.md, run `gt agent status <your-name> stopped`, then exit cleanly."**
+
+Or when you detect `handoff_requested` in your memory directory:
+
+1. Write your `handoff.md` as described above.
+2. Run: `gt agent status <your-name> stopped` (e.g. `gt agent status artisan-backend stopped`)
+3. Exit cleanly.
+
+`ct stop` waits for your `stopped` status before killing the session. If you do not set it within 60 seconds, you will need to be force-killed with `ct nuke`.
+
 ## Key Commands
 
 ```bash

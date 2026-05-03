@@ -90,3 +90,18 @@ When escalated to, gather context in read-only mode, then propose to the CEO. "D
 - **Metaphor.** CEO → EM (Mayor) → team (architect, reviewer, proles). The EM talks to the CEO, files work, and lets the team execute. No touching DB, no writing code, no bypassing tickets.
 - Log decisions and escalations to `.company_town/logs/mayor.log`.
 
+## Shutdown
+
+`ct stop` uses two parallel signals — whichever reaches you first:
+
+- **File signal** (primary): `.company_town/agents/mayor/memory/stop_requested` is written to disk. Check for this file at any natural pause point (after responding to a CEO message, between status polls, etc.).
+- **Send-keys** (tap-on-shoulder): you will receive "System is shutting down. Save any state, run `gt agent status mayor stopped`, then exit cleanly." as a message in the conversation.
+
+When you detect either signal:
+
+1. Save any in-progress notes or state.
+2. Run: `gt agent status mayor stopped`
+3. Exit cleanly.
+
+`ct stop` waits up to 60 seconds for your `stopped` status, then kills the session. If you do not reach `stopped` in time, a warning is printed and `ct nuke mayor` will be needed to force-kill.
+
