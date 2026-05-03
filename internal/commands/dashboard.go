@@ -88,10 +88,11 @@ type spawnAttachResultMsg struct {
 	err         error
 }
 
-// flatNode is an issue node with its render depth, used for cursor navigation.
-type flatNode struct {
-	node  *repo.IssueNode
-	depth int
+// flatTicketRow is an issue node with its render depth and dependency markers.
+type flatTicketRow struct {
+	node      *repo.IssueNode
+	depth     int
+	blockedBy []int // unclosed dep IDs: own deps + ancestor deps (populated in tree mode)
 }
 
 // dashboardModel is the bubbletea model for the dashboard.
@@ -127,6 +128,9 @@ type dashboardModel struct {
 
 	// showClosed controls whether closed tickets are shown regardless of age.
 	showClosed bool
+
+	// treeMode renders tickets as a depth-first hierarchy instead of a flat list.
+	treeMode bool
 
 	// Input mode — active when the user is typing a message (e.g. for nudge,
 	// ticket creation, or status change).
@@ -430,6 +434,16 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f":
 			m.showClosed = !m.showClosed
 
+		case "t":
+			m.treeMode = !m.treeMode
+			flat := m.flatTickets()
+			if m.ticketCursor >= len(flat) {
+				m.ticketCursor = len(flat) - 1
+				if m.ticketCursor < 0 {
+					m.ticketCursor = 0
+				}
+			}
+
 		case "u":
 			if m.focusedPanel == 1 {
 				flat := m.flatTickets()
@@ -641,10 +655,20 @@ func (m dashboardModel) unassignCmd(ticketID int, agentName string) tea.Cmd {
 }
 
 // flatTickets returns the flat ordered list of visible ticket nodes (same order as rendered).
-func (m dashboardModel) flatTickets() []flatNode {
+// In list mode the rows are depth-first filtered nodes; in tree mode they are a depth-first
+// walk of ListHierarchy with blockedBy populated.
+func (m dashboardModel) flatTickets() []flatTicketRow {
+	if m.treeMode {
+		return m.flatTreeRows()
+	}
+	return m.flatListRows()
+}
+
+// flatListRows is the original flatTickets logic for non-tree mode.
+func (m dashboardModel) flatListRows() []flatTicketRow {
 	var cutoff time.Time
 	if m.showClosed {
-		cutoff = time.Time{} // zero value is before any real timestamp — keeps all nodes
+		cutoff = time.Time{}
 	} else {
 		cutoff = time.Now().Add(-4 * time.Hour)
 	}
@@ -652,14 +676,71 @@ func (m dashboardModel) flatTickets() []flatNode {
 	return flattenTree(filtered, 0)
 }
 
+// flatTreeRows returns a depth-first walk of the full hierarchy with depth and blockedBy populated.
+func (m dashboardModel) flatTreeRows() []flatTicketRow {
+	roots, err := m.issues.ListHierarchy()
+	if err != nil {
+		return nil
+	}
+	var out []flatTicketRow
+	var walk func(node *repo.IssueNode, depth int)
+	walk = func(node *repo.IssueNode, depth int) {
+		if !m.showClosed && node.Status == repo.StatusClosed {
+			return
+		}
+		out = append(out, flatTicketRow{
+			node:      node,
+			depth:     depth,
+			blockedBy: m.unclosedAncestorDeps(node.ID),
+		})
+		for _, c := range node.Children {
+			walk(c, depth+1)
+		}
+	}
+	for _, r := range roots {
+		walk(r, 0)
+	}
+	return out
+}
+
+// unclosedAncestorDeps returns the IDs of unclosed dependencies of the given
+// issue and any of its ancestors. Used for the [blocked by:] marker in tree mode.
+func (m dashboardModel) unclosedAncestorDeps(id int) []int {
+	ancestors, _ := m.issues.ListAncestors(id)
+	chain := append([]int{id}, ancestors...)
+	var out []int
+	for _, nodeID := range chain {
+		deps, _ := m.issues.ListDependencies(nodeID)
+		for _, d := range deps {
+			if d.DependsOnStatus != repo.StatusClosed {
+				out = append(out, d.DependsOnID)
+			}
+		}
+	}
+	return out
+}
+
 // flattenTree recursively flattens a tree of issue nodes into a depth-annotated slice.
-func flattenTree(nodes []*repo.IssueNode, depth int) []flatNode {
-	var result []flatNode
+func flattenTree(nodes []*repo.IssueNode, depth int) []flatTicketRow {
+	var result []flatTicketRow
 	for _, n := range nodes {
-		result = append(result, flatNode{n, depth})
+		result = append(result, flatTicketRow{node: n, depth: depth})
 		result = append(result, flattenTree(n.Children, depth+1)...)
 	}
 	return result
+}
+
+// renderTreePrefix returns the box-drawing prefix for a tree row at the given depth.
+func renderTreePrefix(depth int) string {
+	if depth == 0 {
+		return ""
+	}
+	parts := make([]string, depth)
+	for i := range depth - 1 {
+		parts[i] = "│  "
+	}
+	parts[depth-1] = "└─ "
+	return strings.Join(parts, "")
 }
 
 func (m dashboardModel) View() string {
@@ -708,7 +789,11 @@ func (m dashboardModel) View() string {
 			if m.showClosed {
 				filterFlag = "*"
 			}
-			hint += fmt.Sprintf("  enter expand  o open PR  c change status  e edit reason  u unassign  C new ticket  f[%s]filter closed", filterFlag)
+			treeFlag := " "
+			if m.treeMode {
+				treeFlag = "*"
+			}
+			hint += fmt.Sprintf("  enter expand  o open PR  c change status  e edit reason  u unassign  C new ticket  f[%s]filter closed  t[%s]tree", filterFlag, treeFlag)
 		}
 		hint += fmt.Sprintf("  (auto-refresh every %s)", refreshInterval)
 		if m.statusMsg != "" {
@@ -802,7 +887,12 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		sb.WriteString(m.theme.Footer.Render("(no tickets)"))
 	} else {
 		for i, fn := range flat {
-			line := m.renderIssueRow(fn.node, fn.depth, innerWidth)
+			var line string
+			if m.treeMode {
+				line = m.renderTreeRow(fn, innerWidth)
+			} else {
+				line = m.renderIssueRow(fn.node, fn.depth, innerWidth)
+			}
 			if focused && i == m.ticketCursor {
 				line = m.theme.Selected.Width(rowWidth).Render(line)
 			}
@@ -907,6 +997,27 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 	return fmt.Sprintf("%s %s %s %s %s %s %s %s %s",
 		prefix, typ, idStr, coloredStatus, pri, prStr, assigneeRaw, age, title,
 	)
+}
+
+// renderTreeRow renders a ticket row in tree mode: box-drawing prefix + id/title/status/assignee + blocked-by markers.
+func (m dashboardModel) renderTreeRow(row flatTicketRow, width int) string {
+	node := row.node
+	prefix := renderTreePrefix(row.depth)
+	idStr := fmt.Sprintf("%s-%d", m.ticketPrefix, node.ID)
+	coloredStatus := m.theme.ColorStatus(node.Status)
+	line := fmt.Sprintf("%s%s %s [%s]", prefix, idStr, node.Title, coloredStatus)
+	if node.Assignee.Valid && node.Assignee.String != "" {
+		line += fmt.Sprintf(" (%s)", node.Assignee.String)
+	}
+	if len(row.blockedBy) > 0 {
+		var ids []string
+		for _, id := range row.blockedBy {
+			ids = append(ids, fmt.Sprintf("%s-%d", m.ticketPrefix, id))
+		}
+		line += fmt.Sprintf(" [blocked by: %s]", strings.Join(ids, ", "))
+	}
+	_ = width // future: truncate title if needed
+	return line
 }
 
 // renderTicketDetails renders the expanded detail lines for a ticket.
