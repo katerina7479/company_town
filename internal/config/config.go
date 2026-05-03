@@ -100,6 +100,7 @@ type Config struct {
 	ReviewerFollowUpIntervalSeconds int           `json:"reviewer_follow_up_interval_seconds"`
 	ReviewerFollowUpNReviews        int           `json:"reviewer_follow_up_n_reviews"`
 	CIRunningStuckThresholdSeconds  int           `json:"ci_running_stuck_threshold_seconds"`
+	MemoryNudgeIntervalSeconds      int           `json:"memory_nudge_interval_seconds"`
 	TDD                             bool          `json:"tdd"`
 	Language                        string        `json:"language"` // "go", "python", "" (agnostic)
 	Quality                         QualityConfig `json:"quality"`
@@ -297,6 +298,7 @@ func DefaultConfig(projectRoot, platform, repo string) *Config {
 		ReviewerFollowUpIntervalSeconds: 1800,
 		ReviewerFollowUpNReviews:        5,
 		CIRunningStuckThresholdSeconds:  1800,
+		MemoryNudgeIntervalSeconds:      3600,
 		Quality: QualityConfig{
 			Enabled:                 true,
 			BaselineIntervalSeconds: 3600,
