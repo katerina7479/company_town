@@ -109,6 +109,10 @@ type Daemon struct {
 	reviewsSinceFollowUp int
 	lastFollowUpNudge    time.Time
 
+	// Memory checkpoint nudge for long-lived agents
+	memoryNudgeInterval time.Duration
+	lastMemoryNudge     map[string]time.Time
+
 	// vcsProvider is the VCS platform adapter used by default implementations.
 	// Struct fields below (prCloseFn, etc.) override it in tests.
 	vcsProvider vcs.Provider
@@ -201,10 +205,16 @@ func New(db *sql.DB, cfg *config.Config) (*Daemon, error) {
 			cmd.Stderr = os.Stderr
 			return cmd.Run()
 		},
-		followUpInterval:  time.Duration(cfg.ReviewerFollowUpIntervalSeconds) * time.Second,
-		followUpNReviews:  cfg.ReviewerFollowUpNReviews,
-		lastFollowUpNudge: time.Now(),
-		tickFile:          filepath.Join(ctDir, "run", "daemon-tick"),
+		followUpInterval:    time.Duration(cfg.ReviewerFollowUpIntervalSeconds) * time.Second,
+		followUpNReviews:    cfg.ReviewerFollowUpNReviews,
+		lastFollowUpNudge:   time.Now(),
+		memoryNudgeInterval: time.Duration(cfg.MemoryNudgeIntervalSeconds) * time.Second,
+		lastMemoryNudge: map[string]time.Time{
+			"mayor":     time.Now(),
+			"architect": time.Now(),
+			"reviewer":  time.Now(),
+		},
+		tickFile: filepath.Join(ctDir, "run", "daemon-tick"),
 	}, nil
 }
 
@@ -440,6 +450,7 @@ func (d *Daemon) poll() {
 	d.handleFollowUpReminder()
 	d.handleStuckCIRunning()
 	d.handleStuckPrompts()
+	d.handleMemoryCheckpoint()
 	d.handleQualityBaseline()
 
 	// Assignment runs last so all same-tick state changes feed into it.
@@ -1529,6 +1540,52 @@ func (d *Daemon) nudgeableReviewerSessions() []string {
 		}
 	}
 	return sessions
+}
+
+// handleMemoryCheckpoint sends a periodic nudge to long-lived agents (mayor,
+// architect, reviewer) prompting them to persist any new learnings per the
+// auto-memory protocol. Proles are excluded: ephemeral single-ticket scope.
+//
+// Gates: disabled when memoryNudgeInterval is zero; skips working agents
+// (don't interrupt mid-task); skips dead sessions without updating the
+// per-agent timestamp (so the nudge fires promptly when the session returns).
+func (d *Daemon) handleMemoryCheckpoint() {
+	if d.memoryNudgeInterval <= 0 {
+		return
+	}
+
+	allAgents, err := d.agents.ListAll()
+	if err != nil {
+		d.logger.Printf("handleMemoryCheckpoint: error listing agents: %v", err)
+		return
+	}
+
+	const msg = "Memory checkpoint: scan the conversation since your last save for new feedback / project / reference memories worth keeping per the auto-memory protocol. If nothing's new, no action — this is a periodic prompt, not a directive."
+
+	now := d.nowFn()
+	for _, agent := range allAgents {
+		if agent.Type != "mayor" && agent.Type != "architect" && agent.Type != "reviewer" {
+			continue
+		}
+		if agent.Status == repo.StatusWorking {
+			continue
+		}
+		s := session.SessionName(agent.Name)
+		if !d.sessionExists(s) {
+			// Don't update the timestamp: the agent should receive the nudge
+			// promptly once their session is alive again.
+			continue
+		}
+		if last, ok := d.lastMemoryNudge[agent.Name]; ok && now.Sub(last) < d.memoryNudgeInterval {
+			continue
+		}
+		if err := d.sendKeys(s, msg); err != nil {
+			d.logger.Printf("handleMemoryCheckpoint: error nudging %s: %v", agent.Name, err)
+			continue
+		}
+		d.lastMemoryNudge[agent.Name] = now
+		d.logger.Printf("memory checkpoint nudge sent to %s", agent.Name)
+	}
 }
 
 // restartDeadReviewers restarts any dead or idle reviewer agents that have no active tmux session,

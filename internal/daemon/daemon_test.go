@@ -76,6 +76,7 @@ func newTestDaemonWithSessions(t *testing.T, activeSessions []string) (*Daemon, 
 		resetIdleProleWorktrees: func() error { return nil },
 		lastNudged:              make(map[string]time.Time),
 		lastNudgeDigest:         make(map[string]string),
+		lastMemoryNudge:         make(map[string]time.Time),
 		nudgeCooldown:           0, // disabled by default in tests
 		qualityInterval:         0, // disabled by default in tests
 		worktreeInterval:        0, // disabled by default in tests
@@ -5244,5 +5245,133 @@ func TestPoll_handlerOrderInvariant(t *testing.T) {
 	}
 	if !task.Assignee.Valid || task.Assignee.String == "" {
 		t.Errorf("T not assigned: dep-unblocked-by-auto-close ticket must be picked up in the same tick")
+	}
+}
+
+// --- nc-283: handleMemoryCheckpoint tests ---
+
+// registerLongLivedAgent registers an agent of the given type with a live
+// session name matching the ct-<name> convention.
+func registerLongLivedAgent(t *testing.T, agents *repo.AgentRepo, name, agentType string) {
+	t.Helper()
+	if err := agents.Register(name, agentType, nil); err != nil {
+		t.Fatalf("Register %s: %v", name, err)
+	}
+	if err := agents.SetTmuxSession(name, "ct-"+name); err != nil {
+		t.Fatalf("SetTmuxSession %s: %v", name, err)
+	}
+}
+
+// TestHandleMemoryCheckpoint_cooldownEnforcement verifies that two consecutive
+// calls within the cooldown interval produce only one nudge per agent.
+func TestHandleMemoryCheckpoint_cooldownEnforcement(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	registerLongLivedAgent(t, agents, "mayor", "mayor")
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.memoryNudgeInterval = 30 * time.Minute
+	// lastMemoryNudge is empty — first call should fire.
+
+	d.handleMemoryCheckpoint()
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 nudge on first call, got %d", len(*sent))
+	}
+
+	// Second call at the same instant — cooldown active, should be silent.
+	d.handleMemoryCheckpoint()
+	if len(*sent) != 1 {
+		t.Errorf("expected no additional nudge within cooldown, got %d total", len(*sent))
+	}
+}
+
+// TestHandleMemoryCheckpoint_idleOnlyFiring verifies that a working agent is
+// skipped, and receives the nudge only after it transitions to idle (and the
+// cooldown has elapsed).
+func TestHandleMemoryCheckpoint_idleOnlyFiring(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-architect"})
+	registerLongLivedAgent(t, agents, "architect", "architect")
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.memoryNudgeInterval = 30 * time.Minute
+
+	// Agent is working — nudge must be suppressed.
+	if err := agents.UpdateStatus("architect", repo.StatusWorking); err != nil {
+		t.Fatalf("UpdateStatus working: %v", err)
+	}
+	d.handleMemoryCheckpoint()
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge for working agent, got %d", len(*sent))
+	}
+
+	// Agent goes idle — nudge fires on the next tick (cooldown not yet started).
+	if err := agents.UpdateStatus("architect", repo.StatusIdle); err != nil {
+		t.Fatalf("UpdateStatus idle: %v", err)
+	}
+	d.handleMemoryCheckpoint()
+	if len(*sent) != 1 {
+		t.Errorf("expected 1 nudge after agent goes idle, got %d", len(*sent))
+	}
+}
+
+// TestHandleMemoryCheckpoint_deadSessionSkipsWithoutUpdatingTimestamp verifies
+// that when an agent's tmux session is absent the nudge is silently skipped and
+// lastMemoryNudge is NOT updated, so the agent receives the nudge promptly once
+// their session returns.
+func TestHandleMemoryCheckpoint_deadSessionSkipsWithoutUpdatingTimestamp(t *testing.T) {
+	// No active sessions.
+	d, _, agents, sent := newTestDaemonWithSessions(t, nil)
+	registerLongLivedAgent(t, agents, "reviewer", "reviewer")
+
+	base := time.Now()
+	d.nowFn = func() time.Time { return base }
+	d.memoryNudgeInterval = 30 * time.Minute
+
+	d.handleMemoryCheckpoint()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge with dead session, got %d", len(*sent))
+	}
+	if _, ok := d.lastMemoryNudge["reviewer"]; ok {
+		t.Error("lastMemoryNudge must not be set when session is dead")
+	}
+}
+
+// TestHandleMemoryCheckpoint_initializationPreventsSpuriousFirstPoll is the
+// nc-214-shape regression guard: lastMemoryNudge initialized to now() in New()
+// means the first poll inside the cooldown window must be silent.
+func TestHandleMemoryCheckpoint_initializationPreventsSpuriousFirstPoll(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	registerLongLivedAgent(t, agents, "mayor", "mayor")
+
+	boot := time.Now()
+	d.nowFn = func() time.Time { return boot }
+	d.memoryNudgeInterval = time.Hour
+	// Simulate the initialization that New() does.
+	d.lastMemoryNudge["mayor"] = boot
+
+	d.handleMemoryCheckpoint()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no spurious nudge on first poll, got %d message(s)", len(*sent))
+	}
+}
+
+// TestHandleMemoryCheckpoint_disabledWhenIntervalZero verifies that setting
+// memoryNudgeInterval to zero disables the handler entirely.
+func TestHandleMemoryCheckpoint_disabledWhenIntervalZero(t *testing.T) {
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+	registerLongLivedAgent(t, agents, "mayor", "mayor")
+
+	d.memoryNudgeInterval = 0 // disabled
+
+	d.handleMemoryCheckpoint()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge when interval is 0, got %d", len(*sent))
+	}
+	if len(d.lastMemoryNudge) != 0 {
+		t.Errorf("expected lastMemoryNudge untouched when disabled, got %v", d.lastMemoryNudge)
 	}
 }
