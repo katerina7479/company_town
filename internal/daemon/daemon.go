@@ -1601,6 +1601,12 @@ func (d *Daemon) handlePREvents() {
 //
 // under_review is a no-op for conflict detection: the reviewer owns the ticket
 // in that state and the daemon must not grab it even if the branch is dirty.
+//
+// Assignee retention policy: assignee is intentionally kept through ci_running
+// and pr_open because the prole may still push corrections while CI is in flight
+// (gt pr update). Assignee is cleared on any repair-ish transition
+// (handleCIFailure, handlePRConflict, checkForHumanComments) because the prole
+// has handed off and whichever free prole is next should pick it up.
 func (d *Daemon) handleOpenPR(issue *repo.Issue, prNum int, mergeable, checks string, failing []string) {
 	switch {
 	case mergeable == "CONFLICTING" && (issue.Status == repo.StatusPROpen || issue.Status == repo.StatusCIRunning):
@@ -1646,8 +1652,10 @@ func (d *Daemon) handleCIPass(issue *repo.Issue, prNum int) {
 	d.reviewsSinceFollowUp++
 }
 
-// handleCIFailure moves a ci_running ticket to repairing and nudges the assigned
-// prole with the names of the failing checks.
+// handleCIFailure moves a ci_running ticket to repairing and clears the assignee
+// so the next assign cycle can route it to whichever prole is free. The failing
+// check names are stored in repair_reason so the new prole has full context on
+// pickup without requiring a targeted nudge.
 func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []string) {
 	d.logger.Printf("CI failure on PR #%d for ticket %s-%d — moving to repairing",
 		prNum, d.cfg.TicketPrefix, issue.ID)
@@ -1656,36 +1664,11 @@ func (d *Daemon) handleCIFailure(issue *repo.Issue, prNum int, failedNames []str
 	if !d.repairTransition(issue.ID, repo.StatusRepairing, reason) {
 		return
 	}
+	if err := d.issues.ClearAssignee(issue.ID); err != nil {
+		d.logger.Printf("error clearing assignee on ticket %d after CI failure: %v", issue.ID, err)
+	}
 	if d.obs != nil {
 		d.obs.prEventsCIFail++
-	}
-
-	if !issue.Assignee.Valid || issue.Assignee.String == "" {
-		return
-	}
-
-	nudgeKey := fmt.Sprintf("ci_failed:%d", issue.ID)
-	digest := fmt.Sprintf("%s-%d:ci:%s", d.cfg.TicketPrefix, issue.ID, strings.Join(failedNames, ","))
-	if !d.digestChanged(nudgeKey, digest) || !d.shouldNudge(nudgeKey) {
-		return
-	}
-
-	proleSession := session.SessionName(issue.Assignee.String)
-	if !d.sessionExists(proleSession) {
-		return
-	}
-
-	msg := fmt.Sprintf("CI FAILURE: PR #%d for ticket %s-%d (%s) has failing checks: %s. "+
-		"Please fix the failures and push a corrected branch.",
-		prNum, d.cfg.TicketPrefix, issue.ID, issue.Title, strings.Join(failedNames, ", "))
-
-	if err := d.sendKeys(proleSession, msg); err != nil {
-		d.logger.Printf("error nudging prole %s about CI failure on ticket %d: %v",
-			issue.Assignee.String, issue.ID, err)
-	} else {
-		d.logger.Printf("nudged prole %s: CI failure on ticket %s-%d",
-			issue.Assignee.String, d.cfg.TicketPrefix, issue.ID)
-		d.recordNudge(nudgeKey, digest)
 	}
 }
 
@@ -1756,13 +1739,19 @@ func (d *Daemon) handlePRClosed(issue *repo.Issue) {
 	d.recordNudge(nudgeKey, digest)
 }
 
-// handlePRConflict moves a pr_open ticket to merge_conflict and nudges the architect.
+// handlePRConflict moves a pr_open ticket to merge_conflict, clears the prole
+// assignee, and nudges the architect. Clearing the assignee lets the next assign
+// cycle route the repair to whichever prole is free; the architect nudge informs
+// them that branch resolution is needed before CI can re-run.
 func (d *Daemon) handlePRConflict(issue *repo.Issue, prNum int) {
 	d.logger.Printf("PR #%d has merge conflict for ticket %s-%d — moving to merge_conflict",
 		prNum, d.cfg.TicketPrefix, issue.ID)
 
 	if !d.repairTransition(issue.ID, repo.StatusMergeConflict, "merge conflict with main") {
 		return
+	}
+	if err := d.issues.ClearAssignee(issue.ID); err != nil {
+		d.logger.Printf("error clearing assignee on ticket %d after merge conflict: %v", issue.ID, err)
 	}
 	if d.obs != nil {
 		d.obs.prEventsConflict++
@@ -1851,6 +1840,9 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		reason := fmt.Sprintf("review: %s: %s", c.Author, excerpt)
 		if !d.repairTransition(issue.ID, repo.StatusRepairing, reason) {
 			return
+		}
+		if err := d.issues.ClearAssignee(issue.ID); err != nil {
+			d.logger.Printf("error clearing assignee on ticket %d after human review: %v", issue.ID, err)
 		}
 		if d.obs != nil {
 			d.obs.prEventsRepairing++

@@ -3230,9 +3230,8 @@ func TestHandleCIRunning_passingMovesToInReview(t *testing.T) {
 	}
 }
 
-func TestHandleCIRunning_failingMovesToRepairingAndNudgesProle(t *testing.T) {
-	proleSession := "ct-tin"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+func TestHandleCIRunning_failingMovesToRepairingClearsAssignee(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "ci_running")
@@ -3246,14 +3245,11 @@ func TestHandleCIRunning_failingMovesToRepairingAndNudgesProle(t *testing.T) {
 	if updated.Status != "repairing" {
 		t.Errorf("expected status=repairing, got %q", updated.Status)
 	}
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 nudge to prole, got %d", len(*sent))
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Errorf("expected assignee cleared after CI failure, got %q", updated.Assignee.String)
 	}
-	if (*sent)[0].session != proleSession {
-		t.Errorf("expected nudge to %q, got %q", proleSession, (*sent)[0].session)
-	}
-	if !containsAll((*sent)[0].msg, "CI FAILURE", "PR #42", "NC-"+itoa(id), "test", "lint") {
-		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge to original prole, got %d", len(*sent))
 	}
 }
 
@@ -3300,8 +3296,8 @@ func TestHandleCIRunning_conflictingMovesToMergeConflict(t *testing.T) {
 	}
 }
 
-func TestHandleCIRunning_noNudgeWhenProleSessionAbsent(t *testing.T) {
-	d, issues, _, sent := newTestDaemonWithSessions(t, nil) // no active sessions
+func TestHandleCIRunning_failingClearsAssigneeWithNoSession(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil) // no active sessions
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "ci_running")
@@ -3311,19 +3307,17 @@ func TestHandleCIRunning_noNudgeWhenProleSessionAbsent(t *testing.T) {
 	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
 	d.handlePREvents()
 
-	// Ticket should still be moved to repairing even without an active session.
 	updated, _ := issues.Get(id)
 	if updated.Status != "repairing" {
 		t.Errorf("expected status=repairing, got %q", updated.Status)
 	}
-	if len(*sent) != 0 {
-		t.Errorf("expected no nudge (session absent), got %d", len(*sent))
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Errorf("expected assignee cleared, got %q", updated.Assignee.String)
 	}
 }
 
-func TestHandleCIRunning_noNudgeWhenNoAssignee(t *testing.T) {
-	proleSession := "ct-tin"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+func TestHandleCIRunning_failingWithNoAssignee_movesToRepairing(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Unassigned ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "ci_running")
@@ -3337,66 +3331,91 @@ func TestHandleCIRunning_noNudgeWhenNoAssignee(t *testing.T) {
 	if updated.Status != "repairing" {
 		t.Errorf("expected status=repairing, got %q", updated.Status)
 	}
-	if len(*sent) != 0 {
-		t.Errorf("expected no nudge (no assignee), got %d", len(*sent))
-	}
 }
 
-func TestHandleCIRunning_noSpam(t *testing.T) {
-	proleSession := "ct-tin"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
-	d.nudgeCooldown = 1 * time.Hour
+func TestHandleCIFailure_ticketSelectableAfterAssigneeClear(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "ci_running")
 	issues.SetPR(id, 55)
 	issues.Assign(id, "tin", "prole/tin/nc-55")
 
-	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
+	issue, _ := issues.Get(id)
+	d.handleCIFailure(issue, 55, []string{"test"})
 
-	// First call — moves ticket to repairing and nudges.
-	d.handlePREvents()
-	firstCount := len(*sent)
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Fatalf("expected repairing, got %q", updated.Status)
+	}
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Fatalf("expected assignee cleared, got %q", updated.Assignee.String)
+	}
 
-	// Move ticket back to ci_running to simulate a re-push that still fails.
-	issues.UpdateStatus(id, "ci_running")
-
-	// Second call within cooldown with same failing checks — should not nudge again.
-	d.handlePREvents()
-
-	if len(*sent) != firstCount {
-		t.Errorf("expected no additional nudge within cooldown, got %d total nudges", len(*sent))
+	selectable, err := issues.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	found := false
+	for _, tk := range selectable {
+		if tk.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ticket should be selectable after CI failure clears assignee")
 	}
 }
 
-func TestHandleCIRunning_nudgesAgainAfterCooldownWithDifferentFailure(t *testing.T) {
-	proleSession := "ct-tin"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
-	d.nudgeCooldown = 1 * time.Hour
+// TestHandlePRConflict_repairingAfterResolutionIsSelectable verifies the full
+// lifecycle: conflict → assignee cleared → conflict resolved → CI fails →
+// repairing → ticket appears in Selectable() so the next free prole picks it up.
+func TestHandlePRConflict_repairingAfterResolutionIsSelectable(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
 
-	id, _ := issues.Create("Feature ticket", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "ci_running")
+	id, _ := issues.Create("Conflict ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
 	issues.SetPR(id, 80)
 	issues.Assign(id, "tin", "prole/tin/nc-80")
 
-	// First call — test fails; nudged.
-	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"test"})
-	d.handlePREvents()
-	firstCount := len(*sent)
+	// Step 1: conflict detected — moves to merge_conflict, clears assignee.
+	issue, _ := issues.Get(id)
+	d.handlePRConflict(issue, 80)
 
-	// Simulate prole pushed a partial fix; ticket back to ci_running, different check fails.
-	issues.UpdateStatus(id, "ci_running")
-	d.getPRStateFn = newPRStateFn("MERGEABLE", "failing", []string{"security"})
-
-	// Advance clock past the cooldown — different digest + expired cooldown → nudge fires.
-	d.nowFn = func() time.Time { return time.Now().Add(2 * time.Hour) }
-	d.handlePREvents()
-
-	if len(*sent) <= firstCount {
-		t.Errorf("expected nudge after cooldown + digest change, got %d total nudges", len(*sent))
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Fatalf("expected merge_conflict, got %q", updated.Status)
 	}
-	if !containsAll((*sent)[len(*sent)-1].msg, "CI FAILURE", "PR #80", "security") {
-		t.Errorf("nudge message missing expected content: %q", (*sent)[len(*sent)-1].msg)
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Fatalf("expected assignee cleared after conflict, got %q", updated.Assignee.String)
+	}
+
+	// Step 2: conflict resolved → ci_running.
+	d.handlePRConflictResolved(updated, 80, "pending")
+	afterResolve, _ := issues.Get(id)
+	if afterResolve.Status != "ci_running" {
+		t.Fatalf("expected ci_running after conflict resolved, got %q", afterResolve.Status)
+	}
+
+	// Step 3: CI fails → repairing, assignee stays clear → selectable.
+	d.handleCIFailure(afterResolve, 80, []string{"lint"})
+	afterFail, _ := issues.Get(id)
+	if afterFail.Status != "repairing" {
+		t.Fatalf("expected repairing after CI fail, got %q", afterFail.Status)
+	}
+
+	selectable, err := issues.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	found := false
+	for _, tk := range selectable {
+		if tk.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ticket should be selectable after conflict → repair cycle clears assignee")
 	}
 }
 
@@ -3580,9 +3599,8 @@ func TestClassifyChecks(t *testing.T) {
 // nc-147 regression path: stale gt binaries (pre-nc-130) file PRs that set the
 // ticket status to pr_open instead of ci_running, so the CI-failure guard must
 // cover both statuses.
-func TestHandleOpenPR_prOpenFailingCI_movesToRepairing(t *testing.T) {
-	proleSession := "ct-tin"
-	d, issues, _, sent := newTestDaemonWithSessions(t, []string{proleSession})
+func TestHandleOpenPR_prOpenFailingCI_movesToRepairingClearsAssignee(t *testing.T) {
+	d, issues, _, sent := newTestDaemonWithSessions(t, nil)
 
 	id, _ := issues.Create("Stale-binary ticket", "task", nil, nil, nil)
 	issues.UpdateStatus(id, "pr_open")
@@ -3596,14 +3614,11 @@ func TestHandleOpenPR_prOpenFailingCI_movesToRepairing(t *testing.T) {
 	if updated.Status != "repairing" {
 		t.Errorf("expected status=repairing for pr_open + failing CI, got %q", updated.Status)
 	}
-	if len(*sent) != 1 {
-		t.Fatalf("expected 1 nudge to prole, got %d", len(*sent))
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Errorf("expected assignee cleared after CI failure, got %q", updated.Assignee.String)
 	}
-	if (*sent)[0].session != proleSession {
-		t.Errorf("expected nudge to %q, got %q", proleSession, (*sent)[0].session)
-	}
-	if !containsAll((*sent)[0].msg, "CI FAILURE", "PR #205", "NC-"+itoa(id), "lint", "test") {
-		t.Errorf("nudge message missing expected content: %q", (*sent)[0].msg)
+	if len(*sent) != 0 {
+		t.Errorf("expected no nudge to original prole, got %d", len(*sent))
 	}
 }
 
@@ -3693,6 +3708,46 @@ func TestHandlePRConflict_setsRepairReason(t *testing.T) {
 	if !updated.RepairReason.Valid || updated.RepairReason.String != "merge conflict with main" {
 		t.Errorf("expected repair_reason=%q, got valid=%v value=%q",
 			"merge conflict with main", updated.RepairReason.Valid, updated.RepairReason.String)
+	}
+}
+
+func TestHandlePRConflict_clearsAssignee(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("Conflict task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "pr_open")
+	issues.SetPR(id, 21)
+	issues.Assign(id, "copper", "prole/copper/nc-21")
+
+	issue, _ := issues.Get(id)
+	d.handlePRConflict(issue, 21)
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "merge_conflict" {
+		t.Errorf("expected status=merge_conflict, got %q", updated.Status)
+	}
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Errorf("expected assignee cleared after merge conflict, got %q", updated.Assignee.String)
+	}
+}
+
+func TestHandleCIFailure_clearsAssignee(t *testing.T) {
+	d, issues, _, _ := newTestDaemonWithSessions(t, nil)
+
+	id, _ := issues.Create("CI task", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 11)
+	issues.Assign(id, "copper", "prole/copper/nc-11")
+
+	issue, _ := issues.Get(id)
+	d.handleCIFailure(issue, 11, []string{"lint"})
+
+	updated, _ := issues.Get(id)
+	if updated.Status != "repairing" {
+		t.Errorf("expected status=repairing, got %q", updated.Status)
+	}
+	if updated.Assignee.Valid && updated.Assignee.String != "" {
+		t.Errorf("expected assignee cleared after CI failure, got %q", updated.Assignee.String)
 	}
 }
 
