@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -840,20 +841,21 @@ func (m dashboardModel) renderAgents(width, height int) string {
 		sb.WriteString(m.theme.Footer.Render("(none registered)"))
 	} else {
 		for i, a := range m.data.agents {
-			name := m.theme.Bold.Render(fmt.Sprintf("%-14s", a.Name))
-			status := m.theme.ColorStatus(a.Status)
+			rr := newRowRenderer(nil)
+			if focused && i == m.agentCursor {
+				rr = newRowRenderer(m.theme.Selected.GetBackground())
+			}
+			name := rr.styled(m.theme.Bold, fmt.Sprintf("%-14s", a.Name))
+			status := rr.colorStatus(m.theme, a.Status)
 			issue := ""
 			if a.CurrentIssue.Valid {
-				issue = fmt.Sprintf(" → nc-%d", a.CurrentIssue.Int64)
+				issue = rr.text(fmt.Sprintf(" → nc-%d", a.CurrentIssue.Int64))
 			}
 			age := ""
 			if a.StatusChangedAt.Valid {
-				age = m.theme.Footer.Render(" (" + formatDuration(time.Since(a.StatusChangedAt.Time)) + ")")
+				age = rr.styled(m.theme.Footer, " ("+formatDuration(time.Since(a.StatusChangedAt.Time))+")")
 			}
-			line := fmt.Sprintf("%s %s%s%s", name, status, issue, age)
-			if focused && i == m.agentCursor {
-				line = m.theme.Selected.Width(rowWidth).Render(line)
-			}
+			line := rr.pad(name+rr.spc+status+issue+age, rowWidth)
 			sb.WriteString(line + "\n")
 		}
 	}
@@ -876,21 +878,26 @@ func (m dashboardModel) renderTickets(width, height int) string {
 	focused := m.focusedPanel == 1
 	// innerWidth is the content area width: outer width minus border (2) and padding (2).
 	innerWidth := width - 4
-	rowWidth := innerWidth
 
 	flat := m.flatTickets()
 	if len(flat) == 0 {
 		sb.WriteString(m.theme.Footer.Render("(no tickets)"))
 	} else {
 		for i, fn := range flat {
+			selected := focused && i == m.ticketCursor
 			var line string
 			if m.treeMode {
-				line = m.renderTreeRow(fn, innerWidth)
+				if selected {
+					line = m.renderTreeRowHighlighted(fn, innerWidth)
+				} else {
+					line = m.renderTreeRow(fn, innerWidth)
+				}
 			} else {
-				line = m.renderIssueRow(fn.node, fn.depth, innerWidth)
-			}
-			if focused && i == m.ticketCursor {
-				line = m.theme.Selected.Width(rowWidth).Render(line)
+				if selected {
+					line = m.renderIssueRowHighlighted(fn.node, fn.depth, innerWidth)
+				} else {
+					line = m.renderIssueRow(fn.node, fn.depth, innerWidth)
+				}
 			}
 			sb.WriteString(line + "\n")
 			if m.expanded[fn.node.ID] {
@@ -938,8 +945,108 @@ func filterTerminalNode(node *repo.IssueNode) *repo.IssueNode {
 	return &clone
 }
 
+// rowRenderer assembles row cells, optionally applying a selection background to
+// every element so the highlight spans the full row width without gaps.
+// When bg is nil the renderer behaves identically to the pre-selection path:
+// cell styles apply their own foreground colours and plain text is left bare.
+type rowRenderer struct {
+	bg    lipgloss.TerminalColor // nil = not selected
+	plain lipgloss.Style         // bg-only style used for plain text and spaces
+	spc   string                 // a single space, bg-coloured when selected
+}
+
+func newRowRenderer(bg lipgloss.TerminalColor) rowRenderer {
+	if bg == nil {
+		return rowRenderer{spc: " "}
+	}
+	plain := lipgloss.NewStyle().Background(bg)
+	return rowRenderer{bg: bg, plain: plain, spc: plain.Render(" ")}
+}
+
+// text returns s wrapped in the selection background, or s unchanged when not selected.
+func (r rowRenderer) text(s string) string {
+	if r.bg == nil {
+		return s
+	}
+	return r.plain.Render(s)
+}
+
+// styled returns s rendered with style, additionally applying the selection
+// background when selected.
+func (r rowRenderer) styled(s lipgloss.Style, content string) string {
+	if r.bg == nil {
+		return s.Render(content)
+	}
+	return s.Background(r.bg).Render(content)
+}
+
+// join concatenates parts with a single selection-aware space between each pair.
+func (r rowRenderer) join(parts ...string) string {
+	return strings.Join(parts, r.spc)
+}
+
+// pad extends s to toWidth visible cells using the selection background.
+// When not selected (bg == nil), s is returned unchanged — callers handle
+// padding separately (via the outer Selected.Width.Render call).
+func (r rowRenderer) pad(s string, toWidth int) string {
+	if r.bg == nil {
+		return s
+	}
+	w := lipgloss.Width(s)
+	if w >= toWidth {
+		return s
+	}
+	return s + r.plain.Render(strings.Repeat(" ", toWidth-w))
+}
+
+// priorityCell renders the 5-visible-char priority column, applying the
+// selection background to both the label and trailing space when selected.
+func (r rowRenderer) priorityCell(theme StyleTheme, p sql.NullString) string {
+	const width = 5
+	if !p.Valid || p.String == "" {
+		return r.text(strings.Repeat(" ", width))
+	}
+	label := fmt.Sprintf("[%s]", p.String)
+	if s, ok := theme.Priority[p.String]; ok {
+		return r.styled(s, label) + r.text(" ")
+	}
+	return r.text(fmt.Sprintf("%-*s", width, label))
+}
+
+// typeCell renders the 1-visible-char type column with optional selection bg.
+func (r rowRenderer) typeCell(theme StyleTheme, issueType string) string {
+	letters := map[string]string{"epic": "E", "bug": "B", "refactor": "R"}
+	letter, ok := letters[issueType]
+	if !ok {
+		return r.text(" ")
+	}
+	if s, ok2 := theme.Type[issueType]; ok2 {
+		return r.styled(s, letter)
+	}
+	return r.text(letter)
+}
+
+// colorStatus renders the status string with its theme colour, applying the
+// selection background when selected.
+func (r rowRenderer) colorStatus(theme StyleTheme, status string) string {
+	if s, ok := theme.Status[status]; ok {
+		return r.styled(s, status)
+	}
+	return r.text(status)
+}
+
 // renderIssueRow renders a single ticket row as a string (without trailing newline).
 func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width int) string {
+	return m.renderIssueRowCore(node, depth, width, newRowRenderer(nil))
+}
+
+// renderIssueRowHighlighted renders the selected ticket row with the selection
+// background applied to every cell and space so the highlight spans the full width.
+func (m dashboardModel) renderIssueRowHighlighted(node *repo.IssueNode, depth int, width int) string {
+	return m.renderIssueRowCore(node, depth, width, newRowRenderer(m.theme.Selected.GetBackground()))
+}
+
+func (m dashboardModel) renderIssueRowCore(node *repo.IssueNode, depth, width int, rr rowRenderer) string {
 	indent := strings.Repeat("  ", depth)
 	bullet := "●"
 	if depth > 0 {
@@ -948,9 +1055,9 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 
 	prefix := fmt.Sprintf("%s%s", indent, bullet)
 	idStr := fmt.Sprintf("%-6d", node.ID)
-	coloredStatus := m.theme.ColorStatus(node.Status)
+	coloredStatus := rr.colorStatus(m.theme, node.Status)
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
-	age := m.theme.Footer.Render(ageRaw)
+	age := rr.styled(m.theme.Footer, ageRaw)
 
 	prStr := "      " // 6 chars blank when no PR
 	if node.PRNumber.Valid {
@@ -958,10 +1065,10 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 	}
 
 	const priorityWidth = 5 // visible chars: "[P0] " or "     "
-	pri := m.theme.PriorityCell(node.Priority)
+	pri := rr.priorityCell(m.theme, node.Priority)
 
 	const typeWidth = 1 // visible char: "E" / "B" / "R" / " " (blank for task)
-	typ := m.theme.TypeCell(node.IssueType)
+	typ := rr.typeCell(m.theme, node.IssueType)
 
 	const assigneeWidth = 8 // visible chars: up to 8-char agent name (e.g. "obsidian") or blank
 	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")
@@ -987,9 +1094,18 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 		title = title[:titleMax-1] + "…"
 	}
 
-	return fmt.Sprintf("%s %s %s %s %s %s %s %s %s",
-		prefix, typ, idStr, coloredStatus, pri, prStr, assigneeRaw, age, title,
+	content := rr.join(
+		rr.text(prefix),
+		typ,
+		rr.text(idStr),
+		coloredStatus,
+		pri,
+		rr.text(prStr),
+		rr.text(assigneeRaw),
+		age,
+		rr.text(title),
 	)
+	return rr.pad(content, width)
 }
 
 // renderTreeRow renders a ticket row in tree mode with the same column set as
@@ -997,12 +1113,22 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 // the tree-specific [blocked by: …] marker. The box-drawing prefix replaces
 // the bullet+indent used in list mode.
 func (m dashboardModel) renderTreeRow(row flatTicketRow, width int) string {
+	return m.renderTreeRowCore(row, width, newRowRenderer(nil))
+}
+
+// renderTreeRowHighlighted renders the selected tree row with the selection
+// background applied to every cell and space so the highlight spans the full width.
+func (m dashboardModel) renderTreeRowHighlighted(row flatTicketRow, width int) string {
+	return m.renderTreeRowCore(row, width, newRowRenderer(m.theme.Selected.GetBackground()))
+}
+
+func (m dashboardModel) renderTreeRowCore(row flatTicketRow, width int, rr rowRenderer) string {
 	node := row.node
 	prefix := renderTreePrefix(row.depth)
 	idStr := fmt.Sprintf("%-6d", node.ID)
-	coloredStatus := m.theme.ColorStatus(node.Status)
+	coloredStatus := rr.colorStatus(m.theme, node.Status)
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
-	age := m.theme.Footer.Render(ageRaw)
+	age := rr.styled(m.theme.Footer, ageRaw)
 
 	prStr := "      " // 6 chars blank when no PR
 	if node.PRNumber.Valid {
@@ -1010,10 +1136,10 @@ func (m dashboardModel) renderTreeRow(row flatTicketRow, width int) string {
 	}
 
 	const priorityWidth = 5
-	pri := m.theme.PriorityCell(node.Priority)
+	pri := rr.priorityCell(m.theme, node.Priority)
 
 	const typeWidth = 1
-	typ := m.theme.TypeCell(node.IssueType)
+	typ := rr.typeCell(m.theme, node.IssueType)
 
 	const assigneeWidth = 8
 	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")
@@ -1031,20 +1157,33 @@ func (m dashboardModel) renderTreeRow(row flatTicketRow, width int) string {
 		for _, id := range row.blockedBy {
 			ids = append(ids, fmt.Sprintf("%s-%d", m.ticketPrefix, id))
 		}
-		blockedBy = fmt.Sprintf(" [blocked by: %s]", strings.Join(ids, ", "))
+		blockedBy = rr.text(fmt.Sprintf(" [blocked by: %s]", strings.Join(ids, ", ")))
 	}
 
 	// Truncate title to fit, accounting for the blocked-by suffix length.
-	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + assigneeWidth + 1 + len(ageRaw) + 1 + len(blockedBy)
+	blockedByLen := len(blockedBy)
+	if rr.bg != nil {
+		blockedByLen = lipgloss.Width(blockedBy)
+	}
+	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + assigneeWidth + 1 + len(ageRaw) + 1 + blockedByLen
 	titleMax := width - fixedLen
 	title := node.Title
 	if len(title) > titleMax && titleMax > 3 {
 		title = title[:titleMax-1] + "…"
 	}
 
-	return fmt.Sprintf("%s %s %s %s %s %s %s %s %s%s",
-		prefix, typ, idStr, coloredStatus, pri, prStr, assigneeRaw, age, title, blockedBy,
-	)
+	content := rr.join(
+		rr.text(prefix),
+		typ,
+		rr.text(idStr),
+		coloredStatus,
+		pri,
+		rr.text(prStr),
+		rr.text(assigneeRaw),
+		age,
+		rr.text(title),
+	) + blockedBy
+	return rr.pad(content, width)
 }
 
 // renderTicketDetails renders the expanded detail lines for a ticket.

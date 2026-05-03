@@ -1383,16 +1383,14 @@ func TestRenderIssueRow_fitsContentWidth(t *testing.T) {
 }
 
 func TestRenderIssueRow_selectedRowDoesNotWrap(t *testing.T) {
-	// Regression test for NC-45: blankModel().theme.Selected.Width(innerWidth) must not cause
-	// the selected row to wrap to a second line inside the panel content area.
+	// Regression test for NC-45: the selected row must not wrap to a second line.
 	contentWidth := 100
 	node := makeFullNode("open", strings.Repeat("B", 200))
 
-	row := blankModel().renderIssueRow(node, 0, contentWidth)
-	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
+	row := blankModel().renderIssueRowHighlighted(node, 0, contentWidth)
 
 	// If wrapping occurs, lipgloss.Height > 1.
-	if h := lipgloss.Height(rendered); h != 1 {
+	if h := lipgloss.Height(row); h != 1 {
 		t.Errorf("selected row wrapped to %d lines (expected 1); content width=%d",
 			h, contentWidth)
 	}
@@ -1404,12 +1402,44 @@ func TestRenderIssueRow_selectedRowDoesNotWrapShortStatus(t *testing.T) {
 	contentWidth := 80
 	node := makeFullNode("open", strings.Repeat("C", 200))
 
-	row := blankModel().renderIssueRow(node, 0, contentWidth)
-	rendered := blankModel().theme.Selected.Width(contentWidth).Render(row)
+	row := blankModel().renderIssueRowHighlighted(node, 0, contentWidth)
 
-	if h := lipgloss.Height(rendered); h != 1 {
+	if h := lipgloss.Height(row); h != 1 {
 		t.Errorf("selected 'open' row wrapped to %d lines (expected 1); content width=%d",
 			h, contentWidth)
+	}
+}
+
+// TestRenderIssueRowHighlighted_fullRowBackground verifies that
+// renderIssueRowHighlighted pads the row to the full inner width so the
+// selection highlight spans the complete row. The row must be exactly one line
+// and its visible width must equal the requested width.
+//
+// Previously, inner ANSI resets from per-cell styles cancelled the outer
+// Selected background mid-row, leaving uncoloured gaps. The fix applies the
+// background directly to each cell so no plain characters remain.
+func TestRenderIssueRowHighlighted_fullRowBackground(t *testing.T) {
+	const rowWidth = 100
+	node := makeFullNode("in_progress", "Short title")
+
+	m := blankModel()
+	highlighted := m.renderIssueRowHighlighted(node, 0, rowWidth)
+
+	// The visible width must equal rowWidth — padding was applied.
+	if w := lipgloss.Width(highlighted); w != rowWidth {
+		t.Errorf("highlighted row visible width = %d, want %d (padding missing)", w, rowWidth)
+	}
+
+	// Must be a single line.
+	if h := lipgloss.Height(highlighted); h != 1 {
+		t.Errorf("highlighted row height = %d, want 1", h)
+	}
+
+	// The non-selected row must NOT be padded — highlighted adds the padding,
+	// plain renderIssueRow must not so callers can still use it unchanged.
+	plain := m.renderIssueRow(node, 0, rowWidth)
+	if lipgloss.Width(plain) == rowWidth {
+		t.Errorf("plain renderIssueRow width = rowWidth (%d); only highlighted rows should be padded", rowWidth)
 	}
 }
 
