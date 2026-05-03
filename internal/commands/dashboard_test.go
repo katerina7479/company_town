@@ -3216,3 +3216,86 @@ func TestDashboard_treeMode_assignHotkeyOnSelectedRow(t *testing.T) {
 		t.Errorf("inputTarget = %q, want %q", dm.inputTarget, strconv.Itoa(task))
 	}
 }
+
+// --- nc-276: renderTreeRow full column set ---
+
+func makeTreeRow(node *repo.IssueNode, depth int, blockedBy []int) flatTicketRow {
+	return flatTicketRow{node: node, depth: depth, blockedBy: blockedBy}
+}
+
+func TestRenderTreeRow_typeIndicatorPresent(t *testing.T) {
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID: 5, IssueType: "bug", Status: "open", Title: "A bug",
+	}}
+	row := blankModel().renderTreeRow(makeTreeRow(node, 0, nil), 120)
+	if !strings.Contains(row, "B") {
+		t.Errorf("renderTreeRow for bug should contain 'B', got: %q", row)
+	}
+}
+
+func TestRenderTreeRow_epicTypeIndicatorPresent(t *testing.T) {
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID: 6, IssueType: "epic", Status: "open", Title: "An epic",
+	}}
+	row := blankModel().renderTreeRow(makeTreeRow(node, 0, nil), 120)
+	if !strings.Contains(row, "E") {
+		t.Errorf("renderTreeRow for epic should contain 'E', got: %q", row)
+	}
+}
+
+func TestRenderTreeRow_priorityPresent(t *testing.T) {
+	p0 := "P0"
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID: 7, IssueType: "task", Status: "open", Title: "High priority",
+		Priority: sql.NullString{String: p0, Valid: true},
+	}}
+	row := blankModel().renderTreeRow(makeTreeRow(node, 0, nil), 120)
+	if !strings.Contains(row, "P0") {
+		t.Errorf("renderTreeRow should contain priority 'P0', got: %q", row)
+	}
+}
+
+func TestRenderTreeRow_prNumberPresent(t *testing.T) {
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID: 8, IssueType: "task", Status: "in_review", Title: "Has PR",
+		PRNumber: sql.NullInt64{Int64: 42, Valid: true},
+	}}
+	row := blankModel().renderTreeRow(makeTreeRow(node, 0, nil), 120)
+	if !strings.Contains(row, "#42") {
+		t.Errorf("renderTreeRow should contain PR number '#42', got: %q", row)
+	}
+}
+
+func TestRenderTreeRow_agePresent(t *testing.T) {
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID: 9, IssueType: "task", Status: "open", Title: "Old ticket",
+		UpdatedAt: time.Now().Add(-90 * time.Minute),
+	}}
+	row := blankModel().renderTreeRow(makeTreeRow(node, 0, nil), 120)
+	// Age is rendered as "(Xm)" or "(Xh Ym)" — just check for the opening paren.
+	if !strings.Contains(row, "(") {
+		t.Errorf("renderTreeRow should contain age in parens, got: %q", row)
+	}
+}
+
+func TestRenderTreeRow_blockedByMarkerPresent(t *testing.T) {
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID: 10, IssueType: "task", Status: "open", Title: "Blocked",
+	}}
+	m := blankModel()
+	m.ticketPrefix = "nc"
+	row := m.renderTreeRow(makeTreeRow(node, 0, []int{3, 7}), 200)
+	if !strings.Contains(row, "[blocked by: nc-3, nc-7]") {
+		t.Errorf("renderTreeRow should contain blocked-by marker, got: %q", row)
+	}
+}
+
+func TestRenderTreeRow_treePrefixAtDepth1(t *testing.T) {
+	node := &repo.IssueNode{Issue: &repo.Issue{
+		ID: 11, IssueType: "task", Status: "open", Title: "Child",
+	}}
+	row := blankModel().renderTreeRow(makeTreeRow(node, 1, nil), 120)
+	if !strings.Contains(row, "└─") {
+		t.Errorf("renderTreeRow at depth 1 should contain '└─', got: %q", row)
+	}
+}
