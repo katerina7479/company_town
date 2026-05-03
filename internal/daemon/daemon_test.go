@@ -736,6 +736,65 @@ func TestHandleDeadSessions_skipsAlreadyDeadCoreAgents(t *testing.T) {
 	}
 }
 
+func TestHandleDeadSessions_reconcilesCoreAgentDeadToIdleWhenSessionAlive(t *testing.T) {
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-mayor"})
+
+	agents.Register("mayor", "mayor", nil)
+	agents.SetTmuxSession("mayor", "ct-mayor")
+	agents.UpdateStatus("mayor", "dead")
+
+	d.handleDeadSessions()
+
+	agent, err := agents.Get("mayor")
+	if err != nil {
+		t.Fatalf("mayor should still exist: %v", err)
+	}
+	if agent.Status != repo.StatusIdle {
+		t.Errorf("expected status=%q after reconciliation, got %q", repo.StatusIdle, agent.Status)
+	}
+}
+
+func TestHandleDeadSessions_doesNotSetWorkingDuringReconciliation(t *testing.T) {
+	// Daemon must never set a core agent to "working" during reconciliation;
+	// only the agent itself should self-promote when it picks up a ticket.
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-architect"})
+
+	agents.Register("architect", "architect", nil)
+	agents.SetTmuxSession("architect", "ct-architect")
+	agents.UpdateStatus("architect", "dead")
+
+	d.handleDeadSessions()
+
+	agent, _ := agents.Get("architect")
+	if agent.Status == repo.StatusWorking {
+		t.Errorf("daemon must not set core agent to 'working' during reconciliation")
+	}
+	if agent.Status != repo.StatusIdle {
+		t.Errorf("expected status=%q, got %q", repo.StatusIdle, agent.Status)
+	}
+}
+
+func TestHandleDeadSessions_proleWithLiveSessionIsKilledNotReconciled(t *testing.T) {
+	// Dead-status proles with a live session must still be killed and cleaned up,
+	// not reconciled to idle like core agents.
+	var killed []string
+	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-prole-zinc"})
+	d.killSession = func(s string) error { killed = append(killed, s); return nil }
+
+	agents.Register("prole-zinc", "prole", nil)
+	agents.SetTmuxSession("prole-zinc", "ct-prole-zinc")
+	agents.UpdateStatus("prole-zinc", "dead")
+
+	d.handleDeadSessions()
+
+	if len(killed) == 0 {
+		t.Error("expected zombie prole session to be killed")
+	}
+	if _, err := agents.Get("prole-zinc"); err == nil {
+		t.Error("expected prole-zinc row to be deleted")
+	}
+}
+
 func TestHandleDeadSessions_handlesMultipleAgents(t *testing.T) {
 	d, _, agents, _ := newTestDaemonWithSessions(t, []string{"ct-alive"})
 

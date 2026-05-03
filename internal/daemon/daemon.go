@@ -1246,6 +1246,16 @@ func (d *Daemon) handleDeadSessions() {
 			}
 			continue
 		}
+		if sessionAlive {
+			// Core agent: session is alive but DB says dead — reconcile to idle.
+			// Do NOT set working; let the agent self-promote when it picks up a ticket.
+			d.logger.Printf("session %s for agent %s is alive but DB status is dead — reconciling to idle",
+				agent.TmuxSession.String, agent.Name)
+			if err := d.agents.UpdateStatus(agent.Name, repo.StatusIdle); err != nil {
+				d.logger.Printf("error reconciling agent %s to idle: %v", agent.Name, err)
+			}
+			continue
+		}
 		if agent.Status == repo.StatusDead {
 			continue
 		}
