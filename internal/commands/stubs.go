@@ -94,6 +94,10 @@ func Start() error {
 	}
 	defer conn.Close()
 
+	if err := db.RunMigrations(conn); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+
 	if err := config.ValidateForStart(cfg); err != nil {
 		return err
 	}
