@@ -889,7 +889,7 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		for i, fn := range flat {
 			var line string
 			if m.treeMode {
-				line = m.renderTreeRow(fn)
+				line = m.renderTreeRow(fn, innerWidth)
 			} else {
 				line = m.renderIssueRow(fn.node, fn.depth, innerWidth)
 			}
@@ -999,24 +999,59 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 	)
 }
 
-// renderTreeRow renders a ticket row in tree mode: box-drawing prefix + id/title/status/assignee + blocked-by markers.
-func (m dashboardModel) renderTreeRow(row flatTicketRow) string {
+// renderTreeRow renders a ticket row in tree mode with the same column set as
+// renderIssueRow (type, id, status, priority, PR, assignee, age, title) plus
+// the tree-specific [blocked by: …] marker. The box-drawing prefix replaces
+// the bullet+indent used in list mode.
+func (m dashboardModel) renderTreeRow(row flatTicketRow, width int) string {
 	node := row.node
 	prefix := renderTreePrefix(row.depth)
-	idStr := fmt.Sprintf("%s-%d", m.ticketPrefix, node.ID)
+	idStr := fmt.Sprintf("%-6d", node.ID)
 	coloredStatus := m.theme.ColorStatus(node.Status)
-	line := fmt.Sprintf("%s%s %s [%s]", prefix, idStr, node.Title, coloredStatus)
-	if node.Assignee.Valid && node.Assignee.String != "" {
-		line += fmt.Sprintf(" (%s)", node.Assignee.String)
+	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
+	age := m.theme.Footer.Render(ageRaw)
+
+	prStr := "      " // 6 chars blank when no PR
+	if node.PRNumber.Valid {
+		prStr = fmt.Sprintf("%-6s", fmt.Sprintf("#%d", node.PRNumber.Int64))
 	}
+
+	const priorityWidth = 5
+	pri := m.theme.PriorityCell(node.Priority)
+
+	const typeWidth = 1
+	typ := m.theme.TypeCell(node.IssueType)
+
+	const assigneeWidth = 8
+	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")
+	if node.Assignee.Valid && node.Assignee.String != "" {
+		name := node.Assignee.String
+		if len(name) > assigneeWidth {
+			name = name[:assigneeWidth]
+		}
+		assigneeRaw = fmt.Sprintf("%-*s", assigneeWidth, name)
+	}
+
+	var blockedBy string
 	if len(row.blockedBy) > 0 {
 		var ids []string
 		for _, id := range row.blockedBy {
 			ids = append(ids, fmt.Sprintf("%s-%d", m.ticketPrefix, id))
 		}
-		line += fmt.Sprintf(" [blocked by: %s]", strings.Join(ids, ", "))
+		blockedBy = fmt.Sprintf(" [blocked by: %s]", strings.Join(ids, ", "))
 	}
-	return line
+
+	// Truncate title to fit, accounting for the blocked-by suffix length.
+	fixedLen := lipgloss.Width(prefix) + 1 + typeWidth + 1 + len(idStr) + 1 + len(node.Status) + 1 + priorityWidth + 1 + len(prStr) + 1 + assigneeWidth + 1 + len(ageRaw) + 1 + len(blockedBy)
+	titleMax := width - fixedLen
+	title := node.Title
+	if len(title) > titleMax && titleMax > 3 {
+		title = title[:titleMax-1] + "…"
+	}
+
+	return fmt.Sprintf("%s %s %s %s %s %s %s %s %s%s",
+		prefix, typ, idStr, coloredStatus, pri, prStr, assigneeRaw, age, title, blockedBy,
+	)
 }
 
 // renderTicketDetails renders the expanded detail lines for a ticket.
