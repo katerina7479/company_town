@@ -2011,6 +2011,179 @@ func TestCreateTicket_TDDTestsType(t *testing.T) {
 
 // --- Cancelled-as-terminal tests ---
 
+// mustCreate creates a task issue with the given title and optional parent, sets
+// it open, and returns its ID.
+func mustCreate(t *testing.T, r *IssueRepo, title string, parentID *int) int {
+	t.Helper()
+	id, err := r.Create(title, "task", parentID, nil, nil)
+	if err != nil {
+		t.Fatalf("Create %q: %v", title, err)
+	}
+	return id
+}
+
+// mustUpdateStatus sets an issue's status, fataling the test on error.
+func mustUpdateStatus(t *testing.T, r *IssueRepo, id int, status string) {
+	t.Helper()
+	if err := r.UpdateStatus(id, status); err != nil {
+		t.Fatalf("UpdateStatus %d → %s: %v", id, status, err)
+	}
+}
+
+// mustCreateWithPriority creates a task issue with a specific priority and
+// returns its ID (without setting it open; callers do that).
+func mustCreateWithPriority(t *testing.T, r *IssueRepo, title, priority string) int {
+	t.Helper()
+	id, err := r.Create(title, "task", nil, nil, &priority)
+	if err != nil {
+		t.Fatalf("Create %q: %v", title, err)
+	}
+	return id
+}
+
+// --- Inherited dependency tests (nc-267) ---
+
+func TestSelectable_epicLevelDepGatesAllDescendants(t *testing.T) {
+	r := setupTestRepo(t)
+
+	epicID, _ := r.Create("Epic", "epic", nil, nil, nil)
+	subID, _ := r.Create("Sub", "task", &epicID, nil, nil)
+	task1 := mustCreate(t, r, "task1", &subID)
+	task2 := mustCreate(t, r, "task2", &subID)
+	extDep := mustCreate(t, r, "external dep", nil)
+
+	mustUpdateStatus(t, r, task1, StatusOpen)
+	mustUpdateStatus(t, r, task2, StatusOpen)
+	mustUpdateStatus(t, r, extDep, StatusOpen)
+
+	// Wire dep at the EPIC level — both task descendants should be gated.
+	if err := r.AddDependency(epicID, extDep); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	sel, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	for _, s := range sel {
+		if s.ID == task1 || s.ID == task2 {
+			t.Errorf("descendants should be gated by epic dep, but got id=%d in selectable", s.ID)
+		}
+	}
+
+	// Close the dep — descendants should now appear.
+	mustUpdateStatus(t, r, extDep, StatusClosed)
+	sel, err = r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable after dep close: %v", err)
+	}
+	got := make([]int, 0, len(sel))
+	for _, s := range sel {
+		got = append(got, s.ID)
+	}
+	sort.Ints(got)
+	want := []int{task1, task2}
+	sort.Ints(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("after dep close: selectable = %v, want %v", got, want)
+	}
+}
+
+func TestSelectable_midLevelDepDoesNotBlockSiblings(t *testing.T) {
+	r := setupTestRepo(t)
+
+	epicID, _ := r.Create("Epic", "epic", nil, nil, nil)
+	subA, _ := r.Create("SubA", "task", &epicID, nil, nil)
+	subB, _ := r.Create("SubB", "task", &epicID, nil, nil)
+	taskA := mustCreate(t, r, "taskA child", &subA)
+	taskB := mustCreate(t, r, "taskB child", &subB)
+	extDep := mustCreate(t, r, "external dep", nil)
+
+	mustUpdateStatus(t, r, taskA, StatusOpen)
+	mustUpdateStatus(t, r, taskB, StatusOpen)
+	mustUpdateStatus(t, r, extDep, StatusOpen)
+
+	// Dep on subA only — taskB should remain selectable.
+	if err := r.AddDependency(subA, extDep); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	sel, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	gotIDs := make(map[int]bool)
+	for _, s := range sel {
+		gotIDs[s.ID] = true
+	}
+	if gotIDs[taskA] {
+		t.Errorf("taskA should be blocked by subA dep")
+	}
+	if !gotIDs[taskB] {
+		t.Errorf("taskB should be selectable (sibling subtree), got ids: %v", gotIDs)
+	}
+}
+
+func TestSelectable_directDepStillWorks(t *testing.T) {
+	r := setupTestRepo(t)
+
+	a := mustCreate(t, r, "a", nil)
+	b := mustCreate(t, r, "b", nil)
+	mustUpdateStatus(t, r, a, StatusOpen)
+	mustUpdateStatus(t, r, b, StatusOpen)
+	if err := r.AddDependency(a, b); err != nil {
+		t.Fatalf("AddDependency: %v", err)
+	}
+
+	sel, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	for _, s := range sel {
+		if s.ID == a {
+			t.Errorf("a should be blocked by open dep b")
+		}
+	}
+
+	mustUpdateStatus(t, r, b, StatusClosed)
+	sel, err = r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable after b closed: %v", err)
+	}
+	found := false
+	for _, s := range sel {
+		if s.ID == a {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a should be selectable after b closes")
+	}
+}
+
+func TestSelectable_priorityOrderingPreserved(t *testing.T) {
+	r := setupTestRepo(t)
+
+	p2 := mustCreateWithPriority(t, r, "p2", "P2")
+	p0 := mustCreateWithPriority(t, r, "p0", "P0")
+	p1 := mustCreateWithPriority(t, r, "p1", "P1")
+	for _, id := range []int{p2, p0, p1} {
+		mustUpdateStatus(t, r, id, StatusOpen)
+	}
+
+	sel, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	var got []int
+	for _, s := range sel {
+		got = append(got, s.ID)
+	}
+	if len(got) < 3 || got[0] != p0 || got[1] != p1 || got[2] != p2 {
+		t.Errorf("priority ordering incorrect: got %v, want [%d %d %d]", got, p0, p1, p2)
+	}
+}
+
 func TestSelectable_CancelledDepDoesNotBlock(t *testing.T) {
 	r := setupTestRepo(t)
 
