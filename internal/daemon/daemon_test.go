@@ -1633,10 +1633,11 @@ func TestHandleAutoClose_notifiesOnlyArchitectWhenMayorAbsent(t *testing.T) {
 	}
 }
 
-func TestHandleAutoClose_nonEpicParentAutoCloses(t *testing.T) {
+func TestHandleAutoClose_nonEpicParentNotAutoClose(t *testing.T) {
 	d, issues, _ := newTestDaemon(t)
 
-	// A non-epic parent (task type) should also auto-close when its child is closed.
+	// A non-epic parent (task type) must NOT auto-close when its child is closed —
+	// only epics qualify for auto-close.
 	parentID, _ := issues.Create("Task Parent", "task", nil, nil, nil)
 	issues.UpdateStatus(parentID, "open")
 	childID, _ := issues.Create("Subtask", "task", &parentID, nil, nil)
@@ -1645,8 +1646,8 @@ func TestHandleAutoClose_nonEpicParentAutoCloses(t *testing.T) {
 	d.handleAutoClose()
 
 	parent, _ := issues.Get(parentID)
-	if parent.Status != "closed" {
-		t.Errorf("expected non-epic parent status=closed, got %q", parent.Status)
+	if parent.Status == "closed" {
+		t.Errorf("non-epic parent should not be auto-closed, but got status=%q", parent.Status)
 	}
 }
 
