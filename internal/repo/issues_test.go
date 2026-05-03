@@ -1039,7 +1039,7 @@ func TestListIssuesWithAllDescendantsTerminal_recursive(t *testing.T) {
 	}
 }
 
-func TestListIssuesWithAllDescendantsTerminal_nonEpicQualifies(t *testing.T) {
+func TestListIssuesWithAllDescendantsTerminal_nonEpicExcluded(t *testing.T) {
 	r := setupTestRepo(t)
 
 	parent, _ := r.Create("task-with-children", "task", nil, nil, nil)
@@ -1051,12 +1051,10 @@ func TestListIssuesWithAllDescendantsTerminal_nonEpicQualifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ids []int
 	for _, issue := range ready {
-		ids = append(ids, issue.ID)
-	}
-	if len(ids) != 1 || ids[0] != parent {
-		t.Errorf("expected non-epic parent to be auto-closeable, got %v", ids)
+		if issue.ID == parent {
+			t.Errorf("non-epic parent (id=%d) should not be auto-closeable, but was returned", parent)
+		}
 	}
 }
 

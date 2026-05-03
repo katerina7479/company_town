@@ -748,9 +748,9 @@ func pickMostRecentPR(entries []prListEntry) int {
 	return best.Number
 }
 
-// handleAutoClose closes any non-closed issue (epic, task, bug, etc.) whose
-// transitive descendants are all closed. Generalises the previous epic-only
-// behaviour per nc-260.
+// handleAutoClose closes epics whose transitive descendants are all terminal
+// (closed or cancelled). Only epics qualify — tasks and bugs with their own
+// scope must be closed explicitly.
 func (d *Daemon) handleAutoClose() {
 	issues, err := d.issues.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {

@@ -824,16 +824,18 @@ func (r *IssueRepo) collectDescendants(id int, visited map[int]bool, depth int, 
 	return *out, nil
 }
 
-// ListIssuesWithAllDescendantsTerminal returns non-terminal issues that have at
+// ListIssuesWithAllDescendantsTerminal returns non-terminal epics that have at
 // least one child AND all transitive descendants are in a terminal status
-// (closed or cancelled). Applies to any issue_type.
+// (closed or cancelled). Only issue_type = 'epic' qualifies for auto-close;
+// tasks, bugs, and other types with their own scope must be closed explicitly.
 func (r *IssueRepo) ListIssuesWithAllDescendantsTerminal() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
 		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at,
 		        repair_cycle_count, repair_reason
 		 FROM issues
-		 WHERE status NOT IN ('closed', 'cancelled')
+		 WHERE issue_type = 'epic'
+		   AND status NOT IN ('closed', 'cancelled')
 		   AND EXISTS (SELECT 1 FROM issues child WHERE child.parent_id = issues.id)
 		 ORDER BY id`,
 	)
