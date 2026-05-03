@@ -712,7 +712,7 @@ func (m dashboardModel) unclosedAncestorDeps(id int) []int {
 	for _, nodeID := range chain {
 		deps, _ := m.issues.ListDependencies(nodeID)
 		for _, d := range deps {
-			if d.DependsOnStatus != repo.StatusClosed {
+			if !repo.IsTerminalStatus(d.DependsOnStatus) {
 				out = append(out, d.DependsOnID)
 			}
 		}
@@ -889,7 +889,7 @@ func (m dashboardModel) renderTickets(width, height int) string {
 		for i, fn := range flat {
 			var line string
 			if m.treeMode {
-				line = m.renderTreeRow(fn, innerWidth)
+				line = m.renderTreeRow(fn)
 			} else {
 				line = m.renderIssueRow(fn.node, fn.depth, innerWidth)
 			}
@@ -1000,7 +1000,7 @@ func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width in
 }
 
 // renderTreeRow renders a ticket row in tree mode: box-drawing prefix + id/title/status/assignee + blocked-by markers.
-func (m dashboardModel) renderTreeRow(row flatTicketRow, width int) string {
+func (m dashboardModel) renderTreeRow(row flatTicketRow) string {
 	node := row.node
 	prefix := renderTreePrefix(row.depth)
 	idStr := fmt.Sprintf("%s-%d", m.ticketPrefix, node.ID)
@@ -1016,7 +1016,6 @@ func (m dashboardModel) renderTreeRow(row flatTicketRow, width int) string {
 		}
 		line += fmt.Sprintf(" [blocked by: %s]", strings.Join(ids, ", "))
 	}
-	_ = width // future: truncate title if needed
 	return line
 }
 

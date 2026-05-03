@@ -3146,6 +3146,39 @@ func TestDashboard_treeRowsIncludeBlockedByMarker(t *testing.T) {
 	}
 }
 
+func TestDashboard_treeRowsBlockedByIgnoresTerminalDeps(t *testing.T) {
+	m := newTestDashboardModel(t)
+	parent := insertIssue(t, m, "parent", nil)
+	child := insertIssue(t, m, "child", &parent)
+
+	closedDep := insertIssue(t, m, "closed dep", nil)
+	if err := m.issues.UpdateStatus(closedDep, repo.StatusClosed); err != nil {
+		t.Fatal(err)
+	}
+	cancelledDep := insertIssue(t, m, "cancelled dep", nil)
+	if err := m.issues.UpdateStatus(cancelledDep, repo.StatusCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.issues.AddDependency(parent, closedDep); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.issues.AddDependency(parent, cancelledDep); err != nil {
+		t.Fatal(err)
+	}
+	m.treeMode = true
+
+	rows := m.flatTreeRows()
+	var childRow flatTicketRow
+	for _, r := range rows {
+		if r.node.ID == child {
+			childRow = r
+		}
+	}
+	if len(childRow.blockedBy) != 0 {
+		t.Errorf("child should not be blocked when all parent deps are terminal; got blockedBy=%v", childRow.blockedBy)
+	}
+}
+
 func TestDashboard_treeRowsRespectShowClosed(t *testing.T) {
 	m := newTestDashboardModel(t)
 	parent := insertIssue(t, m, "parent", nil)
