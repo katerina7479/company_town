@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/katerina7479/company_town/internal/db"
 )
@@ -2355,5 +2356,107 @@ func TestSelectable_childOfOpenAncestor_included(t *testing.T) {
 	ids := selectableIDs(t, r)
 	if !ids[childID] {
 		t.Errorf("child of open parent should be selectable")
+	}
+}
+
+// --- ci_running_entered_at tests (nc-281) ---
+
+func TestUpdateStatus_enteringCIRunning_setsCIRunningEnteredAt(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("CI ticket", "task", nil, nil, nil)
+
+	before := time.Now()
+	if err := r.UpdateStatus(id, StatusCIRunning); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	after := time.Now()
+
+	issue, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !issue.CIRunningEnteredAt.Valid {
+		t.Fatal("ci_running_entered_at must be set when entering ci_running")
+	}
+	ts := issue.CIRunningEnteredAt.Time
+	if ts.Before(before) || ts.After(after) {
+		t.Errorf("ci_running_entered_at %v outside expected range [%v, %v]", ts, before, after)
+	}
+}
+
+func TestUpdateStatus_unrelatedWriteDoesNotBumpCIRunningEnteredAt(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("CI ticket", "task", nil, nil, nil)
+	r.UpdateStatus(id, StatusCIRunning)
+
+	issue, _ := r.Get(id)
+	enteredAt := issue.CIRunningEnteredAt.Time
+
+	// An unrelated write that bumps updated_at (e.g. repair_reason write).
+	if err := r.SetRepairReason(id, "some note"); err != nil {
+		t.Fatalf("SetRepairReason: %v", err)
+	}
+
+	issue2, _ := r.Get(id)
+	if issue2.UpdatedAt.Before(issue.UpdatedAt) || issue2.UpdatedAt.Equal(issue.UpdatedAt) {
+		// In SQLite CURRENT_TIMESTAMP has second precision, so they may be equal —
+		// that's fine. We just need ci_running_entered_at to be unchanged.
+	}
+	if !issue2.CIRunningEnteredAt.Valid || !issue2.CIRunningEnteredAt.Time.Equal(enteredAt) {
+		t.Errorf("ci_running_entered_at changed after unrelated write: was %v, got %v",
+			enteredAt, issue2.CIRunningEnteredAt.Time)
+	}
+}
+
+func TestUpdateStatus_exitingCIRunning_clearsCIRunningEnteredAt(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("CI ticket", "task", nil, nil, nil)
+	r.UpdateStatus(id, StatusCIRunning)
+
+	// Verify it was set.
+	issue, _ := r.Get(id)
+	if !issue.CIRunningEnteredAt.Valid {
+		t.Fatal("precondition: ci_running_entered_at must be set after entering ci_running")
+	}
+
+	// Transition out of ci_running.
+	if err := r.UpdateStatus(id, StatusInReview); err != nil {
+		t.Fatalf("UpdateStatus to in_review: %v", err)
+	}
+
+	issue2, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue2.CIRunningEnteredAt.Valid {
+		t.Errorf("ci_running_entered_at should be NULL after leaving ci_running, got %v",
+			issue2.CIRunningEnteredAt.Time)
+	}
+}
+
+func TestUpdateStatus_reEntryToCIRunning_stampsFreshTime(t *testing.T) {
+	r := setupTestRepo(t)
+	id, _ := r.Create("CI ticket", "task", nil, nil, nil)
+
+	// First entry.
+	r.UpdateStatus(id, StatusCIRunning)
+	firstEntry, _ := r.Get(id)
+	firstTime := firstEntry.CIRunningEnteredAt.Time
+
+	// Leave ci_running (clears the timestamp).
+	r.UpdateStatus(id, StatusRepairing)
+
+	// Re-enter ci_running — should stamp a fresh timestamp.
+	r.UpdateStatus(id, StatusCIRunning)
+	reEntry, err := r.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reEntry.CIRunningEnteredAt.Valid {
+		t.Fatal("ci_running_entered_at must be set on re-entry to ci_running")
+	}
+	if reEntry.CIRunningEnteredAt.Time.Before(firstTime) {
+		t.Errorf("re-entry ci_running_entered_at %v is before first entry %v",
+			reEntry.CIRunningEnteredAt.Time, firstTime)
 	}
 }

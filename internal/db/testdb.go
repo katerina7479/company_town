@@ -23,8 +23,9 @@ CREATE TABLE IF NOT EXISTS issues (
   created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   closed_at           DATETIME,
-  repair_cycle_count  INTEGER  NOT NULL DEFAULT 0,
-  repair_reason       TEXT,
+  repair_cycle_count      INTEGER  NOT NULL DEFAULT 0,
+  repair_reason           TEXT,
+  ci_running_entered_at   DATETIME,
   FOREIGN KEY (parent_id) REFERENCES issues(id)
 );
 
