@@ -39,3 +39,12 @@ var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead, StatusS
 func IsTerminalStatus(s string) bool {
 	return s == StatusClosed || s == StatusCancelled
 }
+
+// IsBlockingAncestorStatus returns true for ancestor statuses that should
+// prevent descendants from being selected for work:
+//   - on_hold: explicitly paused; children should pause too.
+//   - cancelled: work abandoned; no point landing children under a dead branch.
+//   - draft: scope not yet stable; children may change before the parent is finalised.
+func IsBlockingAncestorStatus(s string) bool {
+	return s == StatusOnHold || s == StatusCancelled || s == StatusDraft
+}

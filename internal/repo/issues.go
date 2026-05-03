@@ -589,7 +589,8 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 // Selectable returns unassigned tickets that are ready for daemon-driven
 // assignment. Selection includes:
 //   - repairing tickets with no assignee (orphaned — prole died before fixing)
-//   - open tickets with no unmet dependencies and no assignee
+//   - open tickets with no unmet dependencies, no assignee, and no ancestor
+//     in a blocking status (on_hold, cancelled, draft)
 //
 // Ordering (strict): repairing before open, bugs before tasks before other
 // types, P0→P1→P2→P3→P4→P5→null, then lower ID first.
@@ -642,19 +643,27 @@ func (r *IssueRepo) Selectable() ([]*Issue, error) {
 		return nil, err
 	}
 
-	// Step 2: filter by self-and-ancestor deps. Repairing tickets skip the dep
-	// check — they already had a prole assigned; blocking them again is wrong.
+	// Step 2: filter by self-and-ancestor deps and ancestor status. Repairing
+	// tickets skip both checks — they already had a prole assigned; blocking
+	// them again is wrong.
 	var out []*Issue
 	for _, c := range candidates {
 		if c.Status == StatusRepairing {
 			out = append(out, c)
 			continue
 		}
-		ok, err := r.allDepsClosed(c.ID)
+		depsOK, err := r.allDepsClosed(c.ID)
 		if err != nil {
 			return nil, fmt.Errorf("checking deps for %d: %w", c.ID, err)
 		}
-		if ok {
+		if !depsOK {
+			continue
+		}
+		chainOK, err := r.ancestorChainAllowsWork(c.ID)
+		if err != nil {
+			return nil, fmt.Errorf("checking ancestor chain for %d: %w", c.ID, err)
+		}
+		if chainOK {
 			out = append(out, c)
 		}
 	}
@@ -675,6 +684,26 @@ func (r *IssueRepo) allDepsClosed(id int) (bool, error) {
 			return false, err
 		}
 		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// ancestorChainAllowsWork reports whether the ancestor chain of id contains no
+// blocking statuses (on_hold, cancelled, draft). Returns true when id has no
+// parent or all ancestors have non-blocking statuses.
+func (r *IssueRepo) ancestorChainAllowsWork(id int) (bool, error) {
+	ancestors, err := r.ListAncestors(id)
+	if err != nil {
+		return false, err
+	}
+	for _, aid := range ancestors {
+		var status string
+		if err := r.db.QueryRow(`SELECT status FROM issues WHERE id = ?`, aid).Scan(&status); err != nil {
+			return false, fmt.Errorf("checking ancestor %d status: %w", aid, err)
+		}
+		if IsBlockingAncestorStatus(status) {
 			return false, nil
 		}
 	}
