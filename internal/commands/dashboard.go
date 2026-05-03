@@ -254,7 +254,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.statusMsg = "set repair_reason failed: " + err.Error()
 					}
 				case "unassign_confirm":
-					if m.inputBuffer == "y" {
+					if strings.EqualFold(m.inputBuffer, "y") { // accept Y or y
 						id, err := strconv.Atoi(m.inputTarget)
 						if err != nil {
 							m.statusMsg = "internal error: bad ticket id"
