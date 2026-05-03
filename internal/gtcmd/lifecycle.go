@@ -51,6 +51,10 @@ func Start(args []string) error {
 	}
 	defer conn.Close()
 
+	if err := db.RunMigrations(conn); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+
 	if cfg.SessionPrefix != "" {
 		session.SessionPrefix = cfg.SessionPrefix
 	}
