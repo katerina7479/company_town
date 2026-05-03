@@ -989,7 +989,7 @@ func TestListDescendants_noChildren(t *testing.T) {
 	}
 }
 
-func TestListIssuesWithAllDescendantsClosed_recursive(t *testing.T) {
+func TestListIssuesWithAllDescendantsTerminal_recursive(t *testing.T) {
 	r := setupTestRepo(t)
 
 	epic, _ := r.Create("epic", "epic", nil, nil, nil)
@@ -1001,7 +1001,7 @@ func TestListIssuesWithAllDescendantsClosed_recursive(t *testing.T) {
 
 	// Close only task1 — nothing should be ready yet.
 	r.UpdateStatus(task1, "closed")
-	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	ready, err := r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1012,7 +1012,7 @@ func TestListIssuesWithAllDescendantsClosed_recursive(t *testing.T) {
 	// Close task2 — sub qualifies (all its descendants are closed). Epic does NOT
 	// qualify yet because sub is still open; it qualifies only after sub is closed.
 	r.UpdateStatus(task2, "closed")
-	ready, err = r.ListIssuesWithAllDescendantsClosed()
+	ready, err = r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1026,7 +1026,7 @@ func TestListIssuesWithAllDescendantsClosed_recursive(t *testing.T) {
 
 	// Close sub — now epic qualifies.
 	r.UpdateStatus(sub, "closed")
-	ready, err = r.ListIssuesWithAllDescendantsClosed()
+	ready, err = r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1039,7 +1039,7 @@ func TestListIssuesWithAllDescendantsClosed_recursive(t *testing.T) {
 	}
 }
 
-func TestListIssuesWithAllDescendantsClosed_nonEpicQualifies(t *testing.T) {
+func TestListIssuesWithAllDescendantsTerminal_nonEpicQualifies(t *testing.T) {
 	r := setupTestRepo(t)
 
 	parent, _ := r.Create("task-with-children", "task", nil, nil, nil)
@@ -1047,7 +1047,7 @@ func TestListIssuesWithAllDescendantsClosed_nonEpicQualifies(t *testing.T) {
 	child, _ := r.Create("subtask", "task", &parent, nil, nil)
 	r.UpdateStatus(child, "closed")
 
-	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	ready, err := r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1060,14 +1060,14 @@ func TestListIssuesWithAllDescendantsClosed_nonEpicQualifies(t *testing.T) {
 	}
 }
 
-func TestListIssuesWithAllDescendantsClosed_noChildrenExcluded(t *testing.T) {
+func TestListIssuesWithAllDescendantsTerminal_noChildrenExcluded(t *testing.T) {
 	r := setupTestRepo(t)
 
 	// Issue with no children should not appear even in "open" status.
 	orphan, _ := r.Create("orphan", "task", nil, nil, nil)
 	r.UpdateStatus(orphan, "open")
 
-	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	ready, err := r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1076,7 +1076,7 @@ func TestListIssuesWithAllDescendantsClosed_noChildrenExcluded(t *testing.T) {
 	}
 }
 
-func TestListIssuesWithAllDescendantsClosed_alreadyClosedExcluded(t *testing.T) {
+func TestListIssuesWithAllDescendantsTerminal_alreadyClosedExcluded(t *testing.T) {
 	r := setupTestRepo(t)
 
 	epic, _ := r.Create("epic", "epic", nil, nil, nil)
@@ -1085,7 +1085,7 @@ func TestListIssuesWithAllDescendantsClosed_alreadyClosedExcluded(t *testing.T) 
 	r.UpdateStatus(child, "closed")
 	r.UpdateStatus(epic, "closed")
 
-	ready, err := r.ListIssuesWithAllDescendantsClosed()
+	ready, err := r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2035,7 +2035,7 @@ func TestSelectable_CancelledDepDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestIssueRepo_ListIssuesWithAllDescendantsClosed_MixedCancelledAndClosed(t *testing.T) {
+func TestIssueRepo_ListIssuesWithAllDescendantsTerminal_MixedCancelledAndClosed(t *testing.T) {
 	r := setupTestRepo(t)
 
 	// Epic with one closed child and one cancelled child — all children terminal.
@@ -2054,9 +2054,9 @@ func TestIssueRepo_ListIssuesWithAllDescendantsClosed_MixedCancelledAndClosed(t 
 	child4, _ := r.Create("Open child", "task", &epic2ID, nil, nil)
 	r.UpdateStatus(child4, StatusOpen) //nolint:errcheck
 
-	epics, err := r.ListIssuesWithAllDescendantsClosed()
+	epics, err := r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
-		t.Fatalf("ListIssuesWithAllDescendantsClosed: %v", err)
+		t.Fatalf("ListIssuesWithAllDescendantsTerminal: %v", err)
 	}
 	if len(epics) != 1 {
 		t.Fatalf("expected 1 epic, got %d", len(epics))
@@ -2066,7 +2066,7 @@ func TestIssueRepo_ListIssuesWithAllDescendantsClosed_MixedCancelledAndClosed(t 
 	}
 }
 
-func TestIssueRepo_ListIssuesWithAllDescendantsClosed_CancelledEpicExcluded(t *testing.T) {
+func TestIssueRepo_ListIssuesWithAllDescendantsTerminal_CancelledEpicExcluded(t *testing.T) {
 	r := setupTestRepo(t)
 
 	// A cancelled epic should not be returned even if all its children are closed.
@@ -2076,9 +2076,9 @@ func TestIssueRepo_ListIssuesWithAllDescendantsClosed_CancelledEpicExcluded(t *t
 	r.UpdateStatus(child, StatusClosed)     //nolint:errcheck
 	r.UpdateStatus(epicID, StatusCancelled) //nolint:errcheck
 
-	epics, err := r.ListIssuesWithAllDescendantsClosed()
+	epics, err := r.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
-		t.Fatalf("ListIssuesWithAllDescendantsClosed: %v", err)
+		t.Fatalf("ListIssuesWithAllDescendantsTerminal: %v", err)
 	}
 	if len(epics) != 0 {
 		t.Errorf("expected no epics (cancelled epic excluded), got %d", len(epics))

@@ -752,7 +752,7 @@ func pickMostRecentPR(entries []prListEntry) int {
 // transitive descendants are all closed. Generalises the previous epic-only
 // behaviour per nc-260.
 func (d *Daemon) handleAutoClose() {
-	issues, err := d.issues.ListIssuesWithAllDescendantsClosed()
+	issues, err := d.issues.ListIssuesWithAllDescendantsTerminal()
 	if err != nil {
 		d.logger.Printf("error listing auto-closeable issues: %v", err)
 		return

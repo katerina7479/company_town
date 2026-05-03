@@ -733,10 +733,10 @@ func (r *IssueRepo) collectDescendants(id int, visited map[int]bool, depth int, 
 	return *out, nil
 }
 
-// ListIssuesWithAllDescendantsClosed returns non-terminal issues that have at
+// ListIssuesWithAllDescendantsTerminal returns non-terminal issues that have at
 // least one child AND all transitive descendants are in a terminal status
 // (closed or cancelled). Applies to any issue_type.
-func (r *IssueRepo) ListIssuesWithAllDescendantsClosed() ([]*Issue, error) {
+func (r *IssueRepo) ListIssuesWithAllDescendantsTerminal() ([]*Issue, error) {
 	rows, err := r.db.Query(
 		`SELECT id, issue_type, status, title, description, specialty, branch,
 		        pr_number, assignee, parent_id, priority, created_at, updated_at, closed_at,
