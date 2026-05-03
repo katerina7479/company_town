@@ -4603,7 +4603,7 @@ func TestHandleStuckCIRunning_escalatesToMayor(t *testing.T) {
 	// Simulate the ticket having been in ci_running for >threshold.
 	d.nowFn = func() time.Time {
 		issue, _ := issues.Get(id)
-		return issue.UpdatedAt.Add(35 * time.Minute)
+		return issue.CIRunningEnteredAt.Time.Add(35 * time.Minute)
 	}
 
 	d.handleStuckCIRunning()
@@ -4634,7 +4634,7 @@ func TestHandleStuckCIRunning_noEscalationWhenBelowThreshold(t *testing.T) {
 	// Only 10 minutes elapsed — below threshold.
 	d.nowFn = func() time.Time {
 		issue, _ := issues.Get(id)
-		return issue.UpdatedAt.Add(10 * time.Minute)
+		return issue.CIRunningEnteredAt.Time.Add(10 * time.Minute)
 	}
 
 	d.handleStuckCIRunning()
@@ -4654,7 +4654,7 @@ func TestHandleStuckCIRunning_noEscalationWhenMayorNotRunning(t *testing.T) {
 
 	d.nowFn = func() time.Time {
 		issue, _ := issues.Get(id)
-		return issue.UpdatedAt.Add(60 * time.Minute)
+		return issue.CIRunningEnteredAt.Time.Add(60 * time.Minute)
 	}
 
 	d.handleStuckCIRunning()
@@ -4675,7 +4675,7 @@ func TestHandleStuckCIRunning_disabledWhenThresholdZero(t *testing.T) {
 
 	d.nowFn = func() time.Time {
 		issue, _ := issues.Get(id)
-		return issue.UpdatedAt.Add(24 * time.Hour)
+		return issue.CIRunningEnteredAt.Time.Add(24 * time.Hour)
 	}
 
 	d.handleStuckCIRunning()
@@ -4697,7 +4697,7 @@ func TestHandleStuckCIRunning_cooldownSuppressesRepeat(t *testing.T) {
 
 	d.nowFn = func() time.Time {
 		issue, _ := issues.Get(id)
-		return issue.UpdatedAt.Add(35 * time.Minute)
+		return issue.CIRunningEnteredAt.Time.Add(35 * time.Minute)
 	}
 
 	d.handleStuckCIRunning()
@@ -4730,6 +4730,97 @@ func TestHandleStuckCIRunning_skipsNonCIRunningTickets(t *testing.T) {
 
 	if len(*sent) != 0 {
 		t.Errorf("expected no escalation for pr_open ticket, got %d messages", len(*sent))
+	}
+}
+
+// TestHandleStuckCIRunning_nullEnteredAtSkips verifies that a ticket in
+// ci_running with no ci_running_entered_at (e.g. a legacy row from before the
+// nc-281 migration) is skipped rather than treated as infinitely old.
+func TestHandleStuckCIRunning_nullEnteredAtSkips(t *testing.T) {
+	mayorSession := "ct-mayor"
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	issues := repo.NewIssueRepo(conn, nil)
+	agents := repo.NewAgentRepo(conn, nil)
+
+	d, _, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+	// Replace d's repos with our conn-owning repos so we can do direct SQL too.
+	d.issues = issues
+	d.agents = agents
+	d.ciRunningStuckThreshold = 30 * time.Minute
+
+	id, _ := issues.Create("Legacy CI ticket", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 48)
+
+	// Null out ci_running_entered_at to simulate a pre-migration row.
+	if _, err := conn.Exec(`UPDATE issues SET ci_running_entered_at = NULL WHERE id = ?`, id); err != nil {
+		t.Fatalf("nulling ci_running_entered_at: %v", err)
+	}
+
+	d.nowFn = func() time.Time { return time.Now().Add(24 * time.Hour) }
+
+	d.handleStuckCIRunning()
+
+	if len(*sent) != 0 {
+		t.Errorf("expected no escalation when ci_running_entered_at is NULL, got %d messages", len(*sent))
+	}
+}
+
+// TestHandleStuckCIRunning_usesEnteredAtNotUpdatedAt is the regression guard
+// for the nc-281 bug: an unrelated update bumps updated_at long after the
+// ticket entered ci_running. With ci_running_entered_at < threshold the handler
+// must NOT escalate, even if updated_at would put elapsed below threshold.
+//
+// Setup: ci_running_entered_at is set to 1 hour ago; updated_at is then bumped
+// to "just now" (simulating a repair_reason or branch write). nowFn = wall clock.
+// The handler must see elapsed ≥ threshold (from ci_running_entered_at) and
+// NOT be misled by the recent updated_at.
+func TestHandleStuckCIRunning_usesEnteredAtNotUpdatedAt(t *testing.T) {
+	mayorSession := "ct-mayor"
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	issues := repo.NewIssueRepo(conn, nil)
+	agents := repo.NewAgentRepo(conn, nil)
+
+	d, _, _, sent := newTestDaemonWithSessions(t, []string{mayorSession})
+	d.issues = issues
+	d.agents = agents
+	d.ciRunningStuckThreshold = 30 * time.Minute
+
+	id, _ := issues.Create("Ticket with recent updated_at", "task", nil, nil, nil)
+	issues.UpdateStatus(id, "ci_running")
+	issues.SetPR(id, 49)
+
+	// Back-date ci_running_entered_at to 1 hour ago to simulate a long-stuck ticket.
+	oldEntry := time.Now().UTC().Add(-1 * time.Hour)
+	if _, err := conn.Exec(`UPDATE issues SET ci_running_entered_at = ? WHERE id = ?`, oldEntry, id); err != nil {
+		t.Fatalf("back-dating ci_running_entered_at: %v", err)
+	}
+
+	// Bump updated_at to "just now" — simulating an unrelated write (repair_reason,
+	// branch column, etc.) that the original bug conflated with "entered ci_running".
+	if _, err := conn.Exec(`UPDATE issues SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
+		t.Fatalf("bumping updated_at: %v", err)
+	}
+
+	// nowFn = wall clock (ci_running_entered_at is 1h ago → elapsed > 30m threshold).
+	d.nowFn = time.Now
+
+	d.handleStuckCIRunning()
+
+	// Must escalate: elapsed from ci_running_entered_at is ~1h, above threshold.
+	// If the handler incorrectly used updated_at (just now), elapsed ≈ 0 — no escalation.
+	if len(*sent) != 1 {
+		t.Errorf("expected 1 escalation (1h in ci_running > 30m threshold), got %d", len(*sent))
 	}
 }
 

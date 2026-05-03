@@ -887,7 +887,12 @@ func (d *Daemon) handleStuckCIRunning() {
 		if issue.Status != repo.StatusCIRunning {
 			continue
 		}
-		elapsed := now.Sub(issue.UpdatedAt)
+		if !issue.CIRunningEnteredAt.Valid {
+			d.logger.Printf("ticket %s-%d is in ci_running but ci_running_entered_at is NULL — skipping stuck check",
+				d.cfg.TicketPrefix, issue.ID)
+			continue
+		}
+		elapsed := now.Sub(issue.CIRunningEnteredAt.Time)
 		if elapsed < d.ciRunningStuckThreshold {
 			continue
 		}
