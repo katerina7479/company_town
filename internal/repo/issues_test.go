@@ -2050,6 +2050,8 @@ func TestSelectable_epicLevelDepGatesAllDescendants(t *testing.T) {
 	task2 := mustCreate(t, r, "task2", &subID)
 	extDep := mustCreate(t, r, "external dep", nil)
 
+	mustUpdateStatus(t, r, epicID, StatusOpen)
+	mustUpdateStatus(t, r, subID, StatusOpen)
 	mustUpdateStatus(t, r, task1, StatusOpen)
 	mustUpdateStatus(t, r, task2, StatusOpen)
 	mustUpdateStatus(t, r, extDep, StatusOpen)
@@ -2080,7 +2082,9 @@ func TestSelectable_epicLevelDepGatesAllDescendants(t *testing.T) {
 		got = append(got, s.ID)
 	}
 	sort.Ints(got)
-	want := []int{task1, task2}
+	// subID is also open with no blocking ancestors after the dep closes, so it
+	// is selectable too alongside the two leaf tasks.
+	want := []int{subID, task1, task2}
 	sort.Ints(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("after dep close: selectable = %v, want %v", got, want)
@@ -2097,6 +2101,9 @@ func TestSelectable_midLevelDepDoesNotBlockSiblings(t *testing.T) {
 	taskB := mustCreate(t, r, "taskB child", &subB)
 	extDep := mustCreate(t, r, "external dep", nil)
 
+	mustUpdateStatus(t, r, epicID, StatusOpen)
+	mustUpdateStatus(t, r, subA, StatusOpen)
+	mustUpdateStatus(t, r, subB, StatusOpen)
 	mustUpdateStatus(t, r, taskA, StatusOpen)
 	mustUpdateStatus(t, r, taskB, StatusOpen)
 	mustUpdateStatus(t, r, extDep, StatusOpen)
@@ -2253,5 +2260,100 @@ func TestIssueRepo_ListIssuesWithAllDescendantsTerminal_CancelledEpicExcluded(t 
 	}
 	if len(epics) != 0 {
 		t.Errorf("expected no epics (cancelled epic excluded), got %d", len(epics))
+	}
+}
+
+// --- nc-278: Selectable ancestor-status gate ---
+
+func selectableIDs(t *testing.T, r *IssueRepo) map[int]bool {
+	t.Helper()
+	result, err := r.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	ids := make(map[int]bool, len(result))
+	for _, i := range result {
+		ids[i.ID] = true
+	}
+	return ids
+}
+
+func TestSelectable_childOfOnHoldAncestor_excluded(t *testing.T) {
+	r := setupTestRepo(t)
+	parentID, _ := r.Create("On-hold epic", "epic", nil, nil, nil)
+	r.UpdateStatus(parentID, StatusOnHold)
+	childID, _ := r.Create("Child task", "task", &parentID, nil, nil)
+	r.UpdateStatus(childID, StatusOpen)
+
+	ids := selectableIDs(t, r)
+	if ids[childID] {
+		t.Errorf("child of on_hold parent should not be selectable")
+	}
+}
+
+func TestSelectable_childOfCancelledAncestor_excluded(t *testing.T) {
+	r := setupTestRepo(t)
+	parentID, _ := r.Create("Cancelled epic", "epic", nil, nil, nil)
+	r.UpdateStatus(parentID, StatusCancelled)
+	childID, _ := r.Create("Child task", "task", &parentID, nil, nil)
+	r.UpdateStatus(childID, StatusOpen)
+
+	ids := selectableIDs(t, r)
+	if ids[childID] {
+		t.Errorf("child of cancelled parent should not be selectable")
+	}
+}
+
+func TestSelectable_childOfDraftAncestor_excluded(t *testing.T) {
+	r := setupTestRepo(t)
+	parentID, _ := r.Create("Draft epic", "epic", nil, nil, nil)
+	// draft is the default status; no UpdateStatus call needed
+	childID, _ := r.Create("Child task", "task", &parentID, nil, nil)
+	r.UpdateStatus(childID, StatusOpen)
+
+	ids := selectableIDs(t, r)
+	if ids[childID] {
+		t.Errorf("child of draft parent should not be selectable")
+	}
+}
+
+func TestSelectable_childOfClosedAncestor_included(t *testing.T) {
+	r := setupTestRepo(t)
+	parentID, _ := r.Create("Closed epic", "epic", nil, nil, nil)
+	r.UpdateStatus(parentID, StatusClosed)
+	childID, _ := r.Create("Child task", "task", &parentID, nil, nil)
+	r.UpdateStatus(childID, StatusOpen)
+
+	ids := selectableIDs(t, r)
+	if !ids[childID] {
+		t.Errorf("child of closed parent should be selectable")
+	}
+}
+
+func TestSelectable_grandchildOfOnHoldEpic_excluded(t *testing.T) {
+	r := setupTestRepo(t)
+	epicID, _ := r.Create("On-hold epic", "epic", nil, nil, nil)
+	r.UpdateStatus(epicID, StatusOnHold)
+	subID, _ := r.Create("Sub-epic", "epic", &epicID, nil, nil)
+	r.UpdateStatus(subID, StatusOpen)
+	grandchildID, _ := r.Create("Grandchild task", "task", &subID, nil, nil)
+	r.UpdateStatus(grandchildID, StatusOpen)
+
+	ids := selectableIDs(t, r)
+	if ids[grandchildID] {
+		t.Errorf("grandchild of on_hold top-level epic should not be selectable")
+	}
+}
+
+func TestSelectable_childOfOpenAncestor_included(t *testing.T) {
+	r := setupTestRepo(t)
+	parentID, _ := r.Create("Open epic", "epic", nil, nil, nil)
+	r.UpdateStatus(parentID, StatusOpen)
+	childID, _ := r.Create("Child task", "task", &parentID, nil, nil)
+	r.UpdateStatus(childID, StatusOpen)
+
+	ids := selectableIDs(t, r)
+	if !ids[childID] {
+		t.Errorf("child of open parent should be selectable")
 	}
 }
