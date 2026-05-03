@@ -419,24 +419,31 @@ func ticketDigest(ids []int) string {
 func (d *Daemon) poll() {
 	d.obs = &tickObservations{}
 
+	// Housekeeping — no effect on Selectable.
 	d.handleDeadSessions()
 	d.handleStaleWorktrees()
 	d.handleIdleProleWorktrees()
+
+	// State mutations that affect what Selectable() returns.
 	d.handleCancelledTickets()
 	d.handleStaleAssignments()
 	d.handleBackfillPRNumbers()
+	d.handlePREvents()
+	d.handleAutoClose()
+	d.handleRepairCycleEscalation()
+
+	// Notify / nudge handlers — read state but do not change Selectable output.
 	d.handleDraftTickets()
-	d.handleAssignments()
 	d.handleIdleAssignedProles()
 	d.handleWorkingOpenTickets()
 	d.handleInReviewTickets()
 	d.handleFollowUpReminder()
-	d.handlePREvents()
 	d.handleStuckCIRunning()
-	d.handleRepairCycleEscalation()
 	d.handleStuckPrompts()
-	d.handleAutoClose()
 	d.handleQualityBaseline()
+
+	// Assignment runs last so all same-tick state changes feed into it.
+	d.handleAssignments()
 
 	logTickSummary(d.logger, *d.obs)
 	d.obs = nil

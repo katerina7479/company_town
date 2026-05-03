@@ -4946,3 +4946,212 @@ func TestHandleStaleAssignments_doesNotClearCurrentIssueWhenReassigned(t *testin
 			newID, agent.CurrentIssue.Valid, agent.CurrentIssue.Int64)
 	}
 }
+
+// --- poll() ordering tests (nc-279) ---
+
+// registerIdleProle registers a prole in the agents table and sets its tmux session
+// so that handleDeadSessions sees it as alive and does not delete it during poll().
+// The caller must pass a daemon whose sessionExists map includes sessionName.
+func registerIdleProle(t *testing.T, agents *repo.AgentRepo, name, sessionName string) {
+	t.Helper()
+	if err := agents.Register(name, "prole", nil); err != nil {
+		t.Fatalf("Register %s: %v", name, err)
+	}
+	if err := agents.SetTmuxSession(name, sessionName); err != nil {
+		t.Fatalf("SetTmuxSession %s: %v", name, err)
+	}
+}
+
+// TestPoll_assignmentRunsLast_picksUpDepUnblockedSameTick verifies that a ticket
+// whose sole dependency is closed by a PR merge within the same poll() tick is
+// immediately eligible for assignment in that same tick.
+//
+// Before nc-279, handleAssignments ran before handlePREvents, so A would not be
+// assigned until the NEXT tick. With the fixed ordering A is assigned in one poll().
+func TestPoll_assignmentRunsLast_picksUpDepUnblockedSameTick(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-copper"})
+	d.cfg.MaxProles = 0 // rely only on the pre-registered prole; no headroom spawning
+	d.lookupPRForBranch = func(string) (int, bool, error) { return 0, false, nil }
+
+	// Ticket B: in_review with PR #1 — will be closed by a PR merge this tick.
+	bID, err := issues.Create("Blocker B", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create B: %v", err)
+	}
+	if err := issues.UpdateStatus(bID, repo.StatusInReview); err != nil {
+		t.Fatalf("UpdateStatus B: %v", err)
+	}
+	if err := issues.SetPR(bID, 1); err != nil {
+		t.Fatalf("SetPR B: %v", err)
+	}
+
+	// Ticket A: open, depends on B — blocked until B closes.
+	aID, err := issues.Create("Blocked A", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create A: %v", err)
+	}
+	if err := issues.UpdateStatus(aID, repo.StatusOpen); err != nil {
+		t.Fatalf("UpdateStatus A: %v", err)
+	}
+	if err := issues.AddDependency(aID, bID); err != nil {
+		t.Fatalf("AddDependency A→B: %v", err)
+	}
+
+	registerIdleProle(t, agents, "copper", "ct-copper")
+
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		if prNum == 1 {
+			return "MERGED", "", "", nil, true, nil
+		}
+		return "OPEN", "MERGEABLE", "passing", nil, false, nil
+	}
+
+	d.poll()
+
+	b, err := issues.Get(bID)
+	if err != nil {
+		t.Fatalf("Get B: %v", err)
+	}
+	if b.Status != repo.StatusClosed {
+		t.Errorf("expected B closed by PR merge, got %q", b.Status)
+	}
+
+	a, err := issues.Get(aID)
+	if err != nil {
+		t.Fatalf("Get A: %v", err)
+	}
+	if !a.Assignee.Valid || a.Assignee.String == "" {
+		t.Errorf("A not assigned: dep unblocked by PR merge must be picked up in the same tick, got assignee=%v", a.Assignee)
+	}
+}
+
+// TestPoll_assignmentRunsLast_picksUpDepUnblockedByAutoClose verifies that a
+// ticket whose sole dependency is an epic closed by auto-close within the same
+// poll() tick is immediately eligible for assignment in that same tick.
+func TestPoll_assignmentRunsLast_picksUpDepUnblockedByAutoClose(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-copper"})
+	d.cfg.MaxProles = 0
+	d.lookupPRForBranch = func(string) (int, bool, error) { return 0, false, nil }
+
+	// Epic E with one closed child — all descendants terminal, eligible for auto-close.
+	epicID, err := issues.Create("Epic E", "epic", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create epic: %v", err)
+	}
+	if err := issues.UpdateStatus(epicID, repo.StatusOpen); err != nil {
+		t.Fatalf("UpdateStatus epic: %v", err)
+	}
+	childID, err := issues.Create("Done child", "task", &epicID, nil, nil)
+	if err != nil {
+		t.Fatalf("Create child: %v", err)
+	}
+	if err := issues.UpdateStatus(childID, repo.StatusClosed); err != nil {
+		t.Fatalf("UpdateStatus child: %v", err)
+	}
+
+	// Task T: open, depends on epic E — blocked until E closes.
+	tID, err := issues.Create("Task T", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create T: %v", err)
+	}
+	if err := issues.UpdateStatus(tID, repo.StatusOpen); err != nil {
+		t.Fatalf("UpdateStatus T: %v", err)
+	}
+	if err := issues.AddDependency(tID, epicID); err != nil {
+		t.Fatalf("AddDependency T→epic: %v", err)
+	}
+
+	registerIdleProle(t, agents, "copper", "ct-copper")
+
+	d.poll()
+
+	epic, err := issues.Get(epicID)
+	if err != nil {
+		t.Fatalf("Get epic: %v", err)
+	}
+	if epic.Status != repo.StatusClosed {
+		t.Errorf("expected epic auto-closed, got %q", epic.Status)
+	}
+
+	task, err := issues.Get(tID)
+	if err != nil {
+		t.Fatalf("Get T: %v", err)
+	}
+	if !task.Assignee.Valid || task.Assignee.String == "" {
+		t.Errorf("T not assigned: dep unblocked by auto-close must be picked up in the same tick, got assignee=%v", task.Assignee)
+	}
+}
+
+// TestPoll_handlerOrderInvariant is a combined proof that handlePREvents,
+// handleAutoClose, and handleAssignments all run in the correct relative order
+// within a single poll(): two tickets blocked by different mechanisms (PR merge
+// and auto-close) are both unblocked and assigned in one tick.
+func TestPoll_handlerOrderInvariant(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-copper", "ct-iron"})
+	d.cfg.MaxProles = 0
+	d.lookupPRForBranch = func(string) (int, bool, error) { return 0, false, nil }
+
+	// Path 1: dep unblocked by handlePREvents (PR merge closes B, unblocking A).
+	bID, err := issues.Create("Blocker B", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create B: %v", err)
+	}
+	issues.UpdateStatus(bID, repo.StatusInReview)
+	issues.SetPR(bID, 10)
+
+	aID, err := issues.Create("Blocked A", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create A: %v", err)
+	}
+	issues.UpdateStatus(aID, repo.StatusOpen)
+	issues.AddDependency(aID, bID)
+
+	// Path 2: dep unblocked by handleAutoClose (epic E auto-closes, unblocking T).
+	epicID, err := issues.Create("Epic E", "epic", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create epic: %v", err)
+	}
+	issues.UpdateStatus(epicID, repo.StatusOpen)
+
+	doneChildID, err := issues.Create("Done child", "task", &epicID, nil, nil)
+	if err != nil {
+		t.Fatalf("Create done child: %v", err)
+	}
+	issues.UpdateStatus(doneChildID, repo.StatusClosed)
+
+	tID, err := issues.Create("Task T", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create T: %v", err)
+	}
+	issues.UpdateStatus(tID, repo.StatusOpen)
+	issues.AddDependency(tID, epicID)
+
+	// Two idle proles — one for each assignment.
+	registerIdleProle(t, agents, "copper", "ct-copper")
+	registerIdleProle(t, agents, "iron", "ct-iron")
+
+	d.getPRStateFn = func(prNum int) (string, string, string, []string, bool, error) {
+		if prNum == 10 {
+			return "MERGED", "", "", nil, true, nil
+		}
+		return "OPEN", "MERGEABLE", "passing", nil, false, nil
+	}
+
+	d.poll()
+
+	a, err := issues.Get(aID)
+	if err != nil {
+		t.Fatalf("Get A: %v", err)
+	}
+	if !a.Assignee.Valid || a.Assignee.String == "" {
+		t.Errorf("A not assigned: dep-unblocked-by-PR-merge ticket must be picked up in the same tick")
+	}
+
+	task, err := issues.Get(tID)
+	if err != nil {
+		t.Fatalf("Get T: %v", err)
+	}
+	if !task.Assignee.Valid || task.Assignee.String == "" {
+		t.Errorf("T not assigned: dep-unblocked-by-auto-close ticket must be picked up in the same tick")
+	}
+}
