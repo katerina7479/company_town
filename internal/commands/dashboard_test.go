@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -3048,5 +3049,170 @@ func TestAgentWorktreePath_allCases(t *testing.T) {
 		} else if !strings.Contains(filepath.ToSlash(got), c.contains) {
 			t.Errorf("agentWorktreePath(%q) = %q, expected to contain %q", c.name, got, c.contains)
 		}
+	}
+}
+
+// --- Tree mode tests (nc-268) ---
+
+// newTestDashboardModel returns a dashboardModel wired to an in-memory test DB.
+func newTestDashboardModel(t *testing.T) *dashboardModel {
+	t.Helper()
+	m, _ := makeModelWithTickets(t)
+	return m
+}
+
+// insertIssue creates a task in the DB and returns its ID.
+func insertIssue(t *testing.T, m *dashboardModel, title string, parentID *int) int {
+	t.Helper()
+	id, err := m.issues.Create(title, "task", parentID, nil, nil)
+	if err != nil {
+		t.Fatalf("insertIssue %q: %v", title, err)
+	}
+	return id
+}
+
+// insertClosedIssue creates a closed task in the DB and returns its ID.
+func insertClosedIssue(t *testing.T, m *dashboardModel, title string, parentID *int) int {
+	t.Helper()
+	id := insertIssue(t, m, title, parentID)
+	if err := m.issues.UpdateStatus(id, repo.StatusClosed); err != nil {
+		t.Fatalf("insertClosedIssue UpdateStatus: %v", err)
+	}
+	return id
+}
+
+func TestDashboard_tHotkeyTogglesTreeMode(t *testing.T) {
+	m := newTestDashboardModel(t)
+	if m.treeMode {
+		t.Fatal("treeMode should default to false")
+	}
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if !m2.(dashboardModel).treeMode {
+		t.Error("expected treeMode true after t press")
+	}
+	m3, _ := m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if m3.(dashboardModel).treeMode {
+		t.Error("expected treeMode false after second t press")
+	}
+}
+
+func TestDashboard_treeRowsIndentByDepth(t *testing.T) {
+	m := newTestDashboardModel(t)
+	epic := insertIssue(t, m, "epic", nil)
+	sub := insertIssue(t, m, "sub", &epic)
+	task := insertIssue(t, m, "task", &sub)
+	m.treeMode = true
+
+	rows := m.flatTreeRows()
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 tree rows, got %d", len(rows))
+	}
+	if rows[0].depth != 0 || rows[0].node.ID != epic {
+		t.Errorf("rows[0]: want epic (id=%d) at depth 0, got id=%d depth=%d", epic, rows[0].node.ID, rows[0].depth)
+	}
+	if rows[1].depth != 1 || rows[1].node.ID != sub {
+		t.Errorf("rows[1]: want sub (id=%d) at depth 1, got id=%d depth=%d", sub, rows[1].node.ID, rows[1].depth)
+	}
+	if rows[2].depth != 2 || rows[2].node.ID != task {
+		t.Errorf("rows[2]: want task (id=%d) at depth 2, got id=%d depth=%d", task, rows[2].node.ID, rows[2].depth)
+	}
+}
+
+func TestDashboard_treeRowsIncludeBlockedByMarker(t *testing.T) {
+	m := newTestDashboardModel(t)
+	parent := insertIssue(t, m, "parent", nil)
+	child := insertIssue(t, m, "child", &parent)
+	dep := insertIssue(t, m, "ext dep", nil)
+	if err := m.issues.AddDependency(parent, dep); err != nil {
+		t.Fatal(err)
+	}
+	m.treeMode = true
+
+	rows := m.flatTreeRows()
+	var childRow flatTicketRow
+	for _, r := range rows {
+		if r.node.ID == child {
+			childRow = r
+		}
+	}
+	found := false
+	for _, id := range childRow.blockedBy {
+		if id == dep {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("child should inherit blockedBy from parent dep; got %v", childRow.blockedBy)
+	}
+}
+
+func TestDashboard_treeRowsBlockedByIgnoresTerminalDeps(t *testing.T) {
+	m := newTestDashboardModel(t)
+	parent := insertIssue(t, m, "parent", nil)
+	child := insertIssue(t, m, "child", &parent)
+
+	closedDep := insertIssue(t, m, "closed dep", nil)
+	if err := m.issues.UpdateStatus(closedDep, repo.StatusClosed); err != nil {
+		t.Fatal(err)
+	}
+	cancelledDep := insertIssue(t, m, "cancelled dep", nil)
+	if err := m.issues.UpdateStatus(cancelledDep, repo.StatusCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.issues.AddDependency(parent, closedDep); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.issues.AddDependency(parent, cancelledDep); err != nil {
+		t.Fatal(err)
+	}
+	m.treeMode = true
+
+	rows := m.flatTreeRows()
+	var childRow flatTicketRow
+	for _, r := range rows {
+		if r.node.ID == child {
+			childRow = r
+		}
+	}
+	if len(childRow.blockedBy) != 0 {
+		t.Errorf("child should not be blocked when all parent deps are terminal; got blockedBy=%v", childRow.blockedBy)
+	}
+}
+
+func TestDashboard_treeRowsRespectShowClosed(t *testing.T) {
+	m := newTestDashboardModel(t)
+	parent := insertIssue(t, m, "parent", nil)
+	_ = insertClosedIssue(t, m, "closed child", &parent)
+
+	m.treeMode = true
+	m.showClosed = false
+
+	rows := m.flatTreeRows()
+	if len(rows) != 1 {
+		t.Errorf("expected 1 row (closed child filtered), got %d", len(rows))
+	}
+
+	m.showClosed = true
+	rows = m.flatTreeRows()
+	if len(rows) != 2 {
+		t.Errorf("expected 2 rows with showClosed=true, got %d", len(rows))
+	}
+}
+
+func TestDashboard_treeMode_assignHotkeyOnSelectedRow(t *testing.T) {
+	m := newTestDashboardModel(t)
+	epic := insertIssue(t, m, "epic", nil)
+	task := insertIssue(t, m, "task", &epic)
+	m.treeMode = true
+	m.focusedPanel = 1
+	m.ticketCursor = 1 // task
+
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	dm := m2.(dashboardModel)
+	if dm.inputAction != "status" {
+		t.Errorf("inputAction = %q, want %q", dm.inputAction, "status")
+	}
+	if dm.inputTarget != strconv.Itoa(task) {
+		t.Errorf("inputTarget = %q, want %q", dm.inputTarget, strconv.Itoa(task))
 	}
 }

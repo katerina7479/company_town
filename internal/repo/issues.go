@@ -493,6 +493,37 @@ func (r *IssueRepo) RemoveDependency(issueID, dependsOnID int) error {
 	return nil
 }
 
+// DependencyEdge carries a single dependency with the dependee's status and title.
+type DependencyEdge struct {
+	DependsOnID     int
+	DependsOnStatus string
+	DependsOnTitle  string
+}
+
+// ListDependencies returns the dependencies of issueID with the dependee's status and title.
+func (r *IssueRepo) ListDependencies(issueID int) ([]DependencyEdge, error) {
+	rows, err := r.db.Query(
+		`SELECT dep.id, dep.status, dep.title
+		 FROM issue_dependencies d
+		 JOIN issues dep ON dep.id = d.depends_on_id
+		 WHERE d.issue_id = ?
+		 ORDER BY dep.id`, issueID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing dependencies: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []DependencyEdge
+	for rows.Next() {
+		var e DependencyEdge
+		if err := rows.Scan(&e.DependsOnID, &e.DependsOnStatus, &e.DependsOnTitle); err != nil {
+			return nil, fmt.Errorf("scanning dependency edge: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // GetDependencies returns the IDs of issues that issueID depends on.
 func (r *IssueRepo) GetDependencies(issueID int) ([]int, error) {
 	rows, err := r.db.Query(
