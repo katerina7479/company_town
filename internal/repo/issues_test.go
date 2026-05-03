@@ -2398,10 +2398,7 @@ func TestUpdateStatus_unrelatedWriteDoesNotBumpCIRunningEnteredAt(t *testing.T) 
 	}
 
 	issue2, _ := r.Get(id)
-	if issue2.UpdatedAt.Before(issue.UpdatedAt) || issue2.UpdatedAt.Equal(issue.UpdatedAt) {
-		// In SQLite CURRENT_TIMESTAMP has second precision, so they may be equal —
-		// that's fine. We just need ci_running_entered_at to be unchanged.
-	}
+	// SQLite CURRENT_TIMESTAMP has second precision, so updated_at may not visibly change — we don't assert it.
 	if !issue2.CIRunningEnteredAt.Valid || !issue2.CIRunningEnteredAt.Time.Equal(enteredAt) {
 		t.Errorf("ci_running_entered_at changed after unrelated write: was %v, got %v",
 			enteredAt, issue2.CIRunningEnteredAt.Time)

@@ -10,23 +10,23 @@ import (
 )
 
 type Issue struct {
-	ID               int
-	IssueType        string
-	Status           string
-	Title            string
-	Description      sql.NullString
-	Specialty        sql.NullString
-	Branch           sql.NullString
-	PRNumber         sql.NullInt64
-	Assignee         sql.NullString
-	ParentID         sql.NullInt64
-	Priority         sql.NullString
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	ClosedAt         sql.NullTime
-	RepairCycleCount     int
-	RepairReason         sql.NullString
-	CIRunningEnteredAt   sql.NullTime
+	ID                 int
+	IssueType          string
+	Status             string
+	Title              string
+	Description        sql.NullString
+	Specialty          sql.NullString
+	Branch             sql.NullString
+	PRNumber           sql.NullInt64
+	Assignee           sql.NullString
+	ParentID           sql.NullInt64
+	Priority           sql.NullString
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	ClosedAt           sql.NullTime
+	RepairCycleCount   int
+	RepairReason       sql.NullString
+	CIRunningEnteredAt sql.NullTime
 }
 
 // Valid priority values.
