@@ -1438,22 +1438,22 @@ func TestRenderIssueRowHighlighted_fullRowBackground(t *testing.T) {
 	// The non-selected row must NOT be padded — highlighted adds the padding,
 	// plain renderIssueRow must not so callers can still use it unchanged.
 	plain := m.renderIssueRow(node, 0, rowWidth)
-	if lipgloss.Width(plain) == rowWidth {
-		t.Errorf("plain renderIssueRow width = rowWidth (%d); only highlighted rows should be padded", rowWidth)
+	if lipgloss.Width(plain) >= rowWidth {
+		t.Errorf("plain renderIssueRow width = %d, want < %d; only highlighted rows should be padded", lipgloss.Width(plain), rowWidth)
 	}
 }
 
 // --- NC-47: ticket type indicator ---
 
 func TestTypeCell_taskIsBlank(t *testing.T) {
-	cell := blankModel().theme.TypeCell("task")
+	cell := blankModel().theme.TypeCell("task", nil)
 	if cell != " " {
 		t.Errorf("blankModel().theme.TypeCell('task') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_unknownEmptyIsBlank(t *testing.T) {
-	cell := blankModel().theme.TypeCell("")
+	cell := blankModel().theme.TypeCell("", nil)
 	if cell != " " {
 		t.Errorf("blankModel().theme.TypeCell('') should return a single space, got %q", cell)
 	}
@@ -1461,14 +1461,14 @@ func TestTypeCell_unknownEmptyIsBlank(t *testing.T) {
 
 func TestTypeCell_unknownStringIsBlank(t *testing.T) {
 	// Future/unknown types must silently return blank — not panic, not print garbage.
-	cell := blankModel().theme.TypeCell("research")
+	cell := blankModel().theme.TypeCell("research", nil)
 	if cell != " " {
 		t.Errorf("blankModel().theme.TypeCell('research') should return a single space, got %q", cell)
 	}
 }
 
 func TestTypeCell_epicIsE(t *testing.T) {
-	cell := blankModel().theme.TypeCell("epic")
+	cell := blankModel().theme.TypeCell("epic", nil)
 	// Strip ANSI codes — the visible content should end with a space and contain "E".
 	if !strings.Contains(cell, "E") {
 		t.Errorf("blankModel().theme.TypeCell('epic') should contain 'E', got %q", cell)
@@ -1476,14 +1476,14 @@ func TestTypeCell_epicIsE(t *testing.T) {
 }
 
 func TestTypeCell_bugIsB(t *testing.T) {
-	cell := blankModel().theme.TypeCell("bug")
+	cell := blankModel().theme.TypeCell("bug", nil)
 	if !strings.Contains(cell, "B") {
 		t.Errorf("blankModel().theme.TypeCell('bug') should contain 'B', got %q", cell)
 	}
 }
 
 func TestTypeCell_refactorIsR(t *testing.T) {
-	cell := blankModel().theme.TypeCell("refactor")
+	cell := blankModel().theme.TypeCell("refactor", nil)
 	if !strings.Contains(cell, "R") {
 		t.Errorf("blankModel().theme.TypeCell('refactor') should contain 'R', got %q", cell)
 	}
@@ -1509,7 +1509,7 @@ func TestRenderIssueRow_taskTypeIndicatorAbsent(t *testing.T) {
 	// A task ticket row must NOT contain a type letter (type cell is blank).
 	// We verify by checking the row contains the title but no stray type letter
 	// adjacent to the id/status region. We do this by checking typeCell directly.
-	cell := blankModel().theme.TypeCell("task")
+	cell := blankModel().theme.TypeCell("task", nil)
 	if strings.ContainsAny(cell, "EBRTS") {
 		t.Errorf("blankModel().theme.TypeCell('task') should not contain a type letter, got %q", cell)
 	}
@@ -1538,7 +1538,7 @@ func TestRenderIssueRow_childEpicShowsChildBulletAndTypeLetter(t *testing.T) {
 // --- priorityCell tests ---
 
 func TestPriorityCell_nullIsSpaces(t *testing.T) {
-	got := blankModel().theme.PriorityCell(sql.NullString{})
+	got := blankModel().theme.PriorityCell(sql.NullString{}, nil)
 	if got != "     " {
 		t.Errorf("expected 5 spaces for NULL priority, got %q", got)
 	}
@@ -1549,7 +1549,7 @@ func TestPriorityCell_nullIsSpaces(t *testing.T) {
 
 func TestPriorityCell_width5(t *testing.T) {
 	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
-		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true})
+		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true}, nil)
 		// In test mode lipgloss renders plain text (no TTY), so len == visible width.
 		if len(cell) != 5 {
 			t.Errorf("blankModel().theme.PriorityCell(%q): expected len 5, got %d (%q)", p, len(cell), cell)
@@ -1559,7 +1559,7 @@ func TestPriorityCell_width5(t *testing.T) {
 
 func TestPriorityCell_containsLabel(t *testing.T) {
 	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
-		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true})
+		cell := blankModel().theme.PriorityCell(sql.NullString{String: p, Valid: true}, nil)
 		want := fmt.Sprintf("[%s]", p)
 		if !strings.Contains(cell, want) {
 			t.Errorf("blankModel().theme.PriorityCell(%q): expected cell to contain %q, got %q", p, want, cell)
@@ -1575,7 +1575,7 @@ func TestPriorityCell_p3NotStyled(t *testing.T) {
 	if _, ok := blankModel().theme.Priority["P3"]; ok {
 		t.Error("P3 must not be in theme.Priority — it should render with default terminal foreground")
 	}
-	cell := blankModel().theme.PriorityCell(sql.NullString{String: "P3", Valid: true})
+	cell := blankModel().theme.PriorityCell(sql.NullString{String: "P3", Valid: true}, nil)
 	if strings.Contains(cell, "\x1b[") || strings.Contains(cell, "[") {
 		t.Errorf("P3 cell must have no ANSI escape codes, got %q", cell)
 	}

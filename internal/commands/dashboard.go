@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -999,33 +998,6 @@ func (r rowRenderer) pad(s string, toWidth int) string {
 	return s + r.plain.Render(strings.Repeat(" ", toWidth-w))
 }
 
-// priorityCell renders the 5-visible-char priority column, applying the
-// selection background to both the label and trailing space when selected.
-func (r rowRenderer) priorityCell(theme StyleTheme, p sql.NullString) string {
-	const width = 5
-	if !p.Valid || p.String == "" {
-		return r.text(strings.Repeat(" ", width))
-	}
-	label := fmt.Sprintf("[%s]", p.String)
-	if s, ok := theme.Priority[p.String]; ok {
-		return r.styled(s, label) + r.text(" ")
-	}
-	return r.text(fmt.Sprintf("%-*s", width, label))
-}
-
-// typeCell renders the 1-visible-char type column with optional selection bg.
-func (r rowRenderer) typeCell(theme StyleTheme, issueType string) string {
-	letters := map[string]string{"epic": "E", "bug": "B", "refactor": "R"}
-	letter, ok := letters[issueType]
-	if !ok {
-		return r.text(" ")
-	}
-	if s, ok2 := theme.Type[issueType]; ok2 {
-		return r.styled(s, letter)
-	}
-	return r.text(letter)
-}
-
 // colorStatus renders the status string with its theme colour, applying the
 // selection background when selected.
 func (r rowRenderer) colorStatus(theme StyleTheme, status string) string {
@@ -1065,10 +1037,10 @@ func (m dashboardModel) renderIssueRowCore(node *repo.IssueNode, depth, width in
 	}
 
 	const priorityWidth = 5 // visible chars: "[P0] " or "     "
-	pri := rr.priorityCell(m.theme, node.Priority)
+	pri := m.theme.PriorityCell(node.Priority, rr.bg)
 
 	const typeWidth = 1 // visible char: "E" / "B" / "R" / " " (blank for task)
-	typ := rr.typeCell(m.theme, node.IssueType)
+	typ := m.theme.TypeCell(node.IssueType, rr.bg)
 
 	const assigneeWidth = 8 // visible chars: up to 8-char agent name (e.g. "obsidian") or blank
 	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")
@@ -1136,10 +1108,10 @@ func (m dashboardModel) renderTreeRowCore(row flatTicketRow, width int, rr rowRe
 	}
 
 	const priorityWidth = 5
-	pri := rr.priorityCell(m.theme, node.Priority)
+	pri := m.theme.PriorityCell(node.Priority, rr.bg)
 
 	const typeWidth = 1
-	typ := rr.typeCell(m.theme, node.IssueType)
+	typ := m.theme.TypeCell(node.IssueType, rr.bg)
 
 	const assigneeWidth = 8
 	assigneeRaw := fmt.Sprintf("%-*s", assigneeWidth, "")

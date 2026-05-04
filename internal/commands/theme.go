@@ -92,23 +92,40 @@ func (t StyleTheme) ColorStatus(status string) string {
 }
 
 // PriorityCell returns a fixed 5-visible-char cell for the priority column.
-// e.g. "[P1] " or "     " when NULL.
-func (t StyleTheme) PriorityCell(p sql.NullString) string {
+// e.g. "[P1] " or "     " when NULL. When bg is non-nil it is applied to all
+// segments so the cell's background spans the full selection highlight.
+func (t StyleTheme) PriorityCell(p sql.NullString, bg lipgloss.TerminalColor) string {
 	const width = 5
+	plain := func(s string) string {
+		if bg == nil {
+			return s
+		}
+		return lipgloss.NewStyle().Background(bg).Render(s)
+	}
 	if !p.Valid || p.String == "" {
-		return strings.Repeat(" ", width)
+		return plain(strings.Repeat(" ", width))
 	}
 	label := fmt.Sprintf("[%s]", p.String) // e.g. "[P0]"
 	if s, ok := t.Priority[p.String]; ok {
-		return s.Render(label) + " "
+		if bg != nil {
+			s = s.Background(bg)
+		}
+		return s.Render(label) + plain(" ")
 	}
-	return fmt.Sprintf("%-*s", width, label)
+	return plain(fmt.Sprintf("%-*s", width, label))
 }
 
 // TypeCell returns a fixed 1-visible-char cell for the issue type column.
 // epic → "E", bug → "B", refactor → "R", task → " " (blank — task is the
-// default type). Unknown future types also render blank.
-func (t StyleTheme) TypeCell(issueType string) string {
+// default type). Unknown future types also render blank. When bg is non-nil it
+// is applied so the cell's background spans the full selection highlight.
+func (t StyleTheme) TypeCell(issueType string, bg lipgloss.TerminalColor) string {
+	plain := func(s string) string {
+		if bg == nil {
+			return s
+		}
+		return lipgloss.NewStyle().Background(bg).Render(s)
+	}
 	letters := map[string]string{
 		"epic":     "E",
 		"bug":      "B",
@@ -116,10 +133,13 @@ func (t StyleTheme) TypeCell(issueType string) string {
 	}
 	letter, ok := letters[issueType]
 	if !ok {
-		return " " // task and unknown types get a blank cell
+		return plain(" ")
 	}
 	if s, ok2 := t.Type[issueType]; ok2 {
+		if bg != nil {
+			return s.Background(bg).Render(letter)
+		}
 		return s.Render(letter)
 	}
-	return letter
+	return plain(letter)
 }
