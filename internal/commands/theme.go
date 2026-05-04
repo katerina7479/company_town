@@ -83,10 +83,17 @@ func DefaultTheme() StyleTheme {
 }
 
 // ColorStatus renders status with its associated colour. Returns the status
-// string unchanged when no style is registered for it.
-func (t StyleTheme) ColorStatus(status string) string {
+// string unchanged when no style is registered for it. When bg is non-nil it
+// is applied so the cell's background spans the full selection highlight.
+func (t StyleTheme) ColorStatus(status string, bg lipgloss.TerminalColor) string {
 	if s, ok := t.Status[status]; ok {
+		if bg != nil {
+			s = s.Background(bg)
+		}
 		return s.Render(status)
+	}
+	if bg != nil {
+		return lipgloss.NewStyle().Background(bg).Render(status)
 	}
 	return status
 }
