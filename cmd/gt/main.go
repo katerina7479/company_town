@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/katerina7479/company_town/internal/cmdlog"
+	"github.com/katerina7479/company_town/internal/commands"
 	"github.com/katerina7479/company_town/internal/gtcmd"
 )
 
@@ -38,7 +39,7 @@ func run(args []string) error {
 
 	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "ticket", "prole", "agent", "pr", "create", "start", "stop", "status", "check", "migrate", "log":
+	case "ticket", "prole", "agent", "pr", "create", "start", "stop", "status", "check", "migrate", "log", "update":
 		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
@@ -70,6 +71,12 @@ func run(args []string) error {
 			return gtcmd.Migrate()
 		case "log":
 			return gtcmd.Log(rest)
+		case "update":
+			opts, parseErr := commands.ParseUpdateFlags(rest, "gt update")
+			if parseErr != nil {
+				return parseErr
+			}
+			return commands.Update(version, opts)
 		}
 		return nil
 	})
@@ -114,5 +121,6 @@ Commands:
   status                                                         Print system status
   check <run|list|history>                                       Run and view quality checks
   migrate                                                        Apply pending database migrations
-  log <tail|show> [flags]                                        Read the command audit log`)
+  log <tail|show> [flags]                                        Read the command audit log
+  update [--check] [--force] [--prerelease]                      Upgrade ct and gt to the latest release`)
 }

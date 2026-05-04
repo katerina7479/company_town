@@ -30,7 +30,7 @@ func main() {
 
 	// Reject unknown commands before entering log middleware.
 	switch cmd {
-	case "init", "start", "stop", "nuke", "architect", "artisan", "attach", "dashboard", "metrics", "daemon", "doctor", "quality", "reviewer":
+	case "init", "start", "stop", "nuke", "architect", "artisan", "attach", "dashboard", "metrics", "daemon", "doctor", "quality", "reviewer", "update":
 		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
@@ -91,6 +91,12 @@ func main() {
 			return commands.Doctor()
 		case "quality":
 			return commands.Quality()
+		case "update":
+			opts, parseErr := commands.ParseUpdateFlags(args, "ct update")
+			if parseErr != nil {
+				return parseErr
+			}
+			return commands.Update(version, opts)
 		case "reviewer":
 			if len(args) < 1 || args[0] != "inspect" {
 				fmt.Fprintln(os.Stderr, "usage: ct reviewer inspect <pr> | ct reviewer inspect --clean")
@@ -178,5 +184,10 @@ Commands:
                       Set up PR inspection worktree at .company_town/agents/reviewer/pr-worktree/
                       and print its path. Prints path to stdout.
   reviewer inspect --clean
-                      Remove the PR inspection worktree (idempotent).`)
+                      Remove the PR inspection worktree (idempotent).
+  update [--check] [--force] [--prerelease]
+                      Upgrade ct and gt to the latest GitHub release.
+                      --check: print available version, do not install.
+                      --force: reinstall even if already at latest.
+                      --prerelease: include prereleases (default: stable only).`)
 }
