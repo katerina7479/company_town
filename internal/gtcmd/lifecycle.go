@@ -1,6 +1,7 @@
 package gtcmd
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +24,10 @@ var tmuxExistsFn func(string) bool = tmuxExists
 var ensureAgentWorktreeFn func(cfg *config.Config, agentDir string) (string, error) = agentworktree.Ensure
 var killSessionFn func(string) error = session.Kill
 
+// openFromWorkingDirFn opens the DB and loads config. Injected in tests so Start
+// can be exercised without a real project root on disk.
+var openFromWorkingDirFn func() (*sql.DB, *config.Config, error) = db.OpenFromWorkingDir
+
 // startDaemonFn launches the daemon in a detached tmux session. Injected in tests.
 var startDaemonFn = func(cfg *config.Config) error {
 	sessionName := session.SessionName("daemon")
@@ -40,20 +45,20 @@ var startDaemonFn = func(cfg *config.Config) error {
 }
 
 // Start launches a named agent in a tmux session.
+// Migrations are NOT run here — use `ct start` or `gt migrate` to apply migrations.
+// See nc-289 for the rationale: gt start is a high-frequency path (every agent
+// spinup, every restart) and concentrating migration handling at deliberate
+// startup points (`ct start`, `gt migrate`) keeps the surface area narrow.
 func Start(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: gt start <architect|reviewer|artisan-SPECIALTY>")
 	}
 
-	conn, cfg, err := db.OpenFromWorkingDir()
+	conn, cfg, err := openFromWorkingDirFn()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-
-	if err := db.RunMigrations(conn); err != nil {
-		return fmt.Errorf("running migrations: %w", err)
-	}
 
 	if cfg.SessionPrefix != "" {
 		session.SessionPrefix = cfg.SessionPrefix
