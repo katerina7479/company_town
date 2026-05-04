@@ -94,8 +94,8 @@ func TestExtractBinaries(t *testing.T) {
 	ctBytes := []byte("ct binary")
 	gtBytes := []byte("gt binary")
 	tarball := buildTarGz(t, map[string][]byte{
-		"company_town_1.0.0_darwin_arm64/ct": ctBytes,
-		"company_town_1.0.0_darwin_arm64/gt": gtBytes,
+		"company_town_1.0.0_darwin_arm64/ct":      ctBytes,
+		"company_town_1.0.0_darwin_arm64/gt":      gtBytes,
 		"company_town_1.0.0_darwin_arm64/LICENSE": []byte("MIT"),
 	})
 
