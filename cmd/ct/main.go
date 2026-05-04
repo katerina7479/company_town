@@ -92,7 +92,7 @@ func main() {
 		case "quality":
 			return commands.Quality()
 		case "update":
-			opts, parseErr := parseUpdateArgs(args)
+			opts, parseErr := commands.ParseUpdateFlags(args, "ct update")
 			if parseErr != nil {
 				return parseErr
 			}
@@ -154,24 +154,6 @@ func parseTargetArgs(cmd string, args []string, allowClean bool) (target string,
 		}
 	}
 	return target, clean, nil
-}
-
-// parseUpdateArgs parses the flag list for the update command.
-func parseUpdateArgs(args []string) (commands.UpdateOptions, error) {
-	var opts commands.UpdateOptions
-	for _, a := range args {
-		switch a {
-		case "--check":
-			opts.Check = true
-		case "--force":
-			opts.Force = true
-		case "--prerelease":
-			opts.Prerelease = true
-		default:
-			return opts, fmt.Errorf("ct update: unknown flag: %s", a)
-		}
-	}
-	return opts, nil
 }
 
 func printUsage() {

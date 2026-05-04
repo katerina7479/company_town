@@ -72,7 +72,7 @@ func run(args []string) error {
 		case "log":
 			return gtcmd.Log(rest)
 		case "update":
-			opts, parseErr := parseUpdateArgs(rest)
+			opts, parseErr := commands.ParseUpdateFlags(rest, "gt update")
 			if parseErr != nil {
 				return parseErr
 			}
@@ -105,24 +105,6 @@ func isAgentExemptVerb(verb string) bool {
 		return true
 	}
 	return false
-}
-
-// parseUpdateArgs parses the flag list for the update command.
-func parseUpdateArgs(args []string) (commands.UpdateOptions, error) {
-	var opts commands.UpdateOptions
-	for _, a := range args {
-		switch a {
-		case "--check":
-			opts.Check = true
-		case "--force":
-			opts.Force = true
-		case "--prerelease":
-			opts.Prerelease = true
-		default:
-			return opts, fmt.Errorf("gt update: unknown flag: %s", a)
-		}
-	}
-	return opts, nil
 }
 
 func printUsage() {

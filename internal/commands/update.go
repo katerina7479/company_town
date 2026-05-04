@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/katerina7479/company_town/internal/session"
 )
@@ -33,7 +34,6 @@ type updateDeps struct {
 	evalLinks  func(path string) (string, error)
 	stat       func(path string) (os.FileInfo, error)
 	rename     func(oldpath, newpath string) error
-	tempDir    func() string
 	sessions   func() ([]string, error)
 	goos       string
 	goarch     string
@@ -45,7 +45,6 @@ var defaultUpdateDeps = updateDeps{
 	evalLinks:  filepath.EvalSymlinks,
 	stat:       os.Stat,
 	rename:     os.Rename,
-	tempDir:    os.TempDir,
 	sessions:   session.ListCompanyTown,
 	goos:       runtime.GOOS,
 	goarch:     runtime.GOARCH,
@@ -160,17 +159,18 @@ func updateWith(currentVersion string, opts UpdateOptions, deps updateDeps) erro
 		fmt.Println("note: Company Town sessions are running — run 'ct stop && ct start' to pick up the new binary")
 	}
 
-	if err := atomicReplace(ctPath, ctData, deps.tempDir(), deps.stat, deps.rename); err != nil {
+	if err := atomicReplace(ctPath, ctData, deps.stat, deps.rename); err != nil {
 		return fmt.Errorf("replacing ct: %w", err)
 	}
-	if err := atomicReplace(gtPath, gtData, deps.tempDir(), deps.stat, deps.rename); err != nil {
+	if err := atomicReplace(gtPath, gtData, deps.stat, deps.rename); err != nil {
 		return fmt.Errorf("replacing gt: %w", err)
 	}
 
+	currentTag := "v" + strings.TrimPrefix(currentVersion, "v")
 	if current == latest {
 		fmt.Printf("ct/gt: %s reinstalled (--force)\n", release.TagName)
 	} else {
-		fmt.Printf("ct/gt: v%s → %s\n", current, release.TagName)
+		fmt.Printf("ct/gt: %s → %s\n", currentTag, release.TagName)
 	}
 	return nil
 }
@@ -271,16 +271,18 @@ func extractBinaries(data []byte) (ct, gt []byte, err error) {
 	return found["ct"], found["gt"], nil
 }
 
-// atomicReplace writes data to a temp file in tmpDir, then renames it over dst.
+// atomicReplace writes data to a temp file in the same directory as dst, then
+// renames it over dst. Using the same filesystem as the destination avoids
+// EXDEV errors from cross-filesystem renames (e.g. /tmp on tmpfs → /usr/local/bin).
 // On permission-denied errors a helpful message is included in the returned error.
-func atomicReplace(dst string, data []byte, tmpDir string, statFn func(string) (os.FileInfo, error), renameFn func(string, string) error) error {
+func atomicReplace(dst string, data []byte, statFn func(string) (os.FileInfo, error), renameFn func(string, string) error) error {
 	info, err := statFn(dst)
 	if err != nil {
 		return err
 	}
 	perm := info.Mode().Perm()
 
-	tmp, err := os.CreateTemp(tmpDir, "ct-update-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".ct-update-*")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
@@ -308,9 +310,30 @@ func atomicReplace(dst string, data []byte, tmpDir string, statFn func(string) (
 	return nil
 }
 
+// ParseUpdateFlags parses the flag list for the update command. prefix is the
+// binary name used in error messages (e.g. "ct update" or "gt update").
+func ParseUpdateFlags(args []string, prefix string) (UpdateOptions, error) {
+	var opts UpdateOptions
+	for _, a := range args {
+		switch a {
+		case "--check":
+			opts.Check = true
+		case "--force":
+			opts.Force = true
+		case "--prerelease":
+			opts.Prerelease = true
+		default:
+			return opts, fmt.Errorf("%s: unknown flag: %s", prefix, a)
+		}
+	}
+	return opts, nil
+}
+
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 // httpGetBody performs a GET and returns the response body.
 func httpGetBody(url string) ([]byte, error) {
-	resp, err := http.Get(url) //nolint:gosec,noctx
+	resp, err := httpClient.Get(url) //nolint:gosec
 	if err != nil {
 		return nil, err
 	}

@@ -215,7 +215,6 @@ func TestUpdateWith_happyPath(t *testing.T) {
 		evalLinks:  func(p string) (string, error) { return p, nil },
 		stat:       os.Stat,
 		rename:     os.Rename,
-		tempDir:    func() string { return dir },
 		sessions:   func() ([]string, error) { return nil, nil },
 		goos:       testOS,
 		goarch:     testArch,
@@ -270,7 +269,6 @@ func TestUpdateWith_checksumMismatch(t *testing.T) {
 		evalLinks:  func(p string) (string, error) { return p, nil },
 		stat:       os.Stat,
 		rename:     func(_, _ string) error { renamed = true; return nil },
-		tempDir:    func() string { return dir },
 		sessions:   func() ([]string, error) { return nil, nil },
 		goos:       testOS,
 		goarch:     testArch,
@@ -345,7 +343,6 @@ func TestUpdateWith_force(t *testing.T) {
 		evalLinks:  func(p string) (string, error) { return p, nil },
 		stat:       os.Stat,
 		rename:     func(old, new string) error { renamed++; return os.Rename(old, new) },
-		tempDir:    func() string { return dir },
 		sessions:   func() ([]string, error) { return nil, nil },
 		goos:       testOS,
 		goarch:     testArch,
@@ -395,5 +392,36 @@ func TestFetchLatestRelease_prerelease(t *testing.T) {
 	}
 	if r.TagName != "v2.0.0-beta.1" {
 		t.Errorf("expected prerelease, got %q", r.TagName)
+	}
+}
+
+// TestAtomicReplace_usesDstDir verifies that the temp file is created in the
+// destination's directory, not a separate temp dir. This ensures os.Rename
+// never crosses filesystem boundaries (EXDEV on Linux tmpfs → /usr/local/bin).
+func TestAtomicReplace_usesDstDir(t *testing.T) {
+	dstDir := t.TempDir()
+	dst := filepath.Join(dstDir, "ct")
+	if err := os.WriteFile(dst, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var renameFrom string
+	err := atomicReplace(dst, []byte("new content"), os.Stat,
+		func(old, new string) error {
+			renameFrom = old
+			return os.Rename(old, new)
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The temp file must have been created inside dstDir.
+	if filepath.Dir(renameFrom) != dstDir {
+		t.Errorf("temp file dir = %q, want %q (must be same dir as dst to avoid EXDEV)", filepath.Dir(renameFrom), dstDir)
+	}
+
+	got, _ := os.ReadFile(dst)
+	if string(got) != "new content" {
+		t.Errorf("dst content = %q, want %q", got, "new content")
 	}
 }
