@@ -1,9 +1,11 @@
 package gtcmd
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/katerina7479/company_town/internal/config"
@@ -11,6 +13,46 @@ import (
 	"github.com/katerina7479/company_town/internal/repo"
 	"github.com/katerina7479/company_town/internal/session"
 )
+
+// TestStart_doesNotRunMigrations is a regression guard for nc-289.
+// gt start must NOT call db.RunMigrations — migrations belong only in `ct start`
+// and `gt migrate`. This test exercises the outer Start function by injecting
+// openFromWorkingDirFn with a test DB and verifying the call proceeds to agent
+// dispatch (evidenced by an "unknown agent" error), not to a migration error.
+func TestStart_doesNotRunMigrations(t *testing.T) {
+	conn, err := db.NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	tmpDir := t.TempDir()
+	fakeCfg := &config.Config{
+		ProjectRoot:  tmpDir,
+		TicketPrefix: "test",
+	}
+
+	// Inject openFromWorkingDirFn to return our test DB without touching the filesystem.
+	// If RunMigrations were still being called from Start, it would attempt Dolt-specific
+	// SQL against the SQLite test DB, which would fail with a migration error — not the
+	// "unknown agent" error we assert below.
+	old := openFromWorkingDirFn
+	defer func() { openFromWorkingDirFn = old }()
+	openFromWorkingDirFn = func() (*sql.DB, *config.Config, error) {
+		return conn, fakeCfg, nil
+	}
+
+	// "no-such-agent" is not in the registry and is not artisan-prefixed.
+	// The only way to reach this error is if the code gets past where
+	// RunMigrations used to be called.
+	err = Start([]string{"no-such-agent"})
+	if err == nil {
+		t.Fatal("expected error for unknown agent")
+	}
+	if !strings.Contains(err.Error(), "unknown agent") {
+		t.Errorf("expected 'unknown agent' error (past any migration step), got: %v", err)
+	}
+}
 
 // TestStart_Daemon verifies that `gt start daemon` registers the daemon agent,
 // launches it via startDaemonFn, and sets its status to "working" (not "idle").
