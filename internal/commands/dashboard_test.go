@@ -1657,7 +1657,7 @@ func TestColorStatus_mergeConflict(t *testing.T) {
 	// merge_conflict must render as a non-empty styled string distinct from
 	// the repairing style, so the dashboard operator can visually distinguish
 	// "needs conflict resolution" from "prole is fixing reviewer feedback".
-	mc := blankModel().theme.ColorStatus("merge_conflict")
+	mc := blankModel().theme.ColorStatus("merge_conflict", nil)
 	if mc == "" {
 		t.Fatal("blankModel().theme.ColorStatus(merge_conflict) returned empty string")
 	}
@@ -1666,7 +1666,7 @@ func TestColorStatus_mergeConflict(t *testing.T) {
 		t.Errorf("blankModel().theme.ColorStatus(merge_conflict) output %q does not contain status text", mc)
 	}
 	// It must differ from the repairing style.
-	rep := blankModel().theme.ColorStatus("repairing")
+	rep := blankModel().theme.ColorStatus("repairing", nil)
 	if mc == rep {
 		t.Errorf("blankModel().theme.ColorStatus(merge_conflict) == blankModel().theme.ColorStatus(repairing): expected distinct styles")
 	}
@@ -2408,7 +2408,7 @@ func TestFormatDuration_days(t *testing.T) {
 func TestColorStatus_unknownStatus(t *testing.T) {
 	theme := DefaultTheme()
 	// "unknown_status" is not registered → returns the status string unchanged
-	got := theme.ColorStatus("totally_unknown_xyz")
+	got := theme.ColorStatus("totally_unknown_xyz", nil)
 	if got != "totally_unknown_xyz" {
 		t.Errorf("expected status unchanged for unknown status, got %q", got)
 	}
@@ -2418,7 +2418,7 @@ func TestColorStatus_allKnownStatuses(t *testing.T) {
 	theme := DefaultTheme()
 	known := []string{"idle", "working", "dead", "on_hold", "open", "closed", "in_progress"}
 	for _, s := range known {
-		got := theme.ColorStatus(s)
+		got := theme.ColorStatus(s, nil)
 		if got == "" {
 			t.Errorf("ColorStatus(%q) returned empty string", s)
 		}

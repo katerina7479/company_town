@@ -845,7 +845,7 @@ func (m dashboardModel) renderAgents(width, height int) string {
 				rr = newRowRenderer(m.theme.Selected.GetBackground())
 			}
 			name := rr.styled(m.theme.Bold, fmt.Sprintf("%-14s", a.Name))
-			status := rr.colorStatus(m.theme, a.Status)
+			status := m.theme.ColorStatus(a.Status, rr.bg)
 			issue := ""
 			if a.CurrentIssue.Valid {
 				issue = rr.text(fmt.Sprintf(" → nc-%d", a.CurrentIssue.Int64))
@@ -998,15 +998,6 @@ func (r rowRenderer) pad(s string, toWidth int) string {
 	return s + r.plain.Render(strings.Repeat(" ", toWidth-w))
 }
 
-// colorStatus renders the status string with its theme colour, applying the
-// selection background when selected.
-func (r rowRenderer) colorStatus(theme StyleTheme, status string) string {
-	if s, ok := theme.Status[status]; ok {
-		return r.styled(s, status)
-	}
-	return r.text(status)
-}
-
 // renderIssueRow renders a single ticket row as a string (without trailing newline).
 func (m dashboardModel) renderIssueRow(node *repo.IssueNode, depth int, width int) string {
 	return m.renderIssueRowCore(node, depth, width, newRowRenderer(nil))
@@ -1027,7 +1018,7 @@ func (m dashboardModel) renderIssueRowCore(node *repo.IssueNode, depth, width in
 
 	prefix := fmt.Sprintf("%s%s", indent, bullet)
 	idStr := fmt.Sprintf("%-6d", node.ID)
-	coloredStatus := rr.colorStatus(m.theme, node.Status)
+	coloredStatus := m.theme.ColorStatus(node.Status, rr.bg)
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
 	age := rr.styled(m.theme.Footer, ageRaw)
 
@@ -1098,7 +1089,7 @@ func (m dashboardModel) renderTreeRowCore(row flatTicketRow, width int, rr rowRe
 	node := row.node
 	prefix := renderTreePrefix(row.depth)
 	idStr := fmt.Sprintf("%-6d", node.ID)
-	coloredStatus := rr.colorStatus(m.theme, node.Status)
+	coloredStatus := m.theme.ColorStatus(node.Status, rr.bg)
 	ageRaw := "(" + formatDuration(time.Since(node.UpdatedAt)) + ")"
 	age := rr.styled(m.theme.Footer, ageRaw)
 
