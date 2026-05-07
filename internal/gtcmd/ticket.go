@@ -128,9 +128,10 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 				return fmt.Errorf("--depends-on requires a value")
 			}
 			i++
-			v, err := parseTicketID(args[i])
+			depRaw := args[i] //nolint:gosec // bounds checked above
+			v, err := parseTicketID(depRaw)
 			if err != nil {
-				return fmt.Errorf("invalid --depends-on ID: %s", args[i])
+				return fmt.Errorf("invalid --depends-on ID: %s", depRaw)
 			}
 			dependsOn = append(dependsOn, v)
 		case "--specialty":
