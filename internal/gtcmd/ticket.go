@@ -128,7 +128,7 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 				return fmt.Errorf("--depends-on requires a value")
 			}
 			i++
-			depRaw := args[i] //nolint:gosec // bounds checked above
+			depRaw := args[i] //nolint:gosec // bounds checked immediately above
 			v, err := parseTicketID(depRaw)
 			if err != nil {
 				return fmt.Errorf("invalid --depends-on ID: %s", depRaw)
@@ -187,6 +187,12 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 		priority = &defaultPriority
 	}
 
+	for _, depID := range dependsOn {
+		if _, err := issues.Get(depID); err != nil {
+			return fmt.Errorf("--depends-on ticket %d: %w", depID, err)
+		}
+	}
+
 	id, err := issues.Create(title, issueType, parentID, specialty, priority)
 	if err != nil {
 		return err
@@ -199,9 +205,6 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	}
 
 	for _, depID := range dependsOn {
-		if _, err := issues.Get(depID); err != nil {
-			return fmt.Errorf("--depends-on ticket %d: %w", depID, err)
-		}
 		if err := issues.AddDependency(id, depID); err != nil {
 			return fmt.Errorf("adding dependency on %d: %w", depID, err)
 		}

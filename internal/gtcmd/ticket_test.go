@@ -220,7 +220,7 @@ func TestTicketCreate_withDependsOn(t *testing.T) {
 	if err := ticketCreate(issues, "nc", []string{"follow-up", "--depends-on", fmt.Sprintf("%d", blockerID)}); err != nil {
 		t.Fatalf("ticketCreate with --depends-on: %v", err)
 	}
-	followUpID := 2
+	followUpID := blockerID + 1
 
 	deps, err := issues.GetDependencies(followUpID)
 	if err != nil {
@@ -243,6 +243,10 @@ func TestTicketCreate_dependsOnUnknownTicket(t *testing.T) {
 	if err := ticketCreate(issues, "nc", []string{"title", "--depends-on", "9999"}); err == nil {
 		t.Error("expected error for --depends-on with nonexistent ticket")
 	}
+	all, _ := issues.List(repo.StatusDraft)
+	if len(all) != 0 {
+		t.Errorf("invalid --depends-on must not leak a ticket; found %d draft tickets", len(all))
+	}
 }
 
 // TestTicketCreate_dependsOnBlocksAssignment verifies that a follow-up ticket
@@ -262,6 +266,7 @@ func TestTicketCreate_dependsOnBlocksAssignment(t *testing.T) {
 		t.Fatalf("ticketCreate: %v", err)
 	}
 	// New tickets start as 'draft'; promote to 'open' so Selectable() can consider it.
+	// followUpID is parentID+1: clean DB auto-increments from parentID=1.
 	followUpID := parentID + 1
 	if err := issues.UpdateStatus(followUpID, repo.StatusOpen); err != nil {
 		t.Fatalf("UpdateStatus follow-up to open: %v", err)
