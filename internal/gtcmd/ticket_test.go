@@ -279,7 +279,7 @@ func TestTicketCreate_dependsOnBlocksAssignment(t *testing.T) {
 	}
 
 	// Now the follow-up should be selectable.
-	ready, err = issues.Selectable([]string{}, 10)
+	ready, err = issues.Selectable()
 	if err != nil {
 		t.Fatalf("Selectable after close: %v", err)
 	}
