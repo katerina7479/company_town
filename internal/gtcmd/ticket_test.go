@@ -261,6 +261,11 @@ func TestTicketCreate_dependsOnBlocksAssignment(t *testing.T) {
 	if err := ticketCreate(issues, "nc", []string{"follow-up", "--parent", fmt.Sprintf("%d", parentID), "--depends-on", fmt.Sprintf("%d", parentID)}); err != nil {
 		t.Fatalf("ticketCreate: %v", err)
 	}
+	// New tickets start as 'draft'; promote to 'open' so Selectable() can consider it.
+	followUpID := parentID + 1
+	if err := issues.UpdateStatus(followUpID, repo.StatusOpen); err != nil {
+		t.Fatalf("UpdateStatus follow-up to open: %v", err)
+	}
 
 	// While the parent is pr_open the follow-up must not appear in Selectable.
 	ready, err := issues.Selectable()
