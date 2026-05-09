@@ -52,6 +52,42 @@ jobs:
       - name: Coverage report
         run: go tool cover -func=coverage.out
 
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+          check-latest: true
+
+      - name: Install Dolt
+        run: curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+
+      - name: Build and install binaries
+        run: make install
+
+      - name: Smoke test – ct init, daemon up, gt status
+        run: |
+          set -e
+          SMOKE_DIR=$(mktemp -d)
+          cd "$SMOKE_DIR"
+          git init -q
+          git config user.email "ci@example.com"
+          git config user.name "CI"
+
+          ct init --non-interactive
+
+          ct daemon &
+          DAEMON_PID=$!
+          sleep 5
+
+          gt status | grep "=== Agents ==="
+
+          kill "$DAEMON_PID" 2>/dev/null || true
+
   security:
     runs-on: ubuntu-latest
     steps:
