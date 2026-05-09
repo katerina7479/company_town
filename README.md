@@ -10,7 +10,7 @@ Each agent runs in its own tmux session. You interact with one of them — the *
 
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - tmux
-- `gh` (GitHub CLI), authenticated against the repo you want agents to push to
+- `gh` (GitHub CLI) or `glab` (GitLab CLI), authenticated against the repo you want agents to push to
 - `claude` CLI (Claude Code), authenticated
 
 **To build from source** (optional, contributors only):
@@ -27,14 +27,71 @@ Grab the latest release from [github.com/katerina7479/company_town/releases/late
 - `company_town_<version>_darwin_amd64.tar.gz` — macOS, Intel
 - `company_town_<version>_linux_amd64.tar.gz` — Linux x86_64
 
-Download, extract, and move the binaries onto your `PATH`:
+**macOS:**
 
 ```bash
 curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_darwin_arm64.tar.gz | tar xz
 sudo mv ct gt /usr/local/bin/
 ```
 
-Swap the archive name for your platform. Each release page includes a `checksums.txt` you can verify against if you care.
+**Linux:**
+
+```bash
+curl -L https://github.com/katerina7479/company_town/releases/latest/download/company_town_<version>_linux_amd64.tar.gz | tar xz
+sudo mv ct gt /usr/local/bin/
+```
+
+Each release page includes a `checksums.txt` you can verify against if you care.
+
+#### Linux dependencies
+
+Install system packages first:
+
+```bash
+# Debian / Ubuntu
+sudo apt-get update && sudo apt-get install -y tmux git
+
+# Fedora / RHEL / AlmaLinux
+sudo dnf install -y tmux git
+```
+
+Install Dolt (no distro package; use the official installer):
+
+```bash
+curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | sudo bash
+```
+
+Install `gh` (GitHub users) or `glab` (GitLab users):
+
+```bash
+# gh — see https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+# Ubuntu / Debian (via GitHub's apt repo):
+sudo apt-get install -y gh
+
+# Fedora / RHEL:
+sudo dnf install -y 'dnf-command(config-manager)'
+sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+sudo dnf install -y gh
+
+# glab — see https://gitlab.com/gitlab-org/cli/-/releases
+# Ubuntu / Debian:
+sudo apt-get install -y glab
+```
+
+Install the Claude Code CLI:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+After installing, authenticate before running `ct init`:
+
+```bash
+gh auth login          # or: glab auth login
+claude                 # follow the browser prompt on first launch
+```
+
+**PATH:** after `sudo mv ct gt /usr/local/bin/` the binaries are on your PATH immediately. If you used a different target directory, add it to `$PATH` in your shell profile.
 
 ### 2. Verify
 
