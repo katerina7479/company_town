@@ -1111,6 +1111,40 @@ func TestIssueRepo_Create_withPriority(t *testing.T) {
 	}
 }
 
+func TestIssueRepo_Create_withInitialStatus(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, err := repo.Create("Mayor idea", "task", nil, nil, nil, StatusIdeating)
+	if err != nil {
+		t.Fatalf("Create with initial status: %v", err)
+	}
+
+	issue, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Status != StatusIdeating {
+		t.Errorf("expected status=%q, got %q", StatusIdeating, issue.Status)
+	}
+}
+
+func TestIssueRepo_Create_omittedStatusDefaultsToDraft(t *testing.T) {
+	repo := setupTestRepo(t)
+
+	id, err := repo.Create("Normal task", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	issue, err := repo.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Status != StatusDraft {
+		t.Errorf("expected status=%q, got %q", StatusDraft, issue.Status)
+	}
+}
+
 func TestIssueRepo_SetPriority(t *testing.T) {
 	repo := setupTestRepo(t)
 
