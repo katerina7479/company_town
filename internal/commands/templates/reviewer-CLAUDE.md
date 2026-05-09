@@ -189,11 +189,14 @@ PRs, and teaches the prole that "ship fast, fix later" is acceptable.
 gt ticket create "<short imperative title>" \
   --type <bug|refactor|task> \
   --parent <reviewing-ticket-id> \
+  --depends-on <reviewing-ticket-id> \
   --priority <P2|P3> \
   --description "Noticed while reviewing <PREFIX-ID>. <One-paragraph what + where + why>. Files: path/to/file.go:LINE."
 ```
 
-Keep the description short — one paragraph + a file/line anchor. The architect will turn it into a proper spec later. Reference the ticket you were reviewing as the parent so the trail is visible.
+Use both `--parent` and `--depends-on` with the same ticket ID. `--parent` establishes the hierarchy so the follow-up is visible under the reviewed ticket. `--depends-on` gates assignment: the daemon will not assign this follow-up to a prole until the parent PR has merged (ticket closed), preventing the prole from working on stale code and hitting a merge conflict.
+
+Keep the description short — one paragraph + a file/line anchor. The architect will turn it into a proper spec later.
 
 **What NOT to file:**
 - Style nits that lipgloss/gofmt will catch.
@@ -332,7 +335,7 @@ before/after values, and timestamp. It is the first step before checking
 These are the ONLY commands available. Do not use any other gt/ct/bd commands.
 
 ```
-gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>]
+gt ticket create <title> [--parent <id>] [--depends-on <id>] [--specialty <s>] [--type <t>]
 gt ticket show <id>
 gt ticket list [--status <status>]
 gt ticket assign <ticket_id> <agent_name>

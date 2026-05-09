@@ -100,10 +100,11 @@ func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.
 
 func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3|P4|P5>]")
+		return fmt.Errorf("usage: gt ticket create <title> [--parent <id>] [--depends-on <id>] [--specialty <s>] [--type <t>] [--description <d>] [--priority <P0|P1|P2|P3|P4|P5>]")
 	}
 
 	var parentID *int
+	var dependsOn []int
 	var specialty *string
 	var description string
 	var priority *string
@@ -122,6 +123,17 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 				return fmt.Errorf("invalid parent ID: %s", args[i])
 			}
 			parentID = &v
+		case "--depends-on":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--depends-on requires a value")
+			}
+			i++
+			depRaw := args[i] //nolint:gosec // bounds checked immediately above
+			v, err := parseTicketID(depRaw)
+			if err != nil {
+				return fmt.Errorf("invalid --depends-on ID: %s", depRaw)
+			}
+			dependsOn = append(dependsOn, v)
 		case "--specialty":
 			if i+1 >= len(args) {
 				return fmt.Errorf("--specialty requires a value")
@@ -175,6 +187,12 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 		priority = &defaultPriority
 	}
 
+	for _, depID := range dependsOn {
+		if _, err := issues.Get(depID); err != nil {
+			return fmt.Errorf("--depends-on ticket %d: %w", depID, err)
+		}
+	}
+
 	id, err := issues.Create(title, issueType, parentID, specialty, priority)
 	if err != nil {
 		return err
@@ -183,6 +201,12 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	if description != "" {
 		if err := issues.UpdateDescription(id, description); err != nil {
 			return err
+		}
+	}
+
+	for _, depID := range dependsOn {
+		if err := issues.AddDependency(id, depID); err != nil {
+			return fmt.Errorf("adding dependency on %d: %w", depID, err)
 		}
 	}
 
