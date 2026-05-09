@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -67,6 +69,32 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
+
+// NewFullyMigratedTestDB creates an in-memory SQLite database with the full
+// test schema and all embedded migration names pre-recorded in schema_migrations.
+// Use this when a test needs a fully-initialised schema without executing the
+// real (MySQL-dialect) migration SQL against SQLite.
+func NewFullyMigratedTestDB() (*sql.DB, error) {
+	conn, err := NewTestDB()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := migrationsFS.ReadDir("migrations")
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("reading embedded migrations: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		if _, err := conn.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, e.Name()); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("pre-marking migration %s: %w", e.Name(), err)
+		}
+	}
+	return conn, nil
+}
 
 // NewTestDB creates an in-memory SQLite database for testing.
 func NewTestDB() (*sql.DB, error) {

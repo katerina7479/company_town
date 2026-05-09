@@ -50,6 +50,10 @@ func InitDolt(doltDir string) error {
 // StartServer starts a Dolt SQL server using host/port/database from config.
 // Writes PID to server.json (runtime state only — connection info is in config.json).
 func StartServer(doltDir, ctDir string, cfg *config.DoltConfig) error {
+	if _, err := exec.LookPath("dolt"); err != nil {
+		return fmt.Errorf("dolt binary not found in PATH — install Dolt from https://docs.dolthub.com/introduction/installation")
+	}
+
 	// Check if already running
 	if state, err := loadServerState(ctDir); err == nil {
 		if isProcessRunning(state.PID) {
@@ -64,8 +68,8 @@ func StartServer(doltDir, ctDir string, cfg *config.DoltConfig) error {
 			"or edit .company_town/config.json dolt.port to a free port", cfg.Port)
 	}
 
-	logFile, err := os.OpenFile(filepath.Join(ctDir, "logs", "dolt-server.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	logPath := filepath.Join(ctDir, "logs", "dolt-server.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("opening dolt log: %w", err)
 	}
@@ -88,7 +92,7 @@ func StartServer(doltDir, ctDir string, cfg *config.DoltConfig) error {
 	}
 
 	if err := waitForServer(cfg.Host, cfg.Port, 10*time.Second); err != nil {
-		return fmt.Errorf("dolt server failed to start: %w", err)
+		return fmt.Errorf("dolt server failed to start (check %s): %w", logPath, err)
 	}
 
 	fmt.Printf("  Dolt server started (pid=%d, port=%d)\n", cmd.Process.Pid, cfg.Port)

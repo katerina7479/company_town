@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,8 @@ import (
 // Package-level vars for injection in tests.
 var sessionExistsFn func(string) bool = session.Exists
 var sessionAttachFn func(string) error = session.Attach
+var startServerFn func(doltDir, ctDir string, cfg *config.DoltConfig) error = db.StartServer
+var connectFn func(cfg *config.DoltConfig) (*sql.DB, error) = db.Connect
 
 // applySessionPrefix sets session.SessionPrefix from cfg, preserving the
 // current value when cfg.SessionPrefix is empty (e.g., in unit-test configs
@@ -88,9 +91,26 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 
 // Start implements `ct start` — starts the Daemon and Mayor, attaches to Mayor's tmux session.
 func Start() error {
-	conn, cfg, err := db.OpenFromWorkingDir()
+	projectRoot, err := db.FindProjectRoot()
 	if err != nil {
 		return err
+	}
+	cfg, err := config.Load(projectRoot)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	ctDir := config.CompanyTownDir(projectRoot)
+	doltDir := filepath.Join(ctDir, "db")
+
+	fmt.Println("Starting Dolt server...")
+	if err := startServerFn(doltDir, ctDir, &cfg.Dolt); err != nil {
+		return fmt.Errorf("starting dolt server: %w", err)
+	}
+
+	conn, err := connectFn(&cfg.Dolt)
+	if err != nil {
+		return fmt.Errorf("connecting to database: %w", err)
 	}
 	defer conn.Close()
 
@@ -104,7 +124,7 @@ func Start() error {
 
 	applySessionPrefix(cfg)
 
-	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
+	events := eventlog.NewLogger(ctDir)
 	agents := repo.NewAgentRepo(conn, events)
 
 	// Register daemon in DB if not already present.
@@ -116,7 +136,7 @@ func Start() error {
 
 	// Start daemon if not already running.
 	daemonSession := session.SessionName("daemon")
-	if !session.Exists(daemonSession) {
+	if !sessionExistsFn(daemonSession) {
 		fmt.Println("Starting daemon...")
 		if err := startDaemon(cfg); err != nil {
 			return fmt.Errorf("starting daemon: %w", err)
