@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 )
@@ -41,6 +43,9 @@ var topDirs = []string{
 	"ticket_specs",
 	"agents",
 }
+
+// isTerminalFn reports whether fd is a TTY. Injected for tests.
+var isTerminalFn = isatty.IsTerminal
 
 // gitRemoteURLFn is injectable for tests.
 var gitRemoteURLFn = func() (string, error) {
@@ -277,10 +282,16 @@ func promptField(r *bufio.Reader, label, defaultVal string, validate func(string
 		}
 		if err != nil {
 			if err == io.EOF {
-				// Treat EOF as accepting the current value (supports piped input).
+				// EOF + valid: accept the value (supports piped input and Ctrl-D
+				// after typing). EOF + invalid: re-prompt on a TTY (the user can
+				// still correct their input), abort on a pipe (no more input).
 				if validate != nil {
 					if verr := validate(val); verr != nil {
-						return "", fmt.Errorf("invalid value for %s: %w", label, verr)
+						if !isTerminalFn(os.Stdin.Fd()) {
+							return "", fmt.Errorf("invalid value for %s: %w", label, verr)
+						}
+						fmt.Printf("  error: %v\n", verr)
+						continue
 					}
 				}
 				fmt.Println(val)
