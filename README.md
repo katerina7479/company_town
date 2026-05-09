@@ -15,7 +15,7 @@ Each agent runs in its own tmux session. You interact with one of them — the *
 
 **To build from source** (optional, contributors only):
 
-- Go 1.22+
+- Go 1.26+
 
 ## Getting Started
 
@@ -87,7 +87,24 @@ cd company_town
 make install        # builds and installs ct + gt to $GOPATH/bin
 ```
 
-`make build` alone drops binaries at `./bin/ct` and `./bin/gt`. Requires Go 1.22+.
+`make build` alone drops binaries at `./bin/ct` and `./bin/gt`. Requires Go 1.26+.
+
+**Linux note:** Ubuntu 24.04's `apt` only provides Go 1.22; install Go 1.26+ directly
+from [go.dev/dl](https://go.dev/dl). The archive filename uses a dash between OS and
+arch — `linux-arm64`, not `linux.arm64`:
+
+```bash
+# Example for Linux arm64; swap arm64 → amd64 for x86_64
+curl -fsSL https://go.dev/dl/go1.26.3.linux-arm64.tar.gz | sudo tar -xz -C /usr/local
+export PATH=/usr/local/go/bin:$PATH
+```
+
+After `make install`, add `$HOME/go/bin` to your PATH if it is not already there — Ubuntu
+does not add it by default:
+
+```bash
+echo 'export PATH=$HOME/go/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
+```
 
 ## Troubleshooting first run
 
