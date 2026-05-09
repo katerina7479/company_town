@@ -113,7 +113,7 @@ func TestStartAgent_doesNotOverwriteWorkingStatus(t *testing.T) {
 func writeTestProjectConfig(t *testing.T, root string) {
 	t.Helper()
 	ctDir := filepath.Join(root, config.DirName)
-	if err := os.MkdirAll(ctDir, 0755); err != nil {
+	if err := os.MkdirAll(ctDir, 0750); err != nil {
 		t.Fatalf("mkdir .company_town: %v", err)
 	}
 	cfg := config.DefaultConfig(root, "github", "octocat/hello-world")

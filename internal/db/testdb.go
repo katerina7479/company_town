@@ -81,7 +81,7 @@ func NewFullyMigratedTestDB() (*sql.DB, error) {
 	}
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
-		conn.Close()
+		conn.Close() //nolint:errcheck // already in error path; close error is secondary
 		return nil, fmt.Errorf("reading embedded migrations: %w", err)
 	}
 	for _, e := range entries {
@@ -89,7 +89,7 @@ func NewFullyMigratedTestDB() (*sql.DB, error) {
 			continue
 		}
 		if _, err := conn.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, e.Name()); err != nil {
-			conn.Close()
+			conn.Close() //nolint:errcheck // already in error path; close error is secondary
 			return nil, fmt.Errorf("pre-marking migration %s: %w", e.Name(), err)
 		}
 	}
