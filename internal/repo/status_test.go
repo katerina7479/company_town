@@ -8,6 +8,7 @@ import "testing"
 // forget to update either side, and this test tells you.
 func TestValidStatusesMatchConsts(t *testing.T) {
 	allConsts := map[string]bool{
+		StatusIdeating:      true,
 		StatusDraft:         true,
 		StatusOpen:          true,
 		StatusInProgress:    true,

@@ -4,6 +4,7 @@ package repo
 // Status constants for issue statuses. Use these instead of raw string
 // literals so typos become compile errors and renames are mechanical.
 const (
+	StatusIdeating      = "ideating"
 	StatusDraft         = "draft"
 	StatusOpen          = "open"
 	StatusInProgress    = "in_progress"
@@ -45,6 +46,7 @@ func IsTerminalStatus(s string) bool {
 //   - on_hold: explicitly paused; children should pause too.
 //   - cancelled: work abandoned; no point landing children under a dead branch.
 //   - draft: scope not yet stable; children may change before the parent is finalised.
+//   - ideating: pre-draft; mayor-CEO iteration in progress; nothing downstream runs.
 func IsBlockingAncestorStatus(s string) bool {
-	return s == StatusOnHold || s == StatusCancelled || s == StatusDraft
+	return s == StatusOnHold || s == StatusCancelled || s == StatusDraft || s == StatusIdeating
 }
