@@ -60,7 +60,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.2'
+          go-version: '1.26.3'
           check-latest: true
 
       - name: Install Dolt
@@ -82,9 +82,9 @@ jobs:
 
           ct daemon &
           DAEMON_PID=$!
-          sleep 5
+          for i in {1..20}; do gt status | grep -qE "^\s*daemon\s+daemon\s+working" && break; sleep 1; done
 
-          gt status | grep "=== Agents ==="
+          gt status | grep -E "^\s*daemon\s+daemon\s+working"
 
           kill "$DAEMON_PID" 2>/dev/null || true
 
