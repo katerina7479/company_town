@@ -213,6 +213,97 @@ func TestTicketCreate_withParent(t *testing.T) {
 	}
 }
 
+func TestTicketCreate_withDependsOn(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	blockerID, _ := issues.Create("Blocker", "task", nil, nil, nil)
+	if err := ticketCreate(issues, "nc", []string{"follow-up", "--depends-on", fmt.Sprintf("%d", blockerID)}); err != nil {
+		t.Fatalf("ticketCreate with --depends-on: %v", err)
+	}
+	followUpID := blockerID + 1
+
+	deps, err := issues.GetDependencies(followUpID)
+	if err != nil {
+		t.Fatalf("GetDependencies: %v", err)
+	}
+	if len(deps) != 1 || deps[0] != blockerID {
+		t.Errorf("expected dependency on %d, got %v", blockerID, deps)
+	}
+}
+
+func TestTicketCreate_dependsOnMissingValue(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	if err := ticketCreate(issues, "nc", []string{"title", "--depends-on"}); err == nil {
+		t.Error("expected error for --depends-on missing value")
+	}
+}
+
+func TestTicketCreate_dependsOnUnknownTicket(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	if err := ticketCreate(issues, "nc", []string{"title", "--depends-on", "9999"}); err == nil {
+		t.Error("expected error for --depends-on with nonexistent ticket")
+	}
+	all, _ := issues.List(repo.StatusDraft)
+	if len(all) != 0 {
+		t.Errorf("invalid --depends-on must not leak a ticket; found %d draft tickets", len(all))
+	}
+}
+
+// TestTicketCreate_dependsOnBlocksAssignment verifies that a follow-up ticket
+// created with --depends-on a pr_open parent is not selectable until the
+// parent is closed.
+func TestTicketCreate_dependsOnBlocksAssignment(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	// Parent ticket simulating a PR that is open (not yet merged).
+	parentID, _ := issues.Create("Parent PR", "task", nil, nil, nil)
+	if err := issues.UpdateStatus(parentID, repo.StatusPROpen); err != nil {
+		t.Fatalf("UpdateStatus pr_open: %v", err)
+	}
+
+	// Follow-up depends on the parent.
+	if err := ticketCreate(issues, "nc", []string{"follow-up", "--parent", fmt.Sprintf("%d", parentID), "--depends-on", fmt.Sprintf("%d", parentID)}); err != nil {
+		t.Fatalf("ticketCreate: %v", err)
+	}
+	// New tickets start as 'draft'; promote to 'open' so Selectable() can consider it.
+	// followUpID is parentID+1: clean DB auto-increments from parentID=1.
+	followUpID := parentID + 1
+	if err := issues.UpdateStatus(followUpID, repo.StatusOpen); err != nil {
+		t.Fatalf("UpdateStatus follow-up to open: %v", err)
+	}
+
+	// While the parent is pr_open the follow-up must not appear in Selectable.
+	ready, err := issues.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable: %v", err)
+	}
+	for _, r := range ready {
+		if r.Title == "follow-up" {
+			t.Error("follow-up should not be selectable while parent is pr_open")
+		}
+	}
+
+	// Close the parent (simulating merge).
+	if err := issues.UpdateStatus(parentID, repo.StatusClosed); err != nil {
+		t.Fatalf("UpdateStatus closed: %v", err)
+	}
+
+	// Now the follow-up should be selectable.
+	ready, err = issues.Selectable()
+	if err != nil {
+		t.Fatalf("Selectable after close: %v", err)
+	}
+	found := false
+	for _, r := range ready {
+		if r.Title == "follow-up" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("follow-up should be selectable after parent is closed")
+	}
+}
+
 func TestTicketCreate_withSpecialty(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
@@ -236,6 +327,7 @@ func TestTicketCreate_missingFlagValues(t *testing.T) {
 		name string
 	}{
 		{[]string{"title", "--parent"}, "--parent missing value"},
+		{[]string{"title", "--depends-on"}, "--depends-on missing value"},
 		{[]string{"title", "--specialty"}, "--specialty missing value"},
 		{[]string{"title", "--priority"}, "--priority missing value"},
 		{[]string{"title", "--type"}, "--type missing value"},
