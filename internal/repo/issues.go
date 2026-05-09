@@ -602,7 +602,7 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 // assignment. Selection includes:
 //   - repairing tickets with no assignee (orphaned — prole died before fixing)
 //   - open tickets with no unmet dependencies, no assignee, and no ancestor
-//     in a blocking status (on_hold, cancelled, draft)
+//     in a blocking status (on_hold, cancelled, draft, ideating)
 //
 // Ordering (strict): repairing before open, bugs before tasks before other
 // types, P0→P1→P2→P3→P4→P5→null, then lower ID first.
@@ -704,7 +704,7 @@ func (r *IssueRepo) allDepsClosed(id int) (bool, error) {
 }
 
 // ancestorChainAllowsWork reports whether the ancestor chain of id contains no
-// blocking statuses (on_hold, cancelled, draft). Returns true when id has no
+// blocking statuses (on_hold, cancelled, draft, ideating). Returns true when id has no
 // parent or all ancestors have non-blocking statuses.
 func (r *IssueRepo) ancestorChainAllowsWork(id int) (bool, error) {
 	ancestors, err := r.ListAncestors(id)
