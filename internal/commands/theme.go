@@ -65,6 +65,7 @@ func DefaultTheme() StyleTheme {
 			"idle":    lipgloss.NewStyle().Foreground(lipgloss.Color("3")), // yellow
 			"dead":    lipgloss.NewStyle().Foreground(lipgloss.Color("1")), // red
 			// Ticket statuses
+			repo.StatusIdeating:      lipgloss.NewStyle().Foreground(lipgloss.Color("13")),  // bright magenta — mayor-CEO ideation
 			repo.StatusDraft:         lipgloss.NewStyle().Foreground(lipgloss.Color("8")),   // dark gray
 			repo.StatusOpen:          lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
 			repo.StatusInProgress:    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan

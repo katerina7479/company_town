@@ -2169,3 +2169,99 @@ func TestTicketParent_badSecondArg(t *testing.T) {
 		t.Fatal("expected error for non-numeric parent ID")
 	}
 }
+
+func TestTicketCreate_mayorDefaultsToIdeating(t *testing.T) {
+	t.Setenv("CT_AGENT_NAME", "mayor")
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketCreate(issues, "nc", []string{"my idea"}); err != nil {
+		t.Fatalf("ticketCreate: %v", err)
+	}
+	ticket, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ticket.Status != repo.StatusIdeating {
+		t.Errorf("expected status=%q for mayor, got %q", repo.StatusIdeating, ticket.Status)
+	}
+}
+
+func TestTicketCreate_nonMayorDefaultsToDraft(t *testing.T) {
+	t.Setenv("CT_AGENT_NAME", "architect")
+	issues := setupTicketTestRepo(t)
+
+	if err := ticketCreate(issues, "nc", []string{"spec task"}); err != nil {
+		t.Fatalf("ticketCreate: %v", err)
+	}
+	ticket, err := issues.Get(1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ticket.Status != repo.StatusDraft {
+		t.Errorf("expected status=%q for non-mayor, got %q", repo.StatusDraft, ticket.Status)
+	}
+}
+
+func TestTicketPromote_happyPath(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("idea", "task", nil, nil, nil)
+	if err := issues.UpdateStatus(id, repo.StatusIdeating); err != nil {
+		t.Fatalf("UpdateStatus ideating: %v", err)
+	}
+
+	if err := ticketPromote(issues, "nc", []string{fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketPromote: %v", err)
+	}
+
+	ticket, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ticket.Status != repo.StatusDraft {
+		t.Errorf("expected status=%q after promote, got %q", repo.StatusDraft, ticket.Status)
+	}
+}
+
+func TestTicketPromote_rejectsNonIdeating(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+
+	id, _ := issues.Create("task", "task", nil, nil, nil)
+
+	err := ticketPromote(issues, "nc", []string{fmt.Sprintf("%d", id)})
+	if err == nil {
+		t.Fatal("expected error promoting a non-ideating ticket")
+	}
+	if !strings.Contains(err.Error(), "not ideating") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestTicketPromote_missingArg(t *testing.T) {
+	issues := setupTicketTestRepo(t)
+	if err := ticketPromote(issues, "nc", []string{}); err == nil {
+		t.Fatal("expected error for missing ticket ID")
+	}
+}
+
+func TestTicketDispatch_promote(t *testing.T) {
+	issues, agents := setupTicketTestRepos(t)
+	cfg := &config.Config{TicketPrefix: "nc"}
+
+	id, _ := issues.Create("idea", "task", nil, nil, nil)
+	if err := issues.UpdateStatus(id, repo.StatusIdeating); err != nil {
+		t.Fatalf("UpdateStatus ideating: %v", err)
+	}
+
+	if err := ticketDispatch(issues, agents, cfg, []string{"promote", fmt.Sprintf("%d", id)}); err != nil {
+		t.Fatalf("ticketDispatch promote: %v", err)
+	}
+
+	ticket, err := issues.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ticket.Status != repo.StatusDraft {
+		t.Errorf("expected draft after dispatch promote, got %q", ticket.Status)
+	}
+}

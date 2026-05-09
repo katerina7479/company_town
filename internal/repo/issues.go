@@ -34,7 +34,7 @@ var ValidPriorities = []string{"P0", "P1", "P2", "P3", "P4", "P5"}
 
 // Valid issue statuses.
 var ValidStatuses = []string{
-	StatusDraft, StatusOpen, StatusInProgress,
+	StatusIdeating, StatusDraft, StatusOpen, StatusInProgress,
 	StatusCIRunning,
 	StatusInReview, StatusUnderReview, StatusPROpen,
 	StatusReviewed, StatusRepairing, StatusOnHold, StatusMergeConflict, StatusClosed, StatusCancelled,
@@ -178,7 +178,7 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 		// Human unblock: reset repair_cycle_count so the ticket gets a fresh
 		// slate. Also clear repair_reason in case it was on_hold.
 		b.expr("repair_cycle_count = 0").expr("repair_reason = NULL")
-	case StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusUnderReview, StatusPROpen, StatusClosed, StatusCancelled, StatusOnHold:
+	case StatusIdeating, StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusUnderReview, StatusPROpen, StatusClosed, StatusCancelled, StatusOnHold:
 		// Transitioning out of a repair-ish state — clear stale repair_reason.
 		// "draft" is included because a human may manually reopen a ticket from
 		// on_hold or repairing back to draft, and the old reason must not leak.
@@ -602,7 +602,7 @@ func (r *IssueRepo) Ready() ([]*Issue, error) {
 // assignment. Selection includes:
 //   - repairing tickets with no assignee (orphaned — prole died before fixing)
 //   - open tickets with no unmet dependencies, no assignee, and no ancestor
-//     in a blocking status (on_hold, cancelled, draft)
+//     in a blocking status (on_hold, cancelled, draft, ideating)
 //
 // Ordering (strict): repairing before open, bugs before tasks before other
 // types, P0→P1→P2→P3→P4→P5→null, then lower ID first.
@@ -704,7 +704,7 @@ func (r *IssueRepo) allDepsClosed(id int) (bool, error) {
 }
 
 // ancestorChainAllowsWork reports whether the ancestor chain of id contains no
-// blocking statuses (on_hold, cancelled, draft). Returns true when id has no
+// blocking statuses (on_hold, cancelled, draft, ideating). Returns true when id has no
 // parent or all ancestors have non-blocking statuses.
 func (r *IssueRepo) ancestorChainAllowsWork(id int) (bool, error) {
 	ancestors, err := r.ListAncestors(id)

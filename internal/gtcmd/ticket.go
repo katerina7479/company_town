@@ -93,6 +93,8 @@ func ticketDispatch(issues *repo.IssueRepo, agents *repo.AgentRepo, cfg *config.
 		return ticketPrioritize(issues, args[1:])
 	case "type":
 		return ticketType(issues, args[1:])
+	case "promote":
+		return ticketPromote(issues, cfg.TicketPrefix, args[1:])
 	default:
 		return fmt.Errorf("unknown ticket command: %s", args[0])
 	}
@@ -207,6 +209,14 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	for _, depID := range dependsOn {
 		if err := issues.AddDependency(id, depID); err != nil {
 			return fmt.Errorf("adding dependency on %d: %w", depID, err)
+		}
+	}
+
+	// Mayor-filed tickets land in ideating by default so the CEO and mayor can
+	// iterate on scope before the architect picks them up.
+	if os.Getenv("CT_AGENT_NAME") == "mayor" {
+		if err := issues.UpdateStatus(id, repo.StatusIdeating); err != nil {
+			return fmt.Errorf("setting ideating status: %w", err)
 		}
 	}
 
@@ -532,6 +542,35 @@ func ticketClose(issues *repo.IssueRepo, agents *repo.AgentRepo, args []string) 
 	}
 
 	fmt.Printf("Ticket %d closed.\n", id)
+	return nil
+}
+
+// ticketPromote advances an ideating ticket to draft, making it visible to
+// the architect's spec loop. Only valid when current status is ideating.
+func ticketPromote(issues *repo.IssueRepo, prefix string, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: gt ticket promote <id>")
+	}
+
+	id, err := parseTicketID(args[0])
+	if err != nil {
+		return err
+	}
+
+	issue, err := issues.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if issue.Status != repo.StatusIdeating {
+		return fmt.Errorf("ticket %s-%d is %s, not ideating — only ideating tickets can be promoted", prefix, id, issue.Status)
+	}
+
+	if err := issues.UpdateStatus(id, repo.StatusDraft); err != nil {
+		return err
+	}
+
+	fmt.Printf("%s-%d promoted to draft\n", prefix, id)
 	return nil
 }
 
