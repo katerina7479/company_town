@@ -82,9 +82,13 @@ jobs:
 
           ct daemon &
           DAEMON_PID=$!
-          for i in {1..20}; do gt status | grep -qE "^\s*daemon\s+daemon\s+working" && break; sleep 1; done
+          sleep 2
 
-          gt status | grep -E "^\s*daemon\s+daemon\s+working"
+          # ct daemon does not register itself as an agent row; assert it's still running
+          kill -0 "$DAEMON_PID" || { echo "daemon exited immediately after start"; exit 1; }
+
+          # Verify gt status can reach the DB and produce the agents panel
+          gt status | grep "=== Agents ==="
 
           kill "$DAEMON_PID" 2>/dev/null || true
 
