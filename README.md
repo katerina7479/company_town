@@ -95,7 +95,7 @@ arch — `linux-arm64`, not `linux.arm64`:
 
 ```bash
 # Example for Linux arm64; swap arm64 → amd64 for x86_64
-curl -fsSL https://go.dev/dl/go1.26.1.linux-arm64.tar.gz | sudo tar -xz -C /usr/local
+curl -fsSL https://go.dev/dl/go1.26.3.linux-arm64.tar.gz | sudo tar -xz -C /usr/local
 export PATH=/usr/local/go/bin:$PATH
 ```
 

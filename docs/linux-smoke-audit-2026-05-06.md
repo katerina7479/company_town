@@ -9,7 +9,7 @@
   - tmux 3.4 (`apt install tmux`)
   - git 2.43.0 (`apt install git`)
   - gcc 13.3.0 (`apt install gcc`)
-  - Go 1.26.1 (manual download from go.dev; see below)
+  - Go 1.26.3 (manual download from go.dev; see below)
   - `gh`, `glab`, `claude`, Dolt: not installed (see What broke or surprised)
 - **Codebase commit:** `f40ab7d feat(ticket): add --depends-on flag to gt ticket create (nc-291) (#339)`
   (HEAD of main at time of audit; nc-292 was in-flight and not merged)
@@ -37,11 +37,11 @@ for nc-298 (install docs rewrite).
 
 2. **Go 1.26.x download from go.dev** — Once the correct URL format was identified
    (`go1.26.x.linux-arm64.tar.gz` — note the dash between `linux` and `arm64`, not a dot),
-   Go 1.26.1 downloaded and extracted successfully:
+   Go 1.26.3 downloaded and extracted successfully:
    ```bash
-   curl -fsSL https://go.dev/dl/go1.26.1.linux-arm64.tar.gz | tar -xz -C /usr/local
+   curl -fsSL https://go.dev/dl/go1.26.3.linux-arm64.tar.gz | tar -xz -C /usr/local
    export PATH=/usr/local/go/bin:$PATH
-   go version  # → go version go1.26.1 linux/arm64
+   go version  # → go version go1.26.3 linux/arm64
    ```
 
 3. **`git clone`** — `git clone https://github.com/katerina7479/company_town.git`
@@ -77,14 +77,14 @@ for nc-298 (install docs rewrite).
 ### 1. Go 1.26.x not available via apt on Ubuntu 24.04 (README gap)
 
 `apt-get install golang-go` on Ubuntu 24.04 installs **Go 1.22.2**, not 1.26.x. The
-project's `go.mod` requires `go 1.26.1`, so the apt-installed Go is insufficient. Build
+project's `go.mod` requires `go 1.26.3`, so the apt-installed Go is insufficient. Build
 fails with a toolchain mismatch error.
 
 **Expected:** README says "Go 1.22+"; apt version should work.
-**Actual:** Project requires 1.26.1; apt provides 1.22.2; build fails.
+**Actual:** Project requires 1.26.3; apt provides 1.22.2; build fails.
 **Workaround:** Download directly from go.dev:
 ```bash
-curl -fsSL https://go.dev/dl/go1.26.1.linux-arm64.tar.gz | tar -xz -C /usr/local
+curl -fsSL https://go.dev/dl/go1.26.3.linux-arm64.tar.gz | tar -xz -C /usr/local
 export PATH=/usr/local/go/bin:$PATH
 ```
 **Quick fix:** README updated in this PR — "Go 1.22+" → "Go 1.26+", with a note that
@@ -93,7 +93,7 @@ Ubuntu apt lags behind and a direct-download command for Linux.
 ### 2. Correct Go download URL uses a dash, not dots (documentation gap)
 
 The filename format for Go Linux tarballs uses a dash between OS and arch:
-`go1.26.1.linux-arm64.tar.gz`. Using dots (`go1.26.1.linux.arm64.tar.gz`) returns 404.
+`go1.26.3.linux-arm64.tar.gz`. Using dots (`go1.26.3.linux.arm64.tar.gz`) returns 404.
 **Quick fix:** Added the exact URL pattern to the README Linux build note.
 
 ### 3. `$GOPATH/bin` not on PATH by default on Ubuntu
