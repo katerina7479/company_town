@@ -144,8 +144,8 @@ The nc-295 spec places the report at `.company_town/docs/linux-smoke-audit-<date
 However, `.company_town/` is in the repo's `.gitignore` (it holds runtime state that
 doesn't belong in version control). A file there cannot be committed or reviewed via PR.
 This report is placed in `docs/` at the repo root instead.
-**Recommended:** Either update the spec convention to `docs/` for repo-committed reports,
-or update `.gitignore` to allow `.company_town/docs/`. Filed as nc-303 (P4).
+**Decision (nc-303):** Use `docs/` at the repo root for all committed reports and audits.
+`.company_town/` remains fully gitignored as runtime-only state.
 
 ### 7. Steps 4–6 not testable in Docker
 
@@ -199,5 +199,5 @@ improve the getting-started experience. This is nc-297's scope.
 
 1. **Full lifecycle smoke:** Should a follow-up audit run on a real Multipass VM be
    tracked as a sub-task of nc-295 or folded into nc-298's install-docs work?
-2. **Report path convention:** `docs/` (repo root) vs. `.company_town/docs/` (update
-   gitignore to allow)? Decision needed before nc-298 lands.
+2. ~~**Report path convention:** decided by nc-303 — `docs/` at repo root is the
+   convention. `.company_town/` stays fully gitignored.~~

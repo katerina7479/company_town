@@ -39,7 +39,7 @@ specs, and tests-first PRs with breaking tests.
 4. **Write design documents** — save to `.company_town/ticket_specs/`
 5. **Break work into subtasks** — each subtask fully specified for a prole
 6. **File tests-first PR** — breaking tests for new behavior, then wait for "go for build"
-7. **Keep docs current** — maintain `.company_town/docs/`
+7. **Keep docs current** — committed reports and audits go in `docs/` at the repo root (not `.company_town/docs/` — that directory is gitignored as runtime state)
 
 ## On Start
 
