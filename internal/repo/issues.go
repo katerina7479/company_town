@@ -52,8 +52,12 @@ func NewIssueRepo(db *sql.DB, events *eventlog.Logger) *IssueRepo {
 	return &IssueRepo{db: db, events: events}
 }
 
-// Create inserts a new issue and returns its ID.
-func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *string, priority *string) (int, error) {
+// Create inserts a new issue and returns its ID. An optional initialStatus
+// parameter sets the status at insert time; omit it to use the DB default
+// ('draft'). Passing a non-empty value is the only way to land a ticket
+// atomically in a non-draft status (e.g. StatusIdeating for mayor-filed
+// tickets).
+func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *string, priority *string, initialStatus ...string) (int, error) {
 	if issueType == "" {
 		issueType = "task"
 	}
@@ -71,10 +75,19 @@ func (r *IssueRepo) Create(title, issueType string, parentID *int, specialty *st
 		prioVal = *priority
 	}
 
-	result, err := r.db.Exec(
-		`INSERT INTO issues (title, issue_type, parent_id, specialty, priority) VALUES (?, ?, ?, ?, ?)`,
-		title, issueType, parentVal, specVal, prioVal,
-	)
+	var result sql.Result
+	var err error
+	if len(initialStatus) > 0 && initialStatus[0] != "" {
+		result, err = r.db.Exec(
+			`INSERT INTO issues (title, issue_type, parent_id, specialty, priority, status) VALUES (?, ?, ?, ?, ?, ?)`,
+			title, issueType, parentVal, specVal, prioVal, initialStatus[0],
+		)
+	} else {
+		result, err = r.db.Exec(
+			`INSERT INTO issues (title, issue_type, parent_id, specialty, priority) VALUES (?, ?, ?, ?, ?)`,
+			title, issueType, parentVal, specVal, prioVal,
+		)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("creating issue: %w", err)
 	}

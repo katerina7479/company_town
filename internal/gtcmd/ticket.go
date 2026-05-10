@@ -195,7 +195,14 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 		}
 	}
 
-	id, err := issues.Create(title, issueType, parentID, specialty, priority)
+	// Mayor-filed tickets land in ideating atomically so the CEO and mayor can
+	// iterate on scope before the architect picks them up.
+	var createStatus []string
+	if os.Getenv("CT_AGENT_NAME") == "mayor" {
+		createStatus = []string{repo.StatusIdeating}
+	}
+
+	id, err := issues.Create(title, issueType, parentID, specialty, priority, createStatus...)
 	if err != nil {
 		return err
 	}
@@ -209,14 +216,6 @@ func ticketCreate(issues *repo.IssueRepo, prefix string, args []string) error {
 	for _, depID := range dependsOn {
 		if err := issues.AddDependency(id, depID); err != nil {
 			return fmt.Errorf("adding dependency on %d: %w", depID, err)
-		}
-	}
-
-	// Mayor-filed tickets land in ideating by default so the CEO and mayor can
-	// iterate on scope before the architect picks them up.
-	if os.Getenv("CT_AGENT_NAME") == "mayor" {
-		if err := issues.UpdateStatus(id, repo.StatusIdeating); err != nil {
-			return fmt.Errorf("setting ideating status: %w", err)
 		}
 	}
 
