@@ -28,6 +28,7 @@ func newTestClient(check func(string) bool, exec func(...string) error) *tmuxCli
 		sleep:   func() {},
 		spawn:   func(string, ...string) ([]byte, error) { return nil, nil },
 		capture: func(...string) ([]byte, error) { return nil, nil },
+		readEnv: func(string) (map[string]string, error) { return nil, nil },
 	}
 }
 

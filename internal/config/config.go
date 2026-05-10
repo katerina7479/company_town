@@ -102,7 +102,8 @@ type Config struct {
 	CIRunningStuckThresholdSeconds  int           `json:"ci_running_stuck_threshold_seconds"`
 	MemoryNudgeIntervalSeconds      int           `json:"memory_nudge_interval_seconds"`
 	TDD                             bool          `json:"tdd"`
-	Language                        string        `json:"language"` // "go", "python", "" (agnostic)
+	Language                        string        `json:"language"`           // "go", "python", "" (agnostic)
+	DashboardTerminal               string        `json:"dashboard_terminal"` // override terminal for spawn-attach (e.g. "kitty")
 	Quality                         QualityConfig `json:"quality"`
 }
 

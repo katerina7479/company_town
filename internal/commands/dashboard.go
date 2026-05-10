@@ -113,9 +113,10 @@ type dashboardModel struct {
 	width  int
 	height int
 
-	ticketPrefix    string        // from config, used in status-change label
-	tickFile        string        // path to daemon-tick file; empty disables reading
-	pollingInterval time.Duration // daemon poll interval, used to compute stale threshold
+	ticketPrefix      string        // from config, used in status-change label
+	tickFile          string        // path to daemon-tick file; empty disables reading
+	pollingInterval   time.Duration // daemon poll interval, used to compute stale threshold
+	dashboardTerminal string        // Config.DashboardTerminal override for spawn-attach
 
 	focusedPanel int // 0 = agents, 1 = tickets
 	agentCursor  int
@@ -168,12 +169,13 @@ func newDashboardModel() (*dashboardModel, error) {
 		openPRFn: func(prNum int) error {
 			return dashProvider.OpenPRInBrowser(prNum, cfg.ProjectRoot)
 		},
-		sleepFn:         time.Sleep,
-		expanded:        make(map[int]bool),
-		theme:           DefaultTheme(),
-		ticketPrefix:    cfg.TicketPrefix,
-		tickFile:        filepath.Join(ctDir, "run", "daemon-tick"),
-		pollingInterval: pollingInterval,
+		sleepFn:           time.Sleep,
+		expanded:          make(map[int]bool),
+		theme:             DefaultTheme(),
+		ticketPrefix:      cfg.TicketPrefix,
+		tickFile:          filepath.Join(ctDir, "run", "daemon-tick"),
+		pollingInterval:   pollingInterval,
+		dashboardTerminal: cfg.DashboardTerminal,
 	}, nil
 }
 
@@ -345,7 +347,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if !m.sessionExists(agent.TmuxSession.String) {
 					m.statusMsg = fmt.Sprintf("session %s not running", agent.TmuxSession.String)
 				} else {
-					return m, spawnAttachCmd(agent.Name, agent.TmuxSession.String)
+					return m, spawnAttachCmd(agent.Name, agent.TmuxSession.String, m.dashboardTerminal)
 				}
 			}
 
@@ -535,11 +537,12 @@ func (m dashboardModel) agentSessionName(name string) string {
 	return ""
 }
 
-// spawnAttachCmd runs session.SpawnAttach in a goroutine so Update stays
-// non-blocking during osascript latency (200-500ms).
-func spawnAttachCmd(agentName, sessionName string) tea.Cmd {
+// spawnAttachCmd runs session.SpawnAttachWith in a goroutine so Update stays
+// non-blocking during spawn latency (200-500ms). termOverride is
+// Config.DashboardTerminal; empty string means auto-detect.
+func spawnAttachCmd(agentName, sessionName, termOverride string) tea.Cmd {
 	return func() tea.Msg {
-		err := session.SpawnAttach(sessionName)
+		err := session.SpawnAttachWith(sessionName, termOverride)
 		return spawnAttachResultMsg{agentName: agentName, sessionName: sessionName, err: err}
 	}
 }
