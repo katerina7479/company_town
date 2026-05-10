@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -61,17 +62,27 @@ func TestSpawnAttach_Ghostty(t *testing.T) {
 	if err := c.SpawnAttach("ct-mayor"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(*argv) == 0 || (*argv)[0] != "osascript" {
-		t.Errorf("expected osascript call, got %v", *argv)
+	if len(*argv) == 0 {
+		t.Fatal("expected spawn call, got empty argv")
 	}
 	joined := strings.Join(*argv, " ")
-	if !strings.Contains(joined, "tmux attach-session") || !strings.Contains(joined, "ct-mayor") {
-		t.Errorf("argv missing attach cmd or session name: %s", joined)
+	if runtime.GOOS == "linux" {
+		// Linux ghostty uses the CLI, not osascript.
+		if (*argv)[0] != "ghostty" {
+			t.Errorf("expected ghostty CLI spawn on Linux, got %v", *argv)
+		}
+	} else {
+		if (*argv)[0] != "osascript" {
+			t.Errorf("expected osascript call on macOS, got %v", *argv)
+		}
+		if !strings.Contains(joined, "tmux attach-session") || !strings.Contains(joined, "ct-mayor") {
+			t.Errorf("argv missing attach cmd or session name: %s", joined)
+		}
 	}
 }
 
 func TestSpawnAttach_GhosttyExecFailureReturnsWrappedError(t *testing.T) {
-	c, _ := newSpawnClient(t, []byte("osascript: error"), errors.New("exit status 1"))
+	c, _ := newSpawnClient(t, []byte("ghostty: error"), errors.New("exit status 1"))
 	t.Setenv("TMUX", "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	err := c.SpawnAttach("ct-mayor")
@@ -81,8 +92,16 @@ func TestSpawnAttach_GhosttyExecFailureReturnsWrappedError(t *testing.T) {
 	if errors.Is(err, ErrUnknownTerminal) {
 		t.Errorf("Ghostty failure must not return ErrUnknownTerminal: %v", err)
 	}
-	if !strings.Contains(err.Error(), "osascript") {
-		t.Errorf("error should mention osascript: %v", err)
+	// Both macOS (osascript) and Linux (ghostty CLI) paths name the program in
+	// the error, but the keyword differs per platform.
+	if runtime.GOOS == "linux" {
+		if !strings.Contains(err.Error(), "ghostty") {
+			t.Errorf("error should mention ghostty: %v", err)
+		}
+	} else {
+		if !strings.Contains(err.Error(), "osascript") {
+			t.Errorf("error should mention osascript: %v", err)
+		}
 	}
 }
 
