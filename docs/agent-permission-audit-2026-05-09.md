@@ -116,6 +116,8 @@ in code). Findings drive the hardening children of nc-304.
 | `reviewer inspect --clean` | Remove PR inspection worktree |
 | `update` | Download and install latest ct/gt release binaries |
 
+**Read-only verbs (excluded from scope):** `gt ticket show|list`, `gt agent list`, `gt status`, `gt log tail|show`, `gt check list|history|run` (result read), `gt ticket ready` (status check) — none mutate state.
+
 ---
 
 ## Code Gates (Enforced in Go)
@@ -295,18 +297,18 @@ These are documented prohibitions that any agent could violate today:
 These are the hardening actions this audit recommends for nc-304 children.
 Each is a binary code change, not a documentation update.
 
-| Priority | Change | Mechanism |
-|----------|--------|-----------|
-| P1 | Block `gt agent status <name> working` when `CT_AGENT_NAME` is non-empty AND != `<name>` AND != `"mayor"` (unset = human/daemon terminal — always allow) | Check CT_AGENT_NAME in `agentStatus()` |
-| P1 | Block `gt ticket review` unless `CT_AGENT_NAME` matches the reviewer role | Check CT_AGENT_NAME in `ticketReview()` |
-| P1 | Block `gt ticket assign` unless `CT_AGENT_NAME` is "mayor" or unset (daemon / operator) | Check CT_AGENT_NAME in `ticketAssign()` |
-| P1 | Block `gt ticket close` unless caller is daemon or operator (no `CT_AGENT_NAME` or special flag) | Check CT_AGENT_NAME in `ticketClose()` |
-| P1 | Block `gt ticket promote` unless `CT_AGENT_NAME` is "mayor" or unset | Check CT_AGENT_NAME in `ticketPromote()` |
-| P2 | Block `gt ticket delete` unless `CT_AGENT_NAME` is unset (human operator) | Check CT_AGENT_NAME in `ticketDelete()` |
-| P2 | Block `gt pr create|update|ready` unless `CT_AGENT_NAME` is a prole, artisan, or architect (merge-conflict exception) | Check CT_AGENT_NAME type via DB lookup |
-| P2 | Block `gt agent register` unless `CT_AGENT_NAME` is unset (ct tooling) | Check CT_AGENT_NAME in `agentRegister()` |
-| P2 | Block `gt ticket priority|type|describe` unless `CT_AGENT_NAME` is mayor or architect | Check CT_AGENT_NAME in respective functions |
-| P3 | Block `gt ticket depend|undepend|parent|unparent` from prole/artisan agents | Check CT_AGENT_NAME in respective functions |
+| Priority | Change | Blast Radius | Mechanism |
+|----------|--------|--------------|-----------|
+| P1 | Block `gt agent status <name> working` when `CT_AGENT_NAME` is non-empty AND != `<name>` AND != `"mayor"` (unset = human/daemon terminal — always allow) | Agent hijacks another agent's working slot; current_issue and metrics corrupted | Check CT_AGENT_NAME in `agentStatus()` |
+| P1 | Block `gt ticket review` unless `CT_AGENT_NAME` matches the reviewer role | Wrong actor posts verdict; ticket transitions to wrong status, correct reviewer bypassed | Check CT_AGENT_NAME in `ticketReview()` |
+| P1 | Block `gt ticket assign` unless `CT_AGENT_NAME` is "mayor" or unset (daemon / operator) | Bypasses daemon fair-queue; overwrites branch field on ticket | Check CT_AGENT_NAME in `ticketAssign()` |
+| P1 | Block `gt ticket close` unless caller is daemon or operator (no `CT_AGENT_NAME` or special flag) | Premature close hides live PR; assignment cleared before merge detected | Check CT_AGENT_NAME in `ticketClose()` |
+| P1 | Block `gt ticket promote` unless `CT_AGENT_NAME` is "mayor" or unset | Prole promotes ideating ticket past CEO review gate | Check CT_AGENT_NAME in `ticketPromote()` |
+| P2 | Block `gt ticket delete` unless `CT_AGENT_NAME` is unset (human operator) | Permanent row loss; audit trail destroyed | Check CT_AGENT_NAME in `ticketDelete()` |
+| P2 | Block `gt pr create|update|ready` unless `CT_AGENT_NAME` is a prole, artisan, or architect (merge-conflict exception) | Mayor or reviewer files PR, masking true author; reviewer routed to wrong actor | Check CT_AGENT_NAME type via DB lookup |
+| P2 | Block `gt agent register` unless `CT_AGENT_NAME` is unset (ct tooling) | Phantom agent inserted; scheduler and assignment logic confused | Check CT_AGENT_NAME in `agentRegister()` |
+| P2 | Block `gt ticket priority|type|describe` unless `CT_AGENT_NAME` is mayor or architect | Prole silently corrupts triage metadata; architect prioritization overwritten mid-sprint | Check CT_AGENT_NAME in respective functions |
+| P3 | Block `gt ticket depend|undepend|parent|unparent` from prole/artisan agents | Dependency graph corrupted; blocking chains miscalculated by daemon | Check CT_AGENT_NAME in respective functions |
 
 ---
 
