@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -38,7 +39,7 @@ type tmuxClient struct {
 	sleep       func()                                            // pause inside SendKeys
 	spawn       func(prog string, args ...string) ([]byte, error) // osascript etc.
 	capture     func(args ...string) ([]byte, error)              // tmux capture-pane / display-message
-	readProcEnv func(pid int) (string, error)                     // read TERM_PROGRAM from a process's env
+	readProcEnv func(pid int, key string) (string, error)         // read a single env var from a process's env
 }
 
 // New returns a Client backed by real tmux.
@@ -57,7 +58,7 @@ func New() Client {
 		capture: func(args ...string) ([]byte, error) {
 			return exec.Command("tmux", args...).Output()
 		},
-		readProcEnv: readProcessTermProgram,
+		readProcEnv: readProcessEnvVar,
 	}
 }
 
@@ -249,18 +250,51 @@ func shellQuote(s string) string {
 var ErrUnknownTerminal = fmt.Errorf("unrecognized TERM_PROGRAM; falling back to in-place attach")
 
 // SpawnAttach opens a new terminal window running tmux attach -t sessionName.
-// The calling process keeps running. Supported: Ghostty, iTerm2, Terminal.app.
+// The calling process keeps running. Supported: Ghostty, iTerm2, Terminal.app,
+// gnome-terminal, alacritty, kitty, wezterm, foot, xterm.
 // Returns ErrUnknownTerminal for unrecognized $TERM_PROGRAM.
 func SpawnAttach(sessionName string) error { return defaultClient.SpawnAttach(sessionName) }
 
+// SpawnAttachWith is like SpawnAttach but respects a terminal override.
+// termOverride is typically Config.DashboardTerminal; empty means auto-detect.
+func SpawnAttachWith(sessionName, termOverride string) error {
+	if c, ok := defaultClient.(*tmuxClient); ok {
+		return c.spawnAttachWith(sessionName, termOverride)
+	}
+	return defaultClient.SpawnAttach(sessionName)
+}
+
 func (c *tmuxClient) SpawnAttach(sessionName string) error {
-	switch c.detectTerminalProgram() {
-	case "ghostty":
-		return c.spawnGhostty(sessionName)
+	return c.spawnAttachWith(sessionName, "")
+}
+
+func (c *tmuxClient) spawnAttachWith(sessionName, termOverride string) error {
+	termProg := termOverride
+	if termProg == "" {
+		termProg = c.detectTerminalProgram()
+	}
+	switch termProg {
 	case "iTerm.app":
 		return c.spawnITerm(sessionName)
 	case "Apple_Terminal":
 		return c.spawnAppleTerminal(sessionName)
+	case "ghostty":
+		if runtime.GOOS == "linux" {
+			return c.spawnGhosttyLinux(sessionName)
+		}
+		return c.spawnGhostty(sessionName)
+	case "gnome-terminal":
+		return c.spawnGnomeTerminal(sessionName)
+	case "alacritty":
+		return c.spawnAlacritty(sessionName)
+	case "kitty":
+		return c.spawnKitty(sessionName)
+	case "wezterm":
+		return c.spawnWezterm(sessionName)
+	case "foot":
+		return c.spawnFoot(sessionName)
+	case "xterm":
+		return c.spawnXterm(sessionName)
 	default:
 		return ErrUnknownTerminal
 	}
@@ -270,8 +304,10 @@ func (c *tmuxClient) SpawnAttach(sessionName string) error {
 // inside tmux ($TMUX is set) it queries the active client's PID via
 // `tmux display-message -p '#{client_pid}'` and reads TERM_PROGRAM from that
 // process's environment, so the detection reflects the user's current terminal
-// rather than the stale env inherited by the tmux server. Falls back to
-// os.Getenv("TERM_PROGRAM") when not in tmux or when the client lookup fails.
+// rather than the stale env inherited by the tmux server. For terminals that
+// don't set $TERM_PROGRAM (gnome-terminal, alacritty, foot, etc.) it falls
+// back to a $TERM-derived heuristic. Returns os.Getenv("TERM_PROGRAM") when
+// not in tmux or when the client lookup fails.
 func (c *tmuxClient) detectTerminalProgram() string {
 	fallback := strings.TrimSpace(os.Getenv("TERM_PROGRAM"))
 	if os.Getenv("TMUX") == "" {
@@ -285,11 +321,35 @@ func (c *tmuxClient) detectTerminalProgram() string {
 	if err != nil || pid <= 0 {
 		return fallback
 	}
-	termProg, err := c.readProcEnv(pid)
-	if err != nil || termProg == "" {
-		return fallback
+	if termProg, err := c.readProcEnv(pid, "TERM_PROGRAM"); err == nil {
+		if v := strings.TrimSpace(termProg); v != "" {
+			return v
+		}
 	}
-	return strings.TrimSpace(termProg)
+	// Some terminals (gnome-terminal, alacritty, foot, kitty in some setups)
+	// don't set $TERM_PROGRAM. Derive from $TERM when possible.
+	if term, err := c.readProcEnv(pid, "TERM"); err == nil {
+		if derived := termFromBareTERM(strings.TrimSpace(term)); derived != "" {
+			return derived
+		}
+	}
+	return fallback
+}
+
+// termFromBareTERM derives a TERM_PROGRAM-compatible name from a $TERM value
+// for terminals that set $TERM but not $TERM_PROGRAM.
+func termFromBareTERM(term string) string {
+	switch {
+	case strings.HasPrefix(term, "xterm-kitty"):
+		return "kitty"
+	case strings.HasPrefix(term, "wezterm"):
+		return "wezterm"
+	case strings.HasPrefix(term, "foot"):
+		return "foot"
+	case strings.HasPrefix(term, "alacritty"):
+		return "alacritty"
+	}
+	return ""
 }
 
 // attachArgv returns the tmux attach command string for use in a terminal script.
@@ -348,6 +408,64 @@ end tell`, osascriptQuote(attachArgv(sessionName)))
 	out, err := c.spawn("osascript", "-e", script)
 	if err != nil {
 		return fmt.Errorf("Terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *tmuxClient) spawnGnomeTerminal(sessionName string) error {
+	out, err := c.spawn("gnome-terminal", "--", "bash", "-lc", attachArgv(sessionName))
+	if err != nil {
+		return fmt.Errorf("gnome-terminal: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *tmuxClient) spawnAlacritty(sessionName string) error {
+	out, err := c.spawn("alacritty", "-e", "tmux", "attach-session", "-t", sessionName)
+	if err != nil {
+		return fmt.Errorf("alacritty: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *tmuxClient) spawnKitty(sessionName string) error {
+	out, err := c.spawn("kitty", "tmux", "attach-session", "-t", sessionName)
+	if err != nil {
+		return fmt.Errorf("kitty: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *tmuxClient) spawnWezterm(sessionName string) error {
+	out, err := c.spawn("wezterm", "start", "--", "tmux", "attach-session", "-t", sessionName)
+	if err != nil {
+		return fmt.Errorf("wezterm: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *tmuxClient) spawnFoot(sessionName string) error {
+	out, err := c.spawn("foot", "--", "tmux", "attach-session", "-t", sessionName)
+	if err != nil {
+		return fmt.Errorf("foot: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c *tmuxClient) spawnXterm(sessionName string) error {
+	out, err := c.spawn("xterm", "-e", "tmux", "attach-session", "-t", sessionName)
+	if err != nil {
+		return fmt.Errorf("xterm: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// spawnGhosttyLinux spawns a new Ghostty window on Linux via its CLI.
+// The macOS Ghostty path (spawnGhostty) uses osascript instead.
+func (c *tmuxClient) spawnGhosttyLinux(sessionName string) error {
+	out, err := c.spawn("ghostty", "-e", attachArgv(sessionName))
+	if err != nil {
+		return fmt.Errorf("ghostty: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

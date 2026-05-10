@@ -8,20 +8,22 @@ import (
 	"strings"
 )
 
-// readProcessTermProgram reads TERM_PROGRAM from the process environment of pid
-// using ps eww, which appends the full environment to the process listing.
-func readProcessTermProgram(pid int) (string, error) {
+// readProcessEnvVar reads a single environment variable from the process
+// environment of pid using ps eww, which appends the full environment to the
+// process listing. Returns the empty string when the variable is not set.
+func readProcessEnvVar(pid int, key string) (string, error) {
 	out, err := exec.Command("ps", "eww", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return "", err
 	}
-	return parseTermProgramFromPS(string(out)), nil
+	return parseEnvVarFromPS(string(out), key), nil
 }
 
-// parseTermProgramFromPS extracts the TERM_PROGRAM value from ps eww output.
-// The environment vars are appended to the CMD column separated by spaces.
-func parseTermProgramFromPS(s string) string {
-	const marker = "TERM_PROGRAM="
+// parseEnvVarFromPS extracts the value of the named environment variable from
+// ps eww output. The environment vars are appended to the CMD column separated
+// by whitespace; the first match wins.
+func parseEnvVarFromPS(s, key string) string {
+	marker := key + "="
 	idx := strings.Index(s, marker)
 	if idx == -1 {
 		return ""

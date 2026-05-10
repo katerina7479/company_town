@@ -1,10 +1,10 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package session
 
-// readProcessTermProgram stubs client-env detection on non-darwin platforms.
-// On Linux, detectTerminalProgram falls back to os.Getenv("TERM_PROGRAM").
-// nc-296 replaces this stub with a /proc/<pid>/environ implementation.
-func readProcessTermProgram(_ int) (string, error) {
+// readProcessEnvVar stubs client-env detection on platforms that have neither
+// `ps eww` (macOS) nor /proc (Linux). detectTerminalProgram falls back to
+// os.Getenv("TERM_PROGRAM") for these platforms.
+func readProcessEnvVar(_ int, _ string) (string, error) {
 	return "", nil
 }
