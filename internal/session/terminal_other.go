@@ -1,9 +1,10 @@
-//go:build !darwin && !linux
+//go:build !darwin
 
 package session
 
-// readProcessTermProgram is a stub on unsupported platforms.
-// nc-296 adds Linux support via /proc/<pid>/environ.
+// readProcessTermProgram stubs client-env detection on non-darwin platforms.
+// On Linux, detectTerminalProgram falls back to os.Getenv("TERM_PROGRAM").
+// nc-296 replaces this stub with a /proc/<pid>/environ implementation.
 func readProcessTermProgram(_ int) (string, error) {
 	return "", nil
 }
