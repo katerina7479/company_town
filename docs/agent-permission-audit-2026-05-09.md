@@ -297,7 +297,7 @@ Each is a binary code change, not a documentation update.
 
 | Priority | Change | Mechanism |
 |----------|--------|-----------|
-| P1 | Block `gt agent status <name> working` when caller's `CT_AGENT_NAME` != `<name>` (unless `CT_AGENT_NAME == "mayor"`) | Check CT_AGENT_NAME in `agentStatus()` |
+| P1 | Block `gt agent status <name> working` when `CT_AGENT_NAME` is non-empty AND != `<name>` AND != `"mayor"` (unset = human/daemon terminal — always allow) | Check CT_AGENT_NAME in `agentStatus()` |
 | P1 | Block `gt ticket review` unless `CT_AGENT_NAME` matches the reviewer role | Check CT_AGENT_NAME in `ticketReview()` |
 | P1 | Block `gt ticket assign` unless `CT_AGENT_NAME` is "mayor" or unset (daemon / operator) | Check CT_AGENT_NAME in `ticketAssign()` |
 | P1 | Block `gt ticket close` unless caller is daemon or operator (no `CT_AGENT_NAME` or special flag) | Check CT_AGENT_NAME in `ticketClose()` |
@@ -311,6 +311,14 @@ Each is a binary code change, not a documentation update.
 ---
 
 ## Notes on Partial Enforcement
+
+- **Unset `CT_AGENT_NAME` = human/operator context** — agent tmux sessions are
+  launched with `CT_AGENT_NAME` injected by `CreateInteractive`. A human
+  running `gt` from their own terminal tab (outside any agent session) has
+  `CT_AGENT_NAME` unset. The `ct dashboard` runs inside the mayor session, so
+  dashboard calls carry `CT_AGENT_NAME=mayor`. Throughout the recommended
+  gates, "unset = allow" is the safe default: it permits human-operator calls
+  from any terminal without requiring them to masquerade as mayor.
 
 - **`CT_AGENT_NAME` is self-reported** — the environment variable is set by
   the tmux session launch script (in `internal/session`), not by the binary
