@@ -347,7 +347,7 @@ tell application "Terminal"
 end tell`, osascriptQuote(attachArgv(sessionName)))
 	out, err := c.spawn("osascript", "-e", script)
 	if err != nil {
-		return fmt.Errorf("Terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("osascript for Terminal.app: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
