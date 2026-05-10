@@ -1,3 +1,4 @@
+// Package session manages tmux sessions for Company Town agents.
 package session
 
 import (
