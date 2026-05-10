@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,16 +30,16 @@ type Client interface {
 }
 
 // tmuxClient is the real Client. Fields check, exec, sleep, spawn, capture, and
-// readEnv hold the exec seams that were previously package-level variables;
+// readProcEnv hold the exec seams that were previously package-level variables;
 // moving them onto the struct allows each test to create an isolated instance
 // without mutating global state.
 type tmuxClient struct {
-	check   func(name string) bool                            // tmux has-session
-	exec    func(args ...string) error                        // tmux send-keys / kill-session
-	sleep   func()                                            // pause inside SendKeys
-	spawn   func(prog string, args ...string) ([]byte, error) // osascript etc.
-	capture func(args ...string) ([]byte, error)              // tmux capture-pane
-	readEnv func(pid string) (map[string]string, error)       // read client process env
+	check       func(name string) bool                            // tmux has-session
+	exec        func(args ...string) error                        // tmux send-keys / kill-session
+	sleep       func()                                            // pause inside SendKeys
+	spawn       func(prog string, args ...string) ([]byte, error) // osascript etc.
+	capture     func(args ...string) ([]byte, error)              // tmux capture-pane / display-message
+	readProcEnv func(pid int, key string) (string, error)         // read a single env var from a process's env
 }
 
 // New returns a Client backed by real tmux.
@@ -57,7 +58,7 @@ func New() Client {
 		capture: func(args ...string) ([]byte, error) {
 			return exec.Command("tmux", args...).Output()
 		},
-		readEnv: readClientEnv,
+		readProcEnv: readProcessEnvVar,
 	}
 }
 
@@ -299,38 +300,40 @@ func (c *tmuxClient) spawnAttachWith(sessionName, termOverride string) error {
 	}
 }
 
-// detectTerminalProgram returns the TERM_PROGRAM of the active tmux client.
-// When running inside tmux it queries the client PID and reads its environment
-// via c.readEnv, falling back to TERM-derived heuristics for terminals that
-// don't set TERM_PROGRAM. Outside tmux it returns the inherited TERM_PROGRAM.
+// detectTerminalProgram returns the active terminal program name. When running
+// inside tmux ($TMUX is set) it queries the active client's PID via
+// `tmux display-message -p '#{client_pid}'` and reads TERM_PROGRAM from that
+// process's environment, so the detection reflects the user's current terminal
+// rather than the stale env inherited by the tmux server. For terminals that
+// don't set $TERM_PROGRAM (gnome-terminal, alacritty, foot, etc.) it falls
+// back to a $TERM-derived heuristic. Returns os.Getenv("TERM_PROGRAM") when
+// not in tmux or when the client lookup fails.
 func (c *tmuxClient) detectTerminalProgram() string {
-	inheritedEnv := strings.TrimSpace(os.Getenv("TERM_PROGRAM"))
+	fallback := strings.TrimSpace(os.Getenv("TERM_PROGRAM"))
 	if os.Getenv("TMUX") == "" {
-		return inheritedEnv
+		return fallback
 	}
-
 	out, err := c.capture("display-message", "-p", "#{client_pid}")
 	if err != nil {
-		return inheritedEnv
+		return fallback
 	}
-	pid := strings.TrimSpace(string(out))
-	if pid == "" {
-		return inheritedEnv
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return fallback
 	}
-
-	env, err := c.readEnv(pid)
-	if err != nil {
-		return inheritedEnv
+	if termProg, err := c.readProcEnv(pid, "TERM_PROGRAM"); err == nil {
+		if v := strings.TrimSpace(termProg); v != "" {
+			return v
+		}
 	}
-	if v := env["TERM_PROGRAM"]; v != "" {
-		return v
-	}
-	if t := env["TERM"]; t != "" {
-		if derived := termFromBareTERM(t); derived != "" {
+	// Some terminals (gnome-terminal, alacritty, foot, kitty in some setups)
+	// don't set $TERM_PROGRAM. Derive from $TERM when possible.
+	if term, err := c.readProcEnv(pid, "TERM"); err == nil {
+		if derived := termFromBareTERM(strings.TrimSpace(term)); derived != "" {
 			return derived
 		}
 	}
-	return inheritedEnv
+	return fallback
 }
 
 // termFromBareTERM derives a TERM_PROGRAM-compatible name from a $TERM value

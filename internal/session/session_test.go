@@ -23,12 +23,12 @@ func newTestClient(check func(string) bool, exec func(...string) error) *tmuxCli
 		exec = func(...string) error { return nil }
 	}
 	return &tmuxClient{
-		check:   check,
-		exec:    exec,
-		sleep:   func() {},
-		spawn:   func(string, ...string) ([]byte, error) { return nil, nil },
-		capture: func(...string) ([]byte, error) { return nil, nil },
-		readEnv: func(string) (map[string]string, error) { return nil, nil },
+		check:       check,
+		exec:        exec,
+		sleep:       func() {},
+		spawn:       func(string, ...string) ([]byte, error) { return nil, nil },
+		capture:     func(...string) ([]byte, error) { return nil, nil },
+		readProcEnv: func(int, string) (string, error) { return "", nil },
 	}
 }
 
