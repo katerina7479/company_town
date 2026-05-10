@@ -1,8 +1,10 @@
 package commands
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -924,5 +926,56 @@ func TestCheckRemoteMain_noRepoRef_skipsCheck(t *testing.T) {
 	}
 	if note != "" {
 		t.Errorf("expected no note when repoRef unset, got %q", note)
+	}
+}
+
+func TestPromptField_eofInvalidOnTTYRePrompts(t *testing.T) {
+	oldIsTerminal := isTerminalFn
+	defer func() { isTerminalFn = oldIsTerminal }()
+	isTerminalFn = func(uintptr) bool { return true }
+
+	r := io.MultiReader(strings.NewReader(""), strings.NewReader("github\n"))
+	br := bufio.NewReader(r)
+
+	got, err := promptField(br, "VCS platform (github, gitlab)", "", validatePlatform)
+	if err != nil {
+		t.Fatalf("expected re-prompt + accept, got error: %v", err)
+	}
+	if got != "github" {
+		t.Errorf("got %q, want %q", got, "github")
+	}
+}
+
+func TestPromptField_eofInvalidOnPipeAborts(t *testing.T) {
+	oldIsTerminal := isTerminalFn
+	defer func() { isTerminalFn = oldIsTerminal }()
+	isTerminalFn = func(uintptr) bool { return false }
+
+	br := bufio.NewReader(strings.NewReader(""))
+	_, err := promptField(br, "VCS platform (github, gitlab)", "", validatePlatform)
+	if err == nil {
+		t.Fatal("expected abort, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid value for") {
+		t.Errorf("error should describe the invalid input: %v", err)
+	}
+}
+
+func TestPromptField_eofValidAccepts(t *testing.T) {
+	for name, isTTY := range map[string]bool{"tty": true, "pipe": false} {
+		t.Run(name, func(t *testing.T) {
+			oldIsTerminal := isTerminalFn
+			defer func() { isTerminalFn = oldIsTerminal }()
+			isTerminalFn = func(uintptr) bool { return isTTY }
+
+			br := bufio.NewReader(strings.NewReader(""))
+			got, err := promptField(br, "VCS platform", "github", validatePlatform)
+			if err != nil {
+				t.Fatalf("EOF + valid default should accept, got: %v", err)
+			}
+			if got != "github" {
+				t.Errorf("got %q, want %q", got, "github")
+			}
+		})
 	}
 }
