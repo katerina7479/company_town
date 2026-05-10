@@ -19,16 +19,22 @@ func newSpawnClient(t *testing.T, out []byte, err error) (*tmuxClient, *[]string
 			captured = append([]string{prog}, args...)
 			return out, err
 		},
+		// Safe defaults: if $TMUX is set during tests, detectTerminalProgram
+		// will call capture, get an error, and fall back to $TERM_PROGRAM.
+		capture:     func(...string) ([]byte, error) { return nil, errors.New("not in tmux") },
+		readProcEnv: func(int) (string, error) { return "", nil },
 	}
 	return c, &captured
 }
 
 func TestSpawnAttach_unknownTerminal(t *testing.T) {
 	c := &tmuxClient{
-		check: func(string) bool { return true },
-		exec:  func(...string) error { return nil },
-		sleep: func() {},
-		spawn: func(string, ...string) ([]byte, error) { return nil, nil },
+		check:       func(string) bool { return true },
+		exec:        func(...string) error { return nil },
+		sleep:       func() {},
+		spawn:       func(string, ...string) ([]byte, error) { return nil, nil },
+		capture:     func(...string) ([]byte, error) { return nil, errors.New("not in tmux") },
+		readProcEnv: func(int) (string, error) { return "", nil },
 	}
 	t.Setenv("TERM_PROGRAM", "xterm-256color")
 	if !errors.Is(c.SpawnAttach("ct-iron"), ErrUnknownTerminal) {
@@ -38,10 +44,12 @@ func TestSpawnAttach_unknownTerminal(t *testing.T) {
 
 func TestSpawnAttach_emptyTermProgram(t *testing.T) {
 	c := &tmuxClient{
-		check: func(string) bool { return true },
-		exec:  func(...string) error { return nil },
-		sleep: func() {},
-		spawn: func(string, ...string) ([]byte, error) { return nil, nil },
+		check:       func(string) bool { return true },
+		exec:        func(...string) error { return nil },
+		sleep:       func() {},
+		spawn:       func(string, ...string) ([]byte, error) { return nil, nil },
+		capture:     func(...string) ([]byte, error) { return nil, errors.New("not in tmux") },
+		readProcEnv: func(int) (string, error) { return "", nil },
 	}
 	t.Setenv("TERM_PROGRAM", "")
 	if !errors.Is(c.SpawnAttach("ct-iron"), ErrUnknownTerminal) {
@@ -146,5 +154,84 @@ func TestAttachArgv(t *testing.T) {
 	want := "tmux attach-session -t 'ct-iron'"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDetectTerminalProgram_noTmux(t *testing.T) {
+	c := &tmuxClient{
+		capture:     func(...string) ([]byte, error) { panic("should not call capture outside tmux") },
+		readProcEnv: func(int) (string, error) { panic("should not call readProcEnv outside tmux") },
+	}
+	t.Setenv("TMUX", "")
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	if got := c.detectTerminalProgram(); got != "iTerm.app" {
+		t.Errorf("got %q, want %q", got, "iTerm.app")
+	}
+}
+
+func TestDetectTerminalProgram_inTmux_happy(t *testing.T) {
+	c := &tmuxClient{
+		capture: func(args ...string) ([]byte, error) {
+			return []byte("12345\n"), nil
+		},
+		readProcEnv: func(pid int) (string, error) {
+			if pid != 12345 {
+				t.Errorf("unexpected pid %d, want 12345", pid)
+			}
+			return "iTerm.app", nil
+		},
+	}
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal") // stale server env — should be ignored
+	if got := c.detectTerminalProgram(); got != "iTerm.app" {
+		t.Errorf("got %q, want %q", got, "iTerm.app")
+	}
+}
+
+func TestDetectTerminalProgram_inTmux_captureError(t *testing.T) {
+	c := &tmuxClient{
+		capture:     func(...string) ([]byte, error) { return nil, errors.New("tmux error") },
+		readProcEnv: func(int) (string, error) { panic("should not be called") },
+	}
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	if got := c.detectTerminalProgram(); got != "Apple_Terminal" {
+		t.Errorf("got %q, want %q", got, "Apple_Terminal")
+	}
+}
+
+func TestDetectTerminalProgram_inTmux_invalidPID(t *testing.T) {
+	c := &tmuxClient{
+		capture:     func(...string) ([]byte, error) { return []byte("not-a-number\n"), nil },
+		readProcEnv: func(int) (string, error) { panic("should not be called") },
+	}
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	if got := c.detectTerminalProgram(); got != "Apple_Terminal" {
+		t.Errorf("got %q, want %q", got, "Apple_Terminal")
+	}
+}
+
+func TestDetectTerminalProgram_inTmux_procEnvError(t *testing.T) {
+	c := &tmuxClient{
+		capture:     func(...string) ([]byte, error) { return []byte("12345\n"), nil },
+		readProcEnv: func(int) (string, error) { return "", errors.New("cannot read process env") },
+	}
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	if got := c.detectTerminalProgram(); got != "Apple_Terminal" {
+		t.Errorf("got %q, want %q", got, "Apple_Terminal")
+	}
+}
+
+func TestDetectTerminalProgram_inTmux_emptyProcEnv(t *testing.T) {
+	c := &tmuxClient{
+		capture:     func(...string) ([]byte, error) { return []byte("12345\n"), nil },
+		readProcEnv: func(int) (string, error) { return "", nil },
+	}
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1234,0")
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	if got := c.detectTerminalProgram(); got != "Apple_Terminal" {
+		t.Errorf("got %q, want %q", got, "Apple_Terminal")
 	}
 }

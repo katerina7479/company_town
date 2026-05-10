@@ -1,9 +1,11 @@
+// Package session manages tmux sessions for Company Town agents.
 package session
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,16 +28,17 @@ type Client interface {
 	CapturePane(name string) (string, error)
 }
 
-// tmuxClient is the real Client. Fields check, exec, sleep, spawn, and capture
-// hold the exec seams that were previously package-level variables; moving them
-// onto the struct allows each test to create an isolated instance without
-// mutating global state.
+// tmuxClient is the real Client. Fields check, exec, sleep, spawn, capture, and
+// readProcEnv hold the exec seams that were previously package-level variables;
+// moving them onto the struct allows each test to create an isolated instance
+// without mutating global state.
 type tmuxClient struct {
-	check   func(name string) bool                            // tmux has-session
-	exec    func(args ...string) error                        // tmux send-keys / kill-session
-	sleep   func()                                            // pause inside SendKeys
-	spawn   func(prog string, args ...string) ([]byte, error) // osascript etc.
-	capture func(args ...string) ([]byte, error)              // tmux capture-pane
+	check       func(name string) bool                            // tmux has-session
+	exec        func(args ...string) error                        // tmux send-keys / kill-session
+	sleep       func()                                            // pause inside SendKeys
+	spawn       func(prog string, args ...string) ([]byte, error) // osascript etc.
+	capture     func(args ...string) ([]byte, error)              // tmux capture-pane / display-message
+	readProcEnv func(pid int) (string, error)                     // read TERM_PROGRAM from a process's env
 }
 
 // New returns a Client backed by real tmux.
@@ -54,6 +57,7 @@ func New() Client {
 		capture: func(args ...string) ([]byte, error) {
 			return exec.Command("tmux", args...).Output()
 		},
+		readProcEnv: readProcessTermProgram,
 	}
 }
 
@@ -250,8 +254,7 @@ var ErrUnknownTerminal = fmt.Errorf("unrecognized TERM_PROGRAM; falling back to 
 func SpawnAttach(sessionName string) error { return defaultClient.SpawnAttach(sessionName) }
 
 func (c *tmuxClient) SpawnAttach(sessionName string) error {
-	termProg := strings.TrimSpace(os.Getenv("TERM_PROGRAM"))
-	switch termProg {
+	switch c.detectTerminalProgram() {
 	case "ghostty":
 		return c.spawnGhostty(sessionName)
 	case "iTerm.app":
@@ -261,6 +264,32 @@ func (c *tmuxClient) SpawnAttach(sessionName string) error {
 	default:
 		return ErrUnknownTerminal
 	}
+}
+
+// detectTerminalProgram returns the active terminal program name. When running
+// inside tmux ($TMUX is set) it queries the active client's PID via
+// `tmux display-message -p '#{client_pid}'` and reads TERM_PROGRAM from that
+// process's environment, so the detection reflects the user's current terminal
+// rather than the stale env inherited by the tmux server. Falls back to
+// os.Getenv("TERM_PROGRAM") when not in tmux or when the client lookup fails.
+func (c *tmuxClient) detectTerminalProgram() string {
+	fallback := strings.TrimSpace(os.Getenv("TERM_PROGRAM"))
+	if os.Getenv("TMUX") == "" {
+		return fallback
+	}
+	out, err := c.capture("display-message", "-p", "#{client_pid}")
+	if err != nil {
+		return fallback
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return fallback
+	}
+	termProg, err := c.readProcEnv(pid)
+	if err != nil || termProg == "" {
+		return fallback
+	}
+	return strings.TrimSpace(termProg)
 }
 
 // attachArgv returns the tmux attach command string for use in a terminal script.
