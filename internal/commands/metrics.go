@@ -175,7 +175,7 @@ func printTicketFlow(events []eventlog.Event) {
 
 	if len(timeInStatus) > 0 {
 		fmt.Println("\n  Avg time in status:")
-		statusOrder := []string{repo.StatusDraft, repo.StatusOpen, repo.StatusInProgress, repo.StatusInReview, repo.StatusUnderReview, repo.StatusPROpen, repo.StatusReviewed, repo.StatusRepairing}
+		statusOrder := []string{repo.StatusDraft, repo.StatusOpen, repo.StatusInProgress, repo.StatusInReview, repo.StatusUnderReview, repo.StatusPROpen, repo.StatusRepairing}
 		for _, s := range statusOrder {
 			if durations, ok := timeInStatus[s]; ok {
 				fmt.Printf("    %-14s → %s\n", s, formatDuration(avgDuration(durations)))

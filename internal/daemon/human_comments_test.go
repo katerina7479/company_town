@@ -386,10 +386,10 @@ func TestCheckForTDDTestsApproval_ApprovalTakesPrecedenceOverComment(t *testing.
 	}
 }
 
-func TestCheckForTDDTestsApproval_NonTDDTicket_ApprovalRoutesToRepairing(t *testing.T) {
-	// For a regular (non-tdd_tests) ticket, an APPROVED review should route to
-	// repairing via checkForHumanComments just like any other comment, because the
-	// body is non-empty and non-sentinel.
+func TestCheckForTDDTestsApproval_NonTDDTicket_ApprovalDoesNotRepair(t *testing.T) {
+	// For a regular (non-tdd_tests) ticket, an APPROVED review must NOT trigger
+	// repair — it indicates the human is satisfied, not requesting changes. The
+	// same-SHA loop bug arose from routing APPROVED reviews to repairing.
 	comments := []prComment{
 		{Author: "katerina7479", IsBot: false, State: "APPROVED", Body: "LGTM"},
 	}
@@ -399,9 +399,37 @@ func TestCheckForTDDTestsApproval_NonTDDTicket_ApprovalRoutesToRepairing(t *test
 	d.checkForHumanComments(issue, 42)
 
 	got, _ := d.issues.Get(issue.ID)
-	// "task" type: APPROVED review is just a comment — routes to repairing.
-	if got.Status != "repairing" {
-		t.Errorf("status: got %q, want \"repairing\" (non-tdd_tests ticket should not be closed on approval)", got.Status)
+	if got.Status != "pr_open" {
+		t.Errorf("status: got %q, want \"pr_open\" (APPROVED review must not trigger repair)", got.Status)
+	}
+}
+
+func TestCheckForHumanComments_SkipsApprovedReview(t *testing.T) {
+	// APPROVED reviews (with or without body text) must be silently skipped for
+	// non-tdd_tests tickets so that a human approving the PR does not cause the
+	// same-SHA repairing loop.
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"with_body", "LGTM, ship it"},
+		{"empty_body", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			comments := []prComment{
+				{Author: "katerina7479", IsBot: false, State: "APPROVED", Body: tc.body},
+			}
+			d := makeCommentDaemon(t, comments)
+
+			issue := issueInStatus(t, d, "pr_open")
+			d.checkForHumanComments(issue, 55)
+
+			got, _ := d.issues.Get(issue.ID)
+			if got.Status != "pr_open" {
+				t.Errorf("body=%q: status got %q, want \"pr_open\"", tc.body, got.Status)
+			}
+		})
 	}
 }
 

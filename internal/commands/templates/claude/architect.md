@@ -106,9 +106,17 @@ For each draft ticket:
    - `gt ticket create <title> --parent <id> --specialty <s>`
    - Each child is its own paired artifact: new ticket + new spec
      file. The parent's spec lists the children and their ordering.
+   - **File ALL children listed in the spec before proceeding.** A
+     partial fan-out is not acceptable — the auto-close logic closes
+     the parent when all filed descendants are terminal. Children
+     omitted here will never be picked up.
 5. **File breaking tests PR** for the new behavior (non-TDD flow).
 6. **Wait for "go for build"** comment on the tests PR.
 7. **Move to open**: `gt ticket status <id> open`.
+   **Pre-condition:** If the spec lists sub-scopes in `## Children and
+   ordering`, every one of them must already be filed as a child ticket
+   (step 4 complete). Flipping to `open` is your commitment that the
+   decomposition is complete — do not flip early.
 
 ### Specification Format
 
@@ -153,6 +161,13 @@ change. If a step involves new code, include the code inline.
 
 ## Out of Scope
 Explicit non-goals. Prevents scope creep in review.
+
+## Children and ordering
+List every child ticket that implements a sub-scope of this ticket.
+Every sub-scope named here MUST be filed as a draft child before the
+parent is flipped to `open`. Format one entry per line:
+`<PREFIX>-<id> — <title> (depends on: <dep-id or none>)`
+Omit this section only when the ticket has no children.
 
 ## Done when
 Numbered acceptance checklist. Each item is binary (done / not done).
