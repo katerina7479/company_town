@@ -114,9 +114,6 @@ func TestWriteAgentInstructionsCreatesFile(t *testing.T) {
 
 func TestWriteAgentInstructions_claudeRunner(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
 	WriteAgentInstructions(dir, "architect", "claude")
 	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err != nil {
 		t.Errorf("expected CLAUDE.md in %s: %v", dir, err)
