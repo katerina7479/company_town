@@ -36,3 +36,27 @@ func TestValidStatusesMatchConsts(t *testing.T) {
 		t.Errorf("Status* const %q is missing from ValidStatuses", s)
 	}
 }
+
+// TestDisplayStatusOrderIncludesAllNonTerminal asserts that every non-terminal
+// status in ValidStatuses appears in DisplayStatusOrder, and that terminal
+// statuses (closed/cancelled) are NOT included. This is the drift guard: add
+// a new status to ValidStatuses without updating DisplayStatusOrder and this
+// test fails with a clear message naming the missing status.
+func TestDisplayStatusOrderIncludesAllNonTerminal(t *testing.T) {
+	inDisplay := make(map[string]bool, len(DisplayStatusOrder))
+	for _, s := range DisplayStatusOrder {
+		inDisplay[s] = true
+	}
+
+	for _, s := range ValidStatuses {
+		if IsTerminalStatus(s) {
+			if inDisplay[s] {
+				t.Errorf("DisplayStatusOrder must NOT include terminal status %q", s)
+			}
+			continue
+		}
+		if !inDisplay[s] {
+			t.Errorf("DisplayStatusOrder is missing non-terminal status %q (added to ValidStatuses without updating DisplayStatusOrder)", s)
+		}
+	}
+}

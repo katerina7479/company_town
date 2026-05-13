@@ -58,7 +58,7 @@ func Status() error {
 	}
 
 	fmt.Println("\n=== Tickets ===")
-	for _, status := range []string{repo.StatusDraft, repo.StatusOpen, repo.StatusInProgress, repo.StatusInReview, repo.StatusUnderReview, repo.StatusPROpen, repo.StatusRepairing, repo.StatusOnHold} {
+	for _, status := range repo.DisplayStatusOrder {
 		list, err := issues.List(status)
 		if err != nil {
 			return err
