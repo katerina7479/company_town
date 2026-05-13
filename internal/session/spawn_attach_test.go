@@ -163,8 +163,8 @@ func TestSpawnAttach_AppleTerminalExecFailureReturnsWrappedError(t *testing.T) {
 	if errors.Is(err, ErrUnknownTerminal) {
 		t.Errorf("Apple_Terminal failure must not return ErrUnknownTerminal: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Terminal.app") {
-		t.Errorf("error should mention Terminal.app: %v", err)
+	if !strings.Contains(err.Error(), "terminal.app") {
+		t.Errorf("error should mention terminal.app: %v", err)
 	}
 }
 

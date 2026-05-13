@@ -15,6 +15,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
 	"github.com/katerina7479/company_town/internal/vcs"
 )
 
@@ -5432,4 +5433,58 @@ func TestHandleMemoryCheckpoint_disabledWhenIntervalZero(t *testing.T) {
 	if len(d.lastMemoryNudge) != 0 {
 		t.Errorf("expected lastMemoryNudge untouched when disabled, got %v", d.lastMemoryNudge)
 	}
+}
+
+// TestHandleIdleAssignedProles_doesNotInvokeSpawnAttach verifies that the daemon
+// nudge path does not trigger SpawnAttach. A nudge (d.sendKeys) must only inject
+// keystrokes into an existing session; it must never open a new terminal window.
+func TestHandleIdleAssignedProles_doesNotInvokeSpawnAttach(t *testing.T) {
+	d, issues, agents, _ := newTestDaemonWithSessions(t, []string{"ct-prole-iron"})
+
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("registering agent: %v", err)
+	}
+	if err := agents.SetTmuxSession("iron", "ct-prole-iron"); err != nil {
+		t.Fatalf("setting tmux session: %v", err)
+	}
+
+	ticketID, err := issues.Create("regression guard ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+	if err := issues.UpdateStatus(ticketID, repo.StatusOpen); err != nil {
+		t.Fatalf("updating status: %v", err)
+	}
+	if err := issues.Assign(ticketID, "iron", "prole/iron/nc-1"); err != nil {
+		t.Fatalf("assigning issue: %v", err)
+	}
+
+	spy := &daemonSessionSpy{}
+	restore := session.SetDefaultClient(spy)
+	t.Cleanup(restore)
+
+	// Replace the stub sendKeys with the real session.SendKeys so the test
+	// exercises the production code path through defaultClient.
+	d.sendKeys = session.SendKeys
+
+	d.handleIdleAssignedProles()
+
+	if len(spy.spawnAttachCalls) > 0 {
+		t.Errorf("SpawnAttach must not be called by handleIdleAssignedProles; got calls: %v", spy.spawnAttachCalls)
+	}
+}
+
+// daemonSessionSpy implements session.Client; records SpawnAttach calls and
+// no-ops all other operations.
+type daemonSessionSpy struct {
+	spawnAttachCalls []string
+}
+
+func (s *daemonSessionSpy) Exists(name string) bool                 { return true }
+func (s *daemonSessionSpy) SendKeys(name, keys string) error        { return nil }
+func (s *daemonSessionSpy) Kill(name string) error                  { return nil }
+func (s *daemonSessionSpy) CapturePane(name string) (string, error) { return "", nil }
+func (s *daemonSessionSpy) SpawnAttach(name string) error {
+	s.spawnAttachCalls = append(s.spawnAttachCalls, name)
+	return nil
 }
