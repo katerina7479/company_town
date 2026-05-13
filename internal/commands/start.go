@@ -110,7 +110,7 @@ func Start() error {
 	if err != nil {
 		return fmt.Errorf("connecting to database: %w", err)
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // best-effort cleanup on exit path
 
 	if err := db.RunMigrations(conn); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
@@ -187,7 +187,7 @@ func Architect() error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // best-effort cleanup on exit path
 
 	applySessionPrefix(cfg)
 	events := eventlog.NewLogger(config.CompanyTownDir(cfg.ProjectRoot))
@@ -249,7 +249,7 @@ func Artisan(specialty string) error {
 	agentDir := filepath.Join(ctDir, "agents", "artisan", specialty)
 
 	// Ensure the artisan directory exists
-	if err := os.MkdirAll(filepath.Join(agentDir, "memory"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(agentDir, "memory"), 0750); err != nil {
 		return fmt.Errorf("creating artisan directory: %w", err)
 	}
 

@@ -53,7 +53,7 @@ func Nuke(target string) error {
 		nukeEvents := eventlog.NewLogger(ctDir)
 		agents := repo.NewAgentRepo(conn, nukeEvents)
 		updateStatus = agents.UpdateStatus
-		defer conn.Close()
+		defer conn.Close() //nolint:errcheck // best-effort cleanup on exit path
 	}
 
 	killed := nukeCore(sessions, ctDir, target, session.Kill, updateStatus, os.RemoveAll, gitWorktreePrune)
@@ -191,7 +191,7 @@ func agentWorktreePath(ctDir, agentName string) string {
 
 // gitWorktreePrune runs `git worktree prune` against the given bare repo path.
 func gitWorktreePrune(repoGitPath string) error {
-	cmd := exec.Command("git", "-C", repoGitPath, "worktree", "prune")
+	cmd := exec.Command("git", "-C", repoGitPath, "worktree", "prune") //nolint:gosec // repoGitPath is derived from the project config, not user input
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

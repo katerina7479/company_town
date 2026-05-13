@@ -36,7 +36,7 @@ func ArtisanStop(specialty string) error {
 	fmt.Printf("Signaling %s artisan to write handoff and exit...\n", specialty)
 
 	signalPath := filepath.Join(ctDir, "agents", "artisan", specialty, "memory", "handoff_requested")
-	if err := os.WriteFile(signalPath, []byte("handoff requested\n"), 0644); err != nil {
+	if err := os.WriteFile(signalPath, []byte("handoff requested\n"), 0644); err != nil { //nolint:gosec // signalPath is derived from project config, not user input
 		return fmt.Errorf("writing handoff signal: %w", err)
 	}
 
