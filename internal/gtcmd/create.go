@@ -59,8 +59,8 @@ func createReviewerWithDeps(name string, cfg *config.Config, agents *repo.AgentR
 		return fmt.Errorf("creating reviewer agent dir: %w", err)
 	}
 
-	// Re-deploy CLAUDE.md from embedded template so the agent always gets latest instructions
-	commands.WriteClaudeMD(agentDir, "reviewer")
+	// Re-deploy instruction file from embedded template so the agent always gets latest instructions
+	commands.WriteAgentInstructions(agentDir, "reviewer", "")
 
 	// Register in DB if not already present
 	if _, err := agents.Get(name); err != nil {

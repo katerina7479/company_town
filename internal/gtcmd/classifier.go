@@ -13,7 +13,7 @@ import (
 type agentSpec struct {
 	// agentType is the role string stored in the agents table.
 	agentType string
-	// templateType is the key passed to commands.WriteClaudeMD.
+	// templateType is the key passed to commands.WriteAgentInstructions.
 	templateType string
 	// agentSubDir is the directory name under ctDir/agents/ for this agent.
 	// Empty means the agent is not startable via gt start (e.g. mayor).

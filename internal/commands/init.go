@@ -17,7 +17,7 @@ import (
 	"github.com/katerina7479/company_town/internal/db"
 )
 
-//go:embed templates/*
+//go:embed templates
 var templateFS embed.FS
 
 // agentTypes defines the folder structure under .company_town/agents/
@@ -454,7 +454,7 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 		if err := os.MkdirAll(memDir, 0755); err != nil {
 			return fmt.Errorf("creating agent dir %s: %w", agent, err)
 		}
-		WriteClaudeMD(agentDir, agent)
+		WriteAgentInstructions(agentDir, agent, "")
 	}
 
 	// 3. Create artisan subdirectories
@@ -462,7 +462,7 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 	if err := os.MkdirAll(artisanBase, 0755); err != nil {
 		return fmt.Errorf("creating artisan base: %w", err)
 	}
-	WriteClaudeMD(artisanBase, "artisan")
+	WriteAgentInstructions(artisanBase, "artisan", "")
 
 	for _, specialty := range artisanTypes {
 		specDir := filepath.Join(artisanBase, specialty)
@@ -470,7 +470,7 @@ func initCore(nonInteractive bool, stdin io.Reader) error {
 		if err := os.MkdirAll(memDir, 0755); err != nil {
 			return fmt.Errorf("creating artisan/%s: %w", specialty, err)
 		}
-		WriteClaudeMD(specDir, "artisan-"+specialty)
+		WriteAgentInstructions(specDir, "artisan-"+specialty, "")
 	}
 
 	// 4. Write config.json if missing, prompting for key fields.
@@ -633,28 +633,48 @@ func ensureRootGitignore(projectRoot string) error {
 	return nil
 }
 
-// WriteClaudeMD writes a CLAUDE.md for an agent type from the embedded templates.
-// Always overwrites any existing file.
-func WriteClaudeMD(dir, agentType string) {
-	path := filepath.Join(dir, "CLAUDE.md")
-
-	content, err := LoadTemplate(agentType)
-	if err != nil {
-		fmt.Printf("  error: no template for %s: %v\n", agentType, err)
+// WriteAgentInstructions deploys the per-runner instruction file into dir.
+// For the claude runner (or empty runnerName), writes CLAUDE.md.
+// For the codex runner, writes AGENTS.md.
+// Always overwrites any existing file so agents pick up the latest instructions
+// on every spawn.
+func WriteAgentInstructions(dir, agentType, runnerName string) {
+	var subdir, filename string
+	switch runnerName {
+	case "", "claude":
+		subdir, filename = "claude", "CLAUDE.md"
+	case "codex":
+		subdir, filename = "codex", "AGENTS.md"
+	default:
+		fmt.Printf("  error: unsupported runner %q for instruction deploy\n", runnerName)
 		return
 	}
 
+	content, err := loadTemplate(agentType, subdir)
+	if err != nil {
+		fmt.Printf("  error: no template for %s/%s: %v\n", subdir, agentType, err)
+		return
+	}
+
+	path := filepath.Join(dir, filename)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		fmt.Printf("  error writing %s: %v\n", path, err)
 		return
 	}
-	fmt.Printf("  created: agents/%s/CLAUDE.md\n", agentType)
+	fmt.Printf("  created: agents/%s/%s\n", agentType, filename)
 }
 
-// LoadTemplate reads a template file from the embedded filesystem
-// and appends the shared commands reference.
+// LoadTemplate reads the claude-runner template for agentType from the embedded
+// filesystem and appends the shared commands reference. Callers that need a
+// different runner should use loadTemplate directly.
 func LoadTemplate(agentType string) (string, error) {
-	filename := fmt.Sprintf("templates/%s-CLAUDE.md", agentType)
+	return loadTemplate(agentType, "claude")
+}
+
+// loadTemplate reads the template for agentType from the given subdir (claude or codex)
+// and appends the shared commands reference for non-specialty-artisan types.
+func loadTemplate(agentType, subdir string) (string, error) {
+	filename := fmt.Sprintf("templates/%s/%s.md", subdir, agentType)
 	data, err := templateFS.ReadFile(filename)
 	if err != nil {
 		return "", fmt.Errorf("reading template %s: %w", filename, err)
