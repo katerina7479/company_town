@@ -160,7 +160,7 @@ func QualityChecksForPreset(preset string) []QualityCheckConfig {
 func agnosticOpenTicketCheck() QualityCheckConfig {
 	return QualityCheckConfig{
 		Name:          "open_ticket_count",
-		Command:       "gt ticket list 2>/dev/null | grep -cE '\\[(open|draft|in_progress|ci_running|in_review|under_review|repairing|pr_open|reviewed|merge_conflict)\\]'; true",
+		Command:       "gt ticket list 2>/dev/null | grep -cE '\\[(open|draft|in_progress|ci_running|in_review|repairing|pr_open|merge_conflict)\\]'; true",
 		Type:          "metric",
 		Threshold:     10,
 		WarnThreshold: 20,
