@@ -102,3 +102,45 @@ func TestDefault_returnsClaudeRunner(t *testing.T) {
 		t.Errorf("Default() = %T, want ClaudeRunner", r)
 	}
 }
+
+func TestNew_defaults(t *testing.T) {
+	for _, name := range []string{"", "claude"} {
+		r, err := New(name)
+		if err != nil {
+			t.Fatalf("New(%q): unexpected error: %v", name, err)
+		}
+		if _, ok := r.(ClaudeRunner); !ok {
+			t.Errorf("New(%q): expected ClaudeRunner, got %T", name, r)
+		}
+	}
+}
+
+func TestNew_codex(t *testing.T) {
+	r, err := New("codex")
+	if err != nil {
+		t.Fatalf("New(codex): %v", err)
+	}
+	if _, ok := r.(CodexRunner); !ok {
+		t.Errorf("expected CodexRunner, got %T", r)
+	}
+}
+
+func TestNew_unsupported(t *testing.T) {
+	_, err := New("emacs")
+	if err == nil {
+		t.Fatal("expected error for unsupported runner")
+	}
+	if !strings.Contains(err.Error(), "emacs") {
+		t.Errorf("error should name the unsupported value, got %v", err)
+	}
+}
+
+func TestCodexRunner_stubProvisionErrors(t *testing.T) {
+	err := CodexRunner{}.ProvisionSettings(t.TempDir())
+	if err == nil {
+		t.Fatal("expected stub error pending nc-310")
+	}
+	if !strings.Contains(err.Error(), "nc-310") {
+		t.Errorf("stub error should reference nc-310, got %v", err)
+	}
+}

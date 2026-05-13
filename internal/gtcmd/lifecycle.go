@@ -15,6 +15,7 @@ import (
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/eventlog"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/runner"
 	"github.com/katerina7479/company_town/internal/session"
 )
 
@@ -73,7 +74,7 @@ func Start(args []string) error {
 func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string) error {
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 
-	var agentType, templateType, model, agentDir, prompt string
+	var agentType, templateType, model, runnerName, agentDir, prompt string
 
 	switch {
 	case agentRegistry[name].agentSubDir != "":
@@ -84,6 +85,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		templateType = spec.templateType
 		ac := spec.configFor(cfg)
 		model = ac.Model
+		runnerName = ac.Runner
 		agentDir = filepath.Join(ctDir, "agents", spec.agentSubDir)
 		prompt = spec.promptFn(cfg)
 
@@ -100,6 +102,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		agentType = "artisan"
 		templateType = "artisan-" + specialty
 		model = artisanCfg.Model
+		runnerName = artisanCfg.Runner
 		agentDir = filepath.Join(ctDir, "agents", "artisan", specialty)
 		prompt = fmt.Sprintf(
 			"You are a %s Artisan. Ticket prefix: %s. "+
@@ -205,6 +208,11 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		return fmt.Errorf("recording tmux session for %s: %w", name, err)
 	}
 
+	r, err := runner.New(runnerName)
+	if err != nil {
+		return fmt.Errorf("agent %s: %w", name, err)
+	}
+
 	// Provision an isolated git worktree so this agent's branch checkouts
 	// cannot affect other agents' views of HEAD.
 	wtPath, err := ensureAgentWorktreeFn(cfg, agentDir)
@@ -218,6 +226,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		Model:    model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		Runner:   r,
 		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	}); err != nil {
 		return fmt.Errorf("creating session: %w", err)

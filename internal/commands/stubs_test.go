@@ -49,7 +49,7 @@ func TestStartAgent_resetsDeadStatusWhenSessionExists(t *testing.T) {
 	defer func() { sessionAttachFn = oldAttach }()
 	sessionAttachFn = func(_ string) error { return nil }
 
-	if err := startAgent("mayor", "mayor", "claude-test", cfg, agents, "prompt"); err != nil {
+	if err := startAgent("mayor", "mayor", config.AgentConfig{Model: "claude-test"}, cfg, agents, "prompt"); err != nil {
 		t.Fatalf("startAgent: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestStartAgent_doesNotOverwriteWorkingStatus(t *testing.T) {
 	defer func() { sessionAttachFn = oldAttach }()
 	sessionAttachFn = func(_ string) error { return nil }
 
-	if err := startAgent("mayor", "mayor", "claude-test", cfg, agents, "prompt"); err != nil {
+	if err := startAgent("mayor", "mayor", config.AgentConfig{Model: "claude-test"}, cfg, agents, "prompt"); err != nil {
 		t.Fatalf("startAgent: %v", err)
 	}
 
