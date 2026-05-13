@@ -42,7 +42,7 @@ var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead, StatusS
 var DisplayStatusOrder = []string{
 	StatusIdeating, StatusDraft, StatusOpen, StatusInProgress,
 	StatusCIRunning,
-	StatusInReview, StatusUnderReview, StatusPROpen,
+	StatusInReview, StatusPROpen,
 	StatusRepairing, StatusOnHold, StatusMergeConflict,
 }
 
