@@ -266,14 +266,14 @@ func SpawnAttachWith(sessionName, termOverride string) error {
 }
 
 func (c *tmuxClient) SpawnAttach(sessionName string) error {
-	// TEMP nc-321: capture caller chain to identify stray invocations.
-	// Remove before merge.
-	debug.PrintStack()
-	fmt.Fprintf(os.Stderr, "[nc-321] SpawnAttach invoked for %s\n", sessionName)
 	return c.spawnAttachWith(sessionName, "")
 }
 
 func (c *tmuxClient) spawnAttachWith(sessionName, termOverride string) error {
+	// TEMP nc-321: capture caller chain to identify stray invocations.
+	// Remove before merge.
+	debug.PrintStack()
+	fmt.Fprintf(os.Stderr, "[nc-321] spawnAttachWith invoked for %s (term=%s)\n", sessionName, termOverride)
 	termProg := termOverride
 	if termProg == "" {
 		termProg = c.detectTerminalProgram()
