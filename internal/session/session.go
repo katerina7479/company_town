@@ -66,6 +66,15 @@ func New() Client {
 // have not yet migrated to injecting a Client continue to work unchanged.
 var defaultClient = New()
 
+// SetDefaultClient replaces the package-level default client and returns a
+// restore function. For use in tests that need to intercept session operations
+// in packages that delegate to the package-level SendKeys / SpawnAttach / etc.
+func SetDefaultClient(c Client) func() {
+	orig := defaultClient
+	defaultClient = c
+	return func() { defaultClient = orig }
+}
+
 // SessionName returns the tmux session name for an agent.
 func SessionName(agentName string) string {
 	return SessionPrefix + agentName
@@ -407,7 +416,7 @@ tell application "Terminal"
 end tell`, osascriptQuote(attachArgv(sessionName)))
 	out, err := c.spawn("osascript", "-e", script)
 	if err != nil {
-		return fmt.Errorf("Terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
 )
 
 func setupRepos(t *testing.T) (*repo.IssueRepo, *repo.AgentRepo) {
@@ -383,4 +384,50 @@ func TestExecute_proleCreateFails(t *testing.T) {
 	if issue.Assignee.Valid {
 		t.Errorf("expected no assignee after ProleCreator failure, got %q", issue.Assignee.String)
 	}
+}
+
+// TestExecute_doesNotInvokeSpawnAttach is a regression guard: assign.Execute
+// must never call session.SpawnAttach. Assigning a ticket arranges DB state;
+// it must not open a new terminal window as a side-effect.
+func TestExecute_doesNotInvokeSpawnAttach(t *testing.T) {
+	issues, agents := setupRepos(t)
+
+	ticketID, err := issues.Create("regression guard", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+
+	orig := ProleCreator
+	t.Cleanup(func() { ProleCreator = orig })
+	ProleCreator = func(name string, cfg *config.Config, a *repo.AgentRepo) error {
+		return a.Register(name, "prole", nil)
+	}
+
+	spy := &assignSessionSpy{}
+	restore := session.SetDefaultClient(spy)
+	t.Cleanup(restore)
+
+	cfg := &config.Config{TicketPrefix: "nc"}
+	if err := Execute(cfg, issues, agents, ticketID, "zinc"); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(spy.spawnAttachCalls) > 0 {
+		t.Errorf("SpawnAttach must not be called by assign.Execute; got calls: %v", spy.spawnAttachCalls)
+	}
+}
+
+// assignSessionSpy implements session.Client; records SpawnAttach calls and
+// no-ops all other operations.
+type assignSessionSpy struct {
+	spawnAttachCalls []string
+}
+
+func (s *assignSessionSpy) Exists(name string) bool                 { return true }
+func (s *assignSessionSpy) SendKeys(name, keys string) error        { return nil }
+func (s *assignSessionSpy) Kill(name string) error                  { return nil }
+func (s *assignSessionSpy) CapturePane(name string) (string, error) { return "", nil }
+func (s *assignSessionSpy) SpawnAttach(name string) error {
+	s.spawnAttachCalls = append(s.spawnAttachCalls, name)
+	return nil
 }

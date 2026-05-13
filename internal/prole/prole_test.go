@@ -14,6 +14,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/session"
 )
 
 func setupAgentRepo(t *testing.T) *repo.AgentRepo {
@@ -1234,4 +1235,78 @@ func TestEnsureBareRepo_noOriginRemote_actionableError(t *testing.T) {
 	if !strings.Contains(err.Error(), "git remote add origin") {
 		t.Errorf("error should mention 'git remote add origin': %v", err)
 	}
+}
+
+// TestCreate_doesNotInvokeSpawnAttach is a regression guard: prole.Create must
+// never call session.SpawnAttach. Creating a prole launches a session via
+// session.CreateInteractive (which runs tmux directly); it must not open a new
+// terminal window via the spawn-attach path.
+func TestCreate_doesNotInvokeSpawnAttach(t *testing.T) {
+	cfg, agents, _, _ := setupPruneEnv(t)
+
+	// Provide the CLAUDE.md template so Create gets past deployProleCLAUDEMD.
+	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
+	templateDir := filepath.Join(ctDir, "agents", "prole")
+	if err := os.MkdirAll(templateDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(templateDir, "CLAUDE.md"), []byte("Prole {{NAME}}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Spy with Exists=false so CreateInteractive proceeds past the "already
+	// exists" guard and tries to launch tmux (which fails in CI — that's fine).
+	spy := &proleSessionSpy{existsResult: false}
+	restore := session.SetDefaultClient(spy)
+	t.Cleanup(restore)
+
+	// Ignore the error: Create will fail at the tmux step (no tmux server).
+	_ = Create("iron", cfg, agents)
+
+	if len(spy.spawnAttachCalls) > 0 {
+		t.Errorf("SpawnAttach must not be called by prole.Create; got calls: %v", spy.spawnAttachCalls)
+	}
+}
+
+// TestReset_doesNotInvokeSpawnAttach is a regression guard: prole.Reset must
+// never call session.SpawnAttach. Resetting a prole performs git operations
+// only; it must not open a new terminal window.
+func TestReset_doesNotInvokeSpawnAttach(t *testing.T) {
+	cfg, agents, bareDir, addWorktree := setupPruneEnv(t)
+	wtPath := addWorktree("spy-reset")
+	if err := agents.Register("spy-reset", "prole", nil); err != nil {
+		t.Fatalf("registering agent: %v", err)
+	}
+
+	// Put worktree on a feature branch so Reset has real work to do.
+	runGit(t, bareDir, "branch", "prole/spy-reset/nc-999", "origin/main")
+	runGit(t, wtPath, "checkout", "prole/spy-reset/nc-999")
+
+	spy := &proleSessionSpy{existsResult: true}
+	restore := session.SetDefaultClient(spy)
+	t.Cleanup(restore)
+
+	if err := Reset("spy-reset", cfg, agents); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if len(spy.spawnAttachCalls) > 0 {
+		t.Errorf("SpawnAttach must not be called by prole.Reset; got calls: %v", spy.spawnAttachCalls)
+	}
+}
+
+// proleSessionSpy implements session.Client; records SpawnAttach calls and
+// no-ops all other operations.
+type proleSessionSpy struct {
+	existsResult     bool
+	spawnAttachCalls []string
+}
+
+func (s *proleSessionSpy) Exists(name string) bool                 { return s.existsResult }
+func (s *proleSessionSpy) SendKeys(name, keys string) error        { return nil }
+func (s *proleSessionSpy) Kill(name string) error                  { return nil }
+func (s *proleSessionSpy) CapturePane(name string) (string, error) { return "", nil }
+func (s *proleSessionSpy) SpawnAttach(name string) error {
+	s.spawnAttachCalls = append(s.spawnAttachCalls, name)
+	return nil
 }
