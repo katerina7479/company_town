@@ -1932,6 +1932,14 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		if c.State == "APPROVED" {
 			continue
 		}
+		// Skip COMMENTED reviews with empty body — GitHub generates these when a
+		// reviewer posts inline-only comments without a top-level review body. There
+		// is no actionable text in the event; treating it as a repair trigger causes
+		// a permanent same-SHA loop (the event is always present in the review
+		// history and has no timestamp gate to filter it out).
+		if c.State == "COMMENTED" && strings.TrimSpace(c.Body) == "" {
+			continue
+		}
 
 		d.logger.Printf("human comment on PR #%d by %s — moving ticket %s-%d to repairing",
 			prNum, c.Author, d.cfg.TicketPrefix, issue.ID)
