@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -269,6 +270,10 @@ func (c *tmuxClient) SpawnAttach(sessionName string) error {
 }
 
 func (c *tmuxClient) spawnAttachWith(sessionName, termOverride string) error {
+	// TEMP nc-321: capture caller chain to identify stray invocations.
+	// Remove before merge.
+	debug.PrintStack()
+	fmt.Fprintf(os.Stderr, "[nc-321] spawnAttachWith invoked for %s (term=%s)\n", sessionName, termOverride)
 	termProg := termOverride
 	if termProg == "" {
 		termProg = c.detectTerminalProgram()
@@ -407,7 +412,7 @@ tell application "Terminal"
 end tell`, osascriptQuote(attachArgv(sessionName)))
 	out, err := c.spawn("osascript", "-e", script)
 	if err != nil {
-		return fmt.Errorf("Terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("terminal.app osascript: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
