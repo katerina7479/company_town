@@ -571,6 +571,26 @@ func SwitchToBranch(wtPath, barePath, branch string) error {
 	return nil
 }
 
+// FetchAndResetToMain fetches the latest main from origin into the bare repo
+// and hard-resets the worktree to origin/main. Called by assign.Execute before
+// a fresh feature-branch cut so the prole always branches from current main,
+// not a cached snapshot that may be several commits behind.
+func FetchAndResetToMain(wtPath, barePath string) error {
+	fetchCmd := exec.Command("git", "fetch", "origin", "main")
+	fetchCmd.Dir = barePath
+	fetchCmd.Stderr = os.Stderr
+	if err := fetchCmd.Run(); err != nil {
+		return fmt.Errorf("fetching origin main: %w", err)
+	}
+	resetCmd := exec.Command("git", "reset", "--hard", "origin/main")
+	resetCmd.Dir = wtPath
+	resetCmd.Stderr = os.Stderr
+	if err := resetCmd.Run(); err != nil {
+		return fmt.Errorf("resetting worktree to origin/main: %w", err)
+	}
+	return nil
+}
+
 // addWorktreeForProle adds a git worktree at wtPath on the given branch.
 // If the branch already exists in the bare repo (stale from a previous prole
 // incarnation), it is reset to origin/main before the worktree is created.

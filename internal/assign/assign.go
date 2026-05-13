@@ -2,6 +2,7 @@ package assign
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/prole"
@@ -14,6 +15,10 @@ var ProleCreator = prole.Create
 // WorktreeSwitcher is called after assigning a repair ticket to switch the
 // prole's worktree to the existing branch. Override in tests to avoid real git.
 var WorktreeSwitcher = prole.SwitchToBranch
+
+// WorktreeRefresher is called before cutting a fresh feature branch to fetch
+// origin/main and reset the prole's worktree. Override in tests to avoid real git.
+var WorktreeRefresher = prole.FetchAndResetToMain
 
 // Execute assigns a ticket to a prole, creating the prole if it does not exist.
 // Branch naming: "prole/<name>/<prefix>-<id>" (e.g. "prole/copper/nc-56") on
@@ -45,18 +50,27 @@ func Execute(cfg *config.Config, issues *repo.IssueRepo, agents *repo.AgentRepo,
 		return fmt.Errorf("assigning ticket %d: %w", ticketID, err)
 	}
 
+	agent, agentErr := agents.Get(proleName)
+	hasWorktree := agentErr == nil && agent.WorktreePath.Valid && agent.WorktreePath.String != ""
+
+	// For fresh assignments, fetch origin/main and reset the prole's worktree so
+	// the feature branch is cut from current main, not a cached snapshot. Non-fatal.
+	if !hasExistingBranch && hasWorktree {
+		barePath := prole.BareRepoPath(cfg)
+		if refreshErr := WorktreeRefresher(agent.WorktreePath.String, barePath); refreshErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not refresh origin/main for prole %s before branch cut: %v\n", proleName, refreshErr)
+		}
+	}
+
 	// If the ticket has a pre-existing branch (repair or cross-prole reassignment),
 	// switch the prole's worktree to that branch so the prole starts on the right
 	// commits and pushes to the same PR. Non-fatal: prole CLAUDE.md covers manual
 	// recovery via git checkout.
-	if hasExistingBranch {
-		agent, err := agents.Get(proleName)
-		if err == nil && agent.WorktreePath.Valid && agent.WorktreePath.String != "" {
-			barePath := prole.BareRepoPath(cfg)
-			if switchErr := WorktreeSwitcher(agent.WorktreePath.String, barePath, branch); switchErr != nil {
-				// Non-fatal: log but do not block the assignment.
-				_ = switchErr
-			}
+	if hasExistingBranch && hasWorktree {
+		barePath := prole.BareRepoPath(cfg)
+		if switchErr := WorktreeSwitcher(agent.WorktreePath.String, barePath, branch); switchErr != nil {
+			// Non-fatal: log but do not block the assignment.
+			_ = switchErr
 		}
 	}
 
