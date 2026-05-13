@@ -1908,6 +1908,11 @@ func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
 		if c.IsBot || strings.HasPrefix(strings.TrimSpace(c.Body), "[ct-reviewer]") {
 			continue
 		}
+		// Skip APPROVED reviews — approval does not request changes and must not
+		// cause the same-SHA repairing loop where an approved PR keeps cycling back.
+		if c.State == "APPROVED" {
+			continue
+		}
 
 		d.logger.Printf("human comment on PR #%d by %s — moving ticket %s-%d to repairing",
 			prNum, c.Author, d.cfg.TicketPrefix, issue.ID)
