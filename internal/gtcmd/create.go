@@ -9,6 +9,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/runner"
 	"github.com/katerina7479/company_town/internal/session"
 )
 
@@ -76,12 +77,18 @@ func createReviewerWithDeps(name string, cfg *config.Config, agents *repo.AgentR
 		name, cfg.TicketPrefix,
 	)
 
+	r, err := runner.New(cfg.Agents.Reviewer.Runner)
+	if err != nil {
+		return fmt.Errorf("reviewer %s: %w", name, err)
+	}
+
 	if err := createInteractiveFn(session.AgentSessionConfig{
 		Name:     sessionName,
 		WorkDir:  cfg.ProjectRoot,
 		Model:    cfg.Agents.Reviewer.Model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		Runner:   r,
 		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	}); err != nil {
 		return fmt.Errorf("creating session: %w", err)
