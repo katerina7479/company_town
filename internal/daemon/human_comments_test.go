@@ -134,16 +134,32 @@ func TestCheckForHumanComments_SentinelWithLeadingWhitespace(t *testing.T) {
 }
 
 func TestCheckForHumanComments_EmptyBody(t *testing.T) {
-	// Empty body = not a reviewer comment; treat as human (e.g. GitHub approve button).
-	comments := []prComment{{Author: "katerina7479", Body: ""}}
-	d := makeCommentDaemon(t, comments)
+	cases := []struct {
+		name       string
+		state      string
+		wantStatus string
+	}{
+		// COMMENTED + empty body is a GitHub inline-only review event (reviewer posted
+		// line comments but left the top-level body blank). No actionable text →
+		// must not trigger repairing or the same-SHA loop repeats indefinitely.
+		{"commented_no_body", "COMMENTED", "pr_open"},
+		// CHANGES_REQUESTED + empty body is an explicit change request even without
+		// an explanation. Must still trigger repairing.
+		{"changes_requested_no_body", "CHANGES_REQUESTED", "repairing"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			comments := []prComment{{Author: "katerina7479", State: tc.state, Body: ""}}
+			d := makeCommentDaemon(t, comments)
 
-	issue := issueInStatus(t, d, "pr_open")
-	d.checkForHumanComments(issue, 97)
+			issue := issueInStatus(t, d, "pr_open")
+			d.checkForHumanComments(issue, 97)
 
-	got, _ := d.issues.Get(issue.ID)
-	if got.Status != "repairing" {
-		t.Errorf("status: got %q, want \"repairing\" (empty body should fire)", got.Status)
+			got, _ := d.issues.Get(issue.ID)
+			if got.Status != tc.wantStatus {
+				t.Errorf("state=%q body=empty: status got %q, want %q", tc.state, got.Status, tc.wantStatus)
+			}
+		})
 	}
 }
 
