@@ -183,12 +183,10 @@ func TestDefaultConfig_TicketPrefixNotCt(t *testing.T) {
 func TestDefaultConfig_reviewerAcceptWorkflow(t *testing.T) {
 	cfg := DefaultConfig("/tmp", "github", "x/y")
 	wf := cfg.Agents.Reviewer.Workflow
-	if wf == nil || wf.Accept == nil || wf.Accept.TicketTransition == nil {
-		t.Fatal("expected reviewer accept workflow, got nil")
-	}
-	tt := wf.Accept.TicketTransition
-	if tt.From != "in_review" || tt.To != "under_review" {
-		t.Errorf("expected in_review→under_review, got %s→%s", tt.From, tt.To)
+	// nc-318: claim step removed; reviewer picks up from in_review directly.
+	// The default workflow has no accept ticket transition.
+	if wf != nil && wf.Accept != nil && wf.Accept.TicketTransition != nil {
+		t.Errorf("expected no accept ticket transition after nc-318, got %+v", wf.Accept.TicketTransition)
 	}
 }
 
