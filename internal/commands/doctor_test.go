@@ -501,6 +501,7 @@ func TestRunDoctor_allPass(t *testing.T) {
 		findRoot:      func() (string, error) { return "/tmp/proj", nil },
 		loadConfig:    func(root string) (*config.Config, error) { return goodCfg, nil },
 		sessionExists: func(name string) bool { return true },
+		lookPath:      func(name string) (string, error) { return "/usr/bin/" + name, nil },
 	}
 	results, anyFail := runDoctor(deps)
 	if anyFail {
@@ -537,6 +538,7 @@ func TestRunDoctor_oneFail(t *testing.T) {
 		findRoot:      func() (string, error) { return "/tmp/proj", nil },
 		loadConfig:    func(root string) (*config.Config, error) { return goodCfg, nil },
 		sessionExists: func(name string) bool { return true },
+		lookPath:      func(name string) (string, error) { return "/usr/bin/" + name, nil },
 	}
 	_, anyFail := runDoctor(deps)
 	if !anyFail {
@@ -569,6 +571,7 @@ func TestRunDoctor_gitlabPlatform(t *testing.T) {
 		findRoot:      func() (string, error) { return "/tmp/proj", nil },
 		loadConfig:    func(root string) (*config.Config, error) { return gitlabCfg, nil },
 		sessionExists: func(name string) bool { return true },
+		lookPath:      func(name string) (string, error) { return "/usr/bin/" + name, nil },
 	}
 	results, anyFail := runDoctor(deps)
 	if anyFail {
@@ -589,6 +592,184 @@ func TestRunDoctor_gitlabPlatform(t *testing.T) {
 	}
 	if hasGH {
 		t.Error("expected no gh row in results for gitlab platform")
+	}
+}
+
+// --- checkRunners ---
+
+func TestCheckRunners_allFound(t *testing.T) {
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Mayor:     config.AgentConfig{},
+			Architect: config.AgentConfig{},
+			Reviewer:  config.AgentConfig{},
+			Prole:     config.AgentConfig{},
+		},
+	}
+	deps := doctorDeps{
+		lookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
+	}
+	results := checkRunners(deps, cfg)
+	for _, r := range results {
+		if r.Status != "ok" {
+			t.Errorf("agent %s: status=%q want=ok detail=%q", r.Name, r.Status, r.Detail)
+		}
+	}
+}
+
+func TestCheckRunners_missingCLI(t *testing.T) {
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Mayor:     config.AgentConfig{Runner: "codex"},
+			Architect: config.AgentConfig{},
+			Reviewer:  config.AgentConfig{},
+			Prole:     config.AgentConfig{},
+		},
+	}
+	deps := doctorDeps{
+		lookPath: func(name string) (string, error) {
+			if name == "codex" {
+				return "", errors.New("not found")
+			}
+			return "/usr/bin/" + name, nil
+		},
+	}
+	results := checkRunners(deps, cfg)
+	foundFail := false
+	for _, r := range results {
+		if r.Name == "runner:mayor" && r.Status == "fail" {
+			foundFail = true
+		}
+	}
+	if !foundFail {
+		t.Error("expected runner:mayor to fail when codex not on PATH")
+	}
+}
+
+func TestCheckRunners_defaultIsClaudeWhenEmpty(t *testing.T) {
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Mayor:     config.AgentConfig{},
+			Architect: config.AgentConfig{},
+			Reviewer:  config.AgentConfig{},
+			Prole:     config.AgentConfig{},
+		},
+	}
+	var lookups []string
+	deps := doctorDeps{
+		lookPath: func(name string) (string, error) {
+			lookups = append(lookups, name)
+			return "/usr/bin/" + name, nil
+		},
+	}
+	checkRunners(deps, cfg)
+	for _, name := range lookups {
+		if name != "claude" {
+			t.Errorf("expected all empty-runner agents to look up 'claude', got %q", name)
+		}
+	}
+}
+
+func TestCheckRunners_artisanIncluded(t *testing.T) {
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Mayor:     config.AgentConfig{},
+			Architect: config.AgentConfig{},
+			Reviewer:  config.AgentConfig{},
+			Prole:     config.AgentConfig{},
+			Artisan: config.ArtisanConfig{
+				"qa": config.AgentConfig{Runner: "codex"},
+			},
+		},
+	}
+	deps := doctorDeps{
+		lookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
+	}
+	results := checkRunners(deps, cfg)
+	found := false
+	for _, r := range results {
+		if r.Name == "runner:artisan-qa" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected artisan-qa to appear in runner check results")
+	}
+}
+
+func TestRunDoctor_includesRunnerChecks(t *testing.T) {
+	goodCfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Platform:     "github",
+		Repo:         "owner/repo",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			switch name {
+			case "dolt":
+				return "dolt version 1.50.1", nil
+			case "tmux":
+				return "tmux 3.4", nil
+			case "gh":
+				return "gh version 2.0.0", nil
+			case "git":
+				return "git version 2.47.0", nil
+			}
+			return "", nil
+		},
+		findRoot:      func() (string, error) { return "/tmp/proj", nil },
+		loadConfig:    func(root string) (*config.Config, error) { return goodCfg, nil },
+		sessionExists: func(name string) bool { return true },
+		lookPath:      func(name string) (string, error) { return "/usr/bin/" + name, nil },
+	}
+	results, anyFail := runDoctor(deps)
+	if anyFail {
+		t.Error("expected no failures")
+	}
+	hasRunner := false
+	for _, r := range results {
+		if strings.HasPrefix(r.Name, "runner:") {
+			hasRunner = true
+			break
+		}
+	}
+	if !hasRunner {
+		t.Error("expected at least one runner: check in results")
+	}
+}
+
+func TestRunDoctor_failsWhenRunnerCLIMissing(t *testing.T) {
+	goodCfg := &config.Config{
+		TicketPrefix: "nc",
+		ProjectRoot:  "/tmp/proj",
+		Platform:     "github",
+		Repo:         "owner/repo",
+		Agents:       config.AgentsConfig{Mayor: config.AgentConfig{Model: "claude-opus-4-6"}},
+	}
+	deps := doctorDeps{
+		runCmd: func(name string, args ...string) (string, error) {
+			switch name {
+			case "dolt":
+				return "dolt version 1.50.1", nil
+			case "tmux":
+				return "tmux 3.4", nil
+			case "gh":
+				return "gh version 2.0.0", nil
+			case "git":
+				return "git version 2.47.0", nil
+			}
+			return "", nil
+		},
+		findRoot:      func() (string, error) { return "/tmp/proj", nil },
+		loadConfig:    func(root string) (*config.Config, error) { return goodCfg, nil },
+		sessionExists: func(name string) bool { return true },
+		lookPath:      func(name string) (string, error) { return "", errors.New("not found") },
+	}
+	_, anyFail := runDoctor(deps)
+	if !anyFail {
+		t.Error("expected failure when runner CLI not on PATH")
 	}
 }
 

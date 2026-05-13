@@ -18,6 +18,7 @@ import (
 	"github.com/katerina7479/company_town/internal/prole"
 	"github.com/katerina7479/company_town/internal/quality"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/runner"
 	"github.com/katerina7479/company_town/internal/session"
 	"github.com/katerina7479/company_town/internal/vcs"
 )
@@ -250,6 +251,18 @@ func agentStartPrompt(agentType, ticketPrefix string) string {
 	}
 }
 
+// agentRunner returns the runner name for an agent type.
+func agentRunner(agentType string, cfg *config.Config) string {
+	switch agentType {
+	case "architect":
+		return cfg.Agents.Architect.Runner
+	case "reviewer":
+		return cfg.Agents.Reviewer.Runner
+	default:
+		return ""
+	}
+}
+
 // agentModel returns the model string for an agent type.
 func agentModel(agentType string, cfg *config.Config) string {
 	switch agentType {
@@ -275,6 +288,11 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 		prompt := agentStartPrompt(agent.Type, cfg.TicketPrefix)
 		sessionName := session.SessionName(agent.Name)
 
+		r, err := runner.New(agentRunner(agent.Type, cfg))
+		if err != nil {
+			return fmt.Errorf("agent %s: %w", agent.Name, err)
+		}
+
 		if err := agents.UpdateStatus(agent.Name, repo.StatusIdle); err != nil {
 			return fmt.Errorf("updating agent status: %w", err)
 		}
@@ -287,6 +305,7 @@ func makeRestartFn(cfg *config.Config, agents *repo.AgentRepo, logger *log.Logge
 			Model:    model,
 			AgentDir: agentDir,
 			Prompt:   prompt,
+			Runner:   r,
 			EnvVars:  map[string]string{"CT_AGENT_NAME": agent.Name},
 		}); err != nil {
 			agents.UpdateStatus(agent.Name, repo.StatusDead) //nolint:errcheck

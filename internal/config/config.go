@@ -15,6 +15,7 @@ const (
 
 type AgentConfig struct {
 	Model    string          `json:"model"`
+	Runner   string          `json:"runner,omitempty"` // "claude" (default) | "codex"
 	Workflow *WorkflowConfig `json:"workflow,omitempty"`
 }
 
