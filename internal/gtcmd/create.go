@@ -60,7 +60,7 @@ func createReviewerWithDeps(name string, cfg *config.Config, agents *repo.AgentR
 	}
 
 	// Re-deploy instruction file from embedded template so the agent always gets latest instructions
-	commands.WriteAgentInstructions(agentDir, "reviewer", "")
+	commands.WriteAgentInstructions(agentDir, "reviewer", cfg.Agents.Reviewer.Runner)
 
 	// Register in DB if not already present
 	if _, err := agents.Get(name); err != nil {
