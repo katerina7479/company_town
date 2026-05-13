@@ -138,7 +138,7 @@ func Stop(target string, clean bool) error {
 			}
 			return a.Status, nil
 		}
-		defer conn.Close()
+		defer conn.Close() //nolint:errcheck // best-effort cleanup on exit path
 	}
 
 	stopCore(sessions, ctDir, clean, session.Kill, session.SendKeys, updateStatus, os.RemoveAll, gitWorktreePrune, getStatus, 60*time.Second)

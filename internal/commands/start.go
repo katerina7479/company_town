@@ -210,7 +210,7 @@ func Artisan(specialty string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // best-effort cleanup on exit path
 
 	applySessionPrefix(cfg)
 
@@ -249,7 +249,7 @@ func Artisan(specialty string) error {
 	agentDir := filepath.Join(ctDir, "agents", "artisan", specialty)
 
 	// Ensure the artisan directory exists
-	if err := os.MkdirAll(filepath.Join(agentDir, "memory"), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Join(agentDir, "memory"), 0750); err != nil { //nolint:gosec // agentDir is derived from config.CompanyTownDir, not user input
 		return fmt.Errorf("creating artisan directory: %w", err)
 	}
 
