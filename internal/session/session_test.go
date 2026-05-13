@@ -466,6 +466,58 @@ func TestPackageLevelWrappers_delegateToDefaultClient(t *testing.T) {
 	}
 }
 
+// TestSpawnAttachNotInvokedByDaemonOrProleLifecycle verifies that the session
+// operations used by the daemon and prole lifecycle (SendKeys, Kill) never invoke
+// window-spawning helpers (osascript, gnome-terminal, etc.). SpawnAttach must
+// only be reachable from the dashboard's explicit 'a' keypress; it must never
+// fire as a side-effect of a daemon tick, a prole nudge, or prole creation.
+//
+// This is a regression guard: if a future change routes a daemon or prole-
+// lifecycle path through SpawnAttach, this test will catch it.
+func TestSpawnAttachNotInvokedByDaemonOrProleLifecycle(t *testing.T) {
+	var spawnCalls []string
+	recording := &tmuxClient{
+		check: func(string) bool { return true },
+		exec:  func(...string) error { return nil },
+		sleep: func() {},
+		spawn: func(prog string, args ...string) ([]byte, error) {
+			spawnCalls = append(spawnCalls, prog)
+			return nil, nil
+		},
+		capture:     func(...string) ([]byte, error) { return nil, nil },
+		readProcEnv: func(int, string) (string, error) { return "", nil },
+	}
+	orig := defaultClient
+	defaultClient = recording
+	t.Cleanup(func() { defaultClient = orig })
+
+	t.Setenv("TMUX", "")
+	t.Setenv("TERM_PROGRAM", "")
+
+	// Daemon nudge path: SendKeys injects keystrokes; must not spawn a window.
+	if err := SendKeys("ct-iron", "You are idle but ticket nc-321 is still assigned."); err != nil {
+		t.Fatalf("SendKeys: %v", err)
+	}
+
+	// Daemon cleanup path: Kill ends a session; must not spawn a window.
+	if err := Kill("ct-iron"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	// Prole lifecycle: Exists is called by CreateInteractive and prole.Create.
+	_ = Exists("ct-prole-iron")
+
+	windowSpawners := map[string]bool{
+		"osascript": true, "ghostty": true, "gnome-terminal": true,
+		"alacritty": true, "kitty": true, "wezterm": true, "foot": true, "xterm": true,
+	}
+	for _, prog := range spawnCalls {
+		if windowSpawners[prog] {
+			t.Errorf("window-spawning program %q invoked during daemon/prole lifecycle operation; SpawnAttach must only be called from dashboard 'a' keypress", prog)
+		}
+	}
+}
+
 // TestDefaultClient_checkClosure_doesNotPanic verifies that the real check closure
 // created by New() (and used by defaultClient) executes without panicking.
 // In most test environments tmux is not running so Exists returns false.
