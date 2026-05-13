@@ -2873,7 +2873,6 @@ func TestHandlePRConflicting_skipsNonPROpenStatus(t *testing.T) {
 		{"in_review", ""},
 		{"under_review", "reviewer owns this ticket — daemon must not touch it"},
 		{"repairing", ""},
-		{"reviewed", ""},
 		{"closed", ""},
 	}
 

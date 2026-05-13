@@ -73,7 +73,6 @@ func DefaultTheme() StyleTheme {
 			repo.StatusInReview:      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
 			repo.StatusUnderReview:   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // bright yellow
 			repo.StatusPROpen:        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
-			repo.StatusReviewed:      lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // bright cyan
 			repo.StatusRepairing:     lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
 			repo.StatusOnHold:        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
 			repo.StatusMergeConflict: lipgloss.NewStyle().Foreground(lipgloss.Color("196")), // bold red — needs human resolution

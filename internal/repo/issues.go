@@ -37,7 +37,7 @@ var ValidStatuses = []string{
 	StatusIdeating, StatusDraft, StatusOpen, StatusInProgress,
 	StatusCIRunning,
 	StatusInReview, StatusUnderReview, StatusPROpen,
-	StatusReviewed, StatusRepairing, StatusOnHold, StatusMergeConflict, StatusClosed, StatusCancelled,
+	StatusRepairing, StatusOnHold, StatusMergeConflict, StatusClosed, StatusCancelled,
 }
 
 // Valid issue types.
