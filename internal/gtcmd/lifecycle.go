@@ -172,7 +172,7 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 
 	// Re-deploy instruction file from embedded template on every start so agents
 	// always get the latest instructions after a binary upgrade.
-	commands.WriteAgentInstructions(agentDir, templateType, "")
+	commands.WriteAgentInstructions(agentDir, templateType, runnerName)
 
 	sessionName := session.SessionName(name)
 
