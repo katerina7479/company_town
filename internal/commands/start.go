@@ -12,6 +12,7 @@ import (
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/eventlog"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/runner"
 	"github.com/katerina7479/company_town/internal/session"
 )
 
@@ -32,7 +33,7 @@ func applySessionPrefix(cfg *config.Config) {
 }
 
 // startAgent is the shared logic for launching any agent in a tmux session.
-func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.AgentRepo, prompt string) error {
+func startAgent(name, agentType string, agentCfg config.AgentConfig, cfg *config.Config, agents *repo.AgentRepo, prompt string) error {
 	sessionName := session.SessionName(name)
 
 	// If session already exists, just attach. Reset dead status if needed so
@@ -63,6 +64,11 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	agentDir := filepath.Join(ctDir, "agents", agentType)
 
+	r, err := runner.New(agentCfg.Runner)
+	if err != nil {
+		return fmt.Errorf("agent %s: %w", name, err)
+	}
+
 	// Provision an isolated git worktree so this agent's branch checkouts
 	// cannot affect other agents' views of HEAD.
 	wtPath, err := agentworktree.Ensure(cfg, agentDir)
@@ -74,9 +80,10 @@ func startAgent(name, agentType, model string, cfg *config.Config, agents *repo.
 	err = session.CreateInteractive(session.AgentSessionConfig{
 		Name:     sessionName,
 		WorkDir:  wtPath,
-		Model:    model,
+		Model:    agentCfg.Model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		Runner:   r,
 		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	})
 	if err != nil {
@@ -158,7 +165,7 @@ func Start() error {
 		cfg.TicketPrefix,
 	)
 
-	return startAgent("mayor", "mayor", cfg.Agents.Mayor.Model, cfg, agents, prompt)
+	return startAgent("mayor", "mayor", cfg.Agents.Mayor, cfg, agents, prompt)
 }
 
 // startDaemon launches the daemon in a detached tmux session.
@@ -200,7 +207,7 @@ func Architect() error {
 		cfg.TicketPrefix,
 	)
 
-	return startAgent("architect", "architect", cfg.Agents.Architect.Model, cfg, agents, prompt)
+	return startAgent("architect", "architect", cfg.Agents.Architect, cfg, agents, prompt)
 }
 
 // Artisan implements `ct artisan <specialty>` — starts an Artisan agent.
@@ -267,6 +274,11 @@ func Artisan(specialty string) error {
 		return fmt.Errorf("recording tmux session for %s: %w", name, err)
 	}
 
+	ar, err := runner.New(artisanCfg.Runner)
+	if err != nil {
+		return fmt.Errorf("artisan %s: %w", name, err)
+	}
+
 	// Provision an isolated git worktree for the artisan.
 	artisanWtPath, wtErr := agentworktree.Ensure(cfg, agentDir)
 	if wtErr != nil {
@@ -280,6 +292,7 @@ func Artisan(specialty string) error {
 		Model:    artisanCfg.Model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		Runner:   ar,
 		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	})
 	if err != nil {
