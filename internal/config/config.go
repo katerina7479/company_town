@@ -273,9 +273,8 @@ func DefaultConfig(projectRoot, platform, repo string) *Config {
 			Reviewer: AgentConfig{
 				Model: "claude-sonnet-4-6",
 				Workflow: &WorkflowConfig{
-					Accept: &WorkflowAction{
-						TicketTransition: &TicketTransition{From: "in_review", To: "under_review"},
-					},
+					// Accept has no ticket transition: reviewer picks up from in_review
+					// directly and renders a verdict without a separate claim step.
 					// Release is nil: reviewer release is handled by approve / request-changes verbs.
 				},
 			},

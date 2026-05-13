@@ -25,9 +25,9 @@ var (
 	// ErrInvalidType is returned when an unrecognised issue type is provided.
 	ErrInvalidType = errors.New("invalid type")
 
-	// ErrNotUnderReview is returned by ticket review when the ticket is not in
-	// under_review status.
-	ErrNotUnderReview = errors.New("not under_review")
+	// ErrNotInReview is returned by ticket review when the ticket is not in
+	// in_review status.
+	ErrNotInReview = errors.New("not in_review")
 
 	// ErrUnknownVerdict is returned by ticket review when an unrecognised verdict
 	// string is given.

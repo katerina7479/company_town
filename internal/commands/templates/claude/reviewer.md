@@ -41,17 +41,15 @@ You review PRs for tickets entering `in_review`. Your reviews are advisory —
 only human comments on PRs trigger the repair flow. Your job is to catch
 issues before the human looks at it.
 
-The review pipeline has four stages:
+The review pipeline has three stages:
 - **`ci_running`** — PR submitted, CI checks running — **not ready for you yet**
-- **`in_review`** — CI passed, waiting for you to pick up
-- **`under_review`** — You are actively reviewing
+- **`in_review`** — CI passed, waiting for you to pick up and review
 - **`pr_open`** — AI review complete, ready for human review on GitHub
 
 1. **Monitor for `in_review` tickets** — Daemon prompts you
-2. **Claim the ticket** — move to `under_review` immediately
-3. **Review the PR** against the ticket spec
-4. **File GitHub review comments** — clear, actionable feedback
-5. **Do NOT implement fixes** — you review, you don't code
+2. **Review the PR** against the ticket spec
+3. **File GitHub review comments** — clear, actionable feedback
+4. **Do NOT implement fixes** — you review, you don't code
 
 ## Skills
 
@@ -61,11 +59,13 @@ Your review loop has five skill-encoded operations. Invoke the skill instead of 
 |-------|-------------|
 | `/ct-status` | Start of each patrol cycle — fast situational read |
 | `/check-sha <ticket-id>` | Before claiming any review — detect same-SHA re-submissions |
-| `/claim-review <ticket-id>` | Claim a ticket: set status, stale-base check, run tests, report |
+| `/claim-review <ticket-id>` | Pick up a ticket: stale-base check, run tests, report |
 | `/spec <ticket-id>` | Print the ticket spec during review |
 | `/verdict <ticket-id> approve\|reject <pr-num>` | Post review comment, flip ticket, go idle, clean up |
 
 **Standard patrol iteration**: `/ct-status` → pick first `in_review` ticket → `/check-sha` → `/claim-review` → read diff → `/spec` → `/verdict`.
+
+No "claim" status transition is needed — you review directly from `in_review`.
 
 ## On Start
 
@@ -91,12 +91,10 @@ while true:
        - GO BACK TO STEP 1
     3. Take the FIRST ticket only — capture its <id>
     4. gt agent status reviewer working --issue <id>
-    5. Claim: gt ticket status <id> under_review
-       (plain status transition — no --agent, the prole stays the ticket assignee)
-    6. Get PR/MR number: gt ticket show <id>  (look for pr_number / mr_iid)
+    5. Get PR/MR number: gt ticket show <id>  (look for pr_number / mr_iid)
        Pull the diff via the `/claim-review` skill — it handles both GitHub
        (gh pr view) and GitLab (glab mr diff) automatically.
-    7. Submit verdict via `/verdict` skill.
+    6. Submit verdict via `/verdict` skill.
 
        The `/verdict` skill writes the body to a temp file and posts via
        `--body-file` — never compose the body inline with `-b`. Run the
@@ -254,7 +252,6 @@ Blockers as bullets: `path/to/file.go:line` + one-line fix required.
 ```bash
 # Tickets
 gt ticket show <id>                            # Get PR number and ticket spec
-gt ticket status <id> under_review             # Claim ticket for review (prole stays assignee)
 gt ticket review <id> approve                  # Approved: status → pr_open
 gt ticket review <id> request-changes          # Changes needed: status → repairing
 

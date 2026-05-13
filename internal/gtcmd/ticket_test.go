@@ -508,7 +508,7 @@ func TestTicketReview_usageError(t *testing.T) {
 	}
 }
 
-func TestTicketReview_ApproveFromUnderReview(t *testing.T) {
+func TestTicketReview_ApproveFromInReview(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
 	id, err := issues.Create("auth ticket", "task", nil, nil, nil)
@@ -518,7 +518,7 @@ func TestTicketReview_ApproveFromUnderReview(t *testing.T) {
 	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
-	if err := issues.UpdateStatus(id, "under_review"); err != nil {
+	if err := issues.UpdateStatus(id, "in_review"); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
@@ -538,7 +538,7 @@ func TestTicketReview_ApproveFromUnderReview(t *testing.T) {
 	}
 }
 
-func TestTicketReview_RequestChangesFromUnderReview(t *testing.T) {
+func TestTicketReview_RequestChangesFromInReview(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
 	id, err := issues.Create("auth ticket", "task", nil, nil, nil)
@@ -548,7 +548,7 @@ func TestTicketReview_RequestChangesFromUnderReview(t *testing.T) {
 	if err := issues.Assign(id, "iron", "prole/iron/1"); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
-	if err := issues.UpdateStatus(id, "under_review"); err != nil {
+	if err := issues.UpdateStatus(id, "in_review"); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
@@ -568,7 +568,7 @@ func TestTicketReview_RequestChangesFromUnderReview(t *testing.T) {
 	}
 }
 
-func TestTicketReview_RejectsNonUnderReview(t *testing.T) {
+func TestTicketReview_RejectsNonInReview(t *testing.T) {
 	issues := setupTicketTestRepo(t)
 
 	id, err := issues.Create("ticket", "task", nil, nil, nil)
@@ -576,15 +576,15 @@ func TestTicketReview_RejectsNonUnderReview(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	for _, status := range []string{"open", "in_progress", "in_review", "pr_open", "repairing"} {
+	for _, status := range []string{"open", "in_progress", "pr_open", "repairing"} {
 		if err := issues.UpdateStatus(id, status); err != nil {
 			t.Fatalf("UpdateStatus(%s): %v", status, err)
 		}
 		err := ticketReview(issues, []string{fmt.Sprintf("%d", id), "approve"})
 		if err == nil {
 			t.Errorf("status %q: expected error, got nil", status)
-		} else if !errors.Is(err, ErrNotUnderReview) {
-			t.Errorf("status %q: expected ErrNotUnderReview, got: %v", status, err)
+		} else if !errors.Is(err, ErrNotInReview) {
+			t.Errorf("status %q: expected ErrNotInReview, got: %v", status, err)
 		}
 	}
 }
@@ -596,7 +596,7 @@ func TestTicketReview_RejectsUnknownVerdict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := issues.UpdateStatus(id, "under_review"); err != nil {
+	if err := issues.UpdateStatus(id, "in_review"); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
@@ -629,13 +629,13 @@ func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
 		t.Fatalf("Assign: %v", err)
 	}
 
-	// Move to under_review — assignee must remain "iron"
-	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
-		t.Fatalf("ticketStatus under_review: %v", err)
+	// Move to in_review — assignee must remain "iron"
+	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "in_review"}); err != nil {
+		t.Fatalf("ticketStatus in_review: %v", err)
 	}
 	got, _ := issues.Get(id)
 	if !got.Assignee.Valid || got.Assignee.String != "iron" {
-		t.Errorf("after under_review: assignee=%v %q, want iron", got.Assignee.Valid, got.Assignee.String)
+		t.Errorf("after in_review: assignee=%v %q, want iron", got.Assignee.Valid, got.Assignee.String)
 	}
 
 	// Move to pr_open via ticketReview (the only valid path since nc-215).
@@ -647,9 +647,9 @@ func TestTicketStatus_NoLongerClobbersAssignee(t *testing.T) {
 		t.Errorf("after pr_open: assignee=%v %q, want iron", got.Assignee.Valid, got.Assignee.String)
 	}
 
-	// Move to repairing from a fresh under_review — assignee must remain "iron"
-	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "under_review"}); err != nil {
-		t.Fatalf("ticketStatus under_review (2): %v", err)
+	// Move to repairing from in_review — assignee must remain "iron"
+	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "in_review"}); err != nil {
+		t.Fatalf("ticketStatus in_review (2): %v", err)
 	}
 	if err := ticketStatus(issues, nil, []string{fmt.Sprintf("%d", id), "repairing"}); err != nil {
 		t.Fatalf("ticketStatus repairing: %v", err)
@@ -1867,7 +1867,7 @@ func TestTicketDispatch_review(t *testing.T) {
 	cfg := &config.Config{TicketPrefix: "nc"}
 
 	id, _ := issues.Create("Review dispatch", "task", nil, nil, nil)
-	issues.UpdateStatus(id, "under_review")
+	issues.UpdateStatus(id, "in_review")
 	if err := ticketDispatch(issues, agents, cfg, []string{"review", fmt.Sprintf("%d", id), "approve"}); err != nil {
 		t.Fatalf("dispatch review: %v", err)
 	}
