@@ -20,7 +20,7 @@ func TestIsTerminalStatus(t *testing.T) {
 		}
 	}
 	nonTerminal := []string{StatusDraft, StatusOpen, StatusInProgress, StatusCIRunning,
-		StatusInReview, StatusUnderReview, StatusPROpen, StatusReviewed,
+		StatusInReview, StatusUnderReview, StatusPROpen,
 		StatusRepairing, StatusOnHold, StatusMergeConflict}
 	for _, s := range nonTerminal {
 		if IsTerminalStatus(s) {

@@ -12,7 +12,6 @@ const (
 	StatusInReview      = "in_review"
 	StatusUnderReview   = "under_review"
 	StatusPROpen        = "pr_open"
-	StatusReviewed      = "reviewed"
 	StatusRepairing     = "repairing"
 	StatusMergeConflict = "merge_conflict"
 	StatusOnHold        = "on_hold"
