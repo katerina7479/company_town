@@ -62,7 +62,7 @@ func TestPickFreePort_skipsOccupied(t *testing.T) {
 	}
 }
 
-func TestWriteClaudeMDOverwritesExisting(t *testing.T) {
+func TestWriteAgentInstructionsOverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 
@@ -72,12 +72,12 @@ func TestWriteClaudeMDOverwritesExisting(t *testing.T) {
 		t.Fatalf("writing stale CLAUDE.md: %v", err)
 	}
 
-	// WriteClaudeMD must always overwrite with the embedded template
-	WriteClaudeMD(dir, "reviewer")
+	// WriteAgentInstructions must always overwrite with the embedded template
+	WriteAgentInstructions(dir, "reviewer", "")
 
 	got, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("reading CLAUDE.md after WriteClaudeMD: %v", err)
+		t.Fatalf("reading CLAUDE.md after WriteAgentInstructions: %v", err)
 	}
 
 	expected, err := LoadTemplate("reviewer")
@@ -90,12 +90,12 @@ func TestWriteClaudeMDOverwritesExisting(t *testing.T) {
 	}
 }
 
-func TestWriteClaudeMDCreatesFile(t *testing.T) {
+func TestWriteAgentInstructionsCreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 
-	// file does not exist; WriteClaudeMD should create it
-	WriteClaudeMD(dir, "reviewer")
+	// file does not exist; WriteAgentInstructions should create it
+	WriteAgentInstructions(dir, "reviewer", "")
 
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -109,6 +109,55 @@ func TestWriteClaudeMDCreatesFile(t *testing.T) {
 
 	if string(got) != expected {
 		t.Errorf("newly created CLAUDE.md does not match embedded template")
+	}
+}
+
+func TestWriteAgentInstructions_claudeRunner(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	WriteAgentInstructions(dir, "architect", "claude")
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Errorf("expected CLAUDE.md in %s: %v", dir, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
+		t.Errorf("AGENTS.md should not be present for claude runner")
+	}
+}
+
+func TestWriteAgentInstructions_codexRunner(t *testing.T) {
+	dir := t.TempDir()
+	WriteAgentInstructions(dir, "architect", "codex")
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
+		t.Errorf("expected AGENTS.md in %s: %v", dir, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err == nil {
+		t.Errorf("CLAUDE.md should not be present for codex runner")
+	}
+}
+
+func TestWriteAgentInstructions_emptyRunnerDefaultsToClaude(t *testing.T) {
+	dir := t.TempDir()
+	WriteAgentInstructions(dir, "architect", "")
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Errorf("expected CLAUDE.md for empty runner: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
+		t.Errorf("AGENTS.md should not be present for empty runner")
+	}
+}
+
+func TestWriteAgentInstructions_unsupportedRunner(t *testing.T) {
+	dir := t.TempDir()
+	// unsupported runner should write nothing and not panic
+	WriteAgentInstructions(dir, "architect", "emacs")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected no files written for unsupported runner, got %v", entries)
 	}
 }
 

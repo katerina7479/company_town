@@ -167,9 +167,9 @@ func startAgentWithDeps(cfg *config.Config, agents *repo.AgentRepo, name string)
 		return fmt.Errorf("creating agent dir %s: %w", agentDir, err)
 	}
 
-	// Re-deploy CLAUDE.md from embedded template on every start so agents always
-	// get the latest instructions after a binary upgrade.
-	commands.WriteClaudeMD(agentDir, templateType)
+	// Re-deploy instruction file from embedded template on every start so agents
+	// always get the latest instructions after a binary upgrade.
+	commands.WriteAgentInstructions(agentDir, templateType, "")
 
 	sessionName := session.SessionName(name)
 
