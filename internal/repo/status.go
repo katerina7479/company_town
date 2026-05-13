@@ -33,6 +33,20 @@ const (
 // ValidAgentStatuses is the complete set of valid agent status values.
 var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead, StatusStopped}
 
+// DisplayStatusOrder is the canonical order for human-facing status enumerations
+// (gt status, ct metrics). Terminal statuses (closed, cancelled) are intentionally
+// omitted — callers that want them displayed include them separately.
+//
+// Every non-terminal status in ValidStatuses must appear here.
+// TestDisplayStatusOrderIncludesAllNonTerminal enforces this invariant:
+// adding a status to ValidStatuses without updating this slice causes a test failure.
+var DisplayStatusOrder = []string{
+	StatusIdeating, StatusDraft, StatusOpen, StatusInProgress,
+	StatusCIRunning,
+	StatusInReview, StatusUnderReview, StatusPROpen,
+	StatusRepairing, StatusOnHold, StatusMergeConflict,
+}
+
 // IsTerminalStatus returns true for statuses that represent final, immutable
 // outcomes — work that landed (closed) or was abandoned (cancelled). A ticket
 // in a terminal status will never be re-opened, re-assigned, or block other work.
