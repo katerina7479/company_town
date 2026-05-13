@@ -286,12 +286,18 @@ func Create(name string, cfg *config.Config, agents *repo.AgentRepo) error {
 	ctDir := config.CompanyTownDir(cfg.ProjectRoot)
 	agentDir := filepath.Join(ctDir, "proles", name)
 
-	err := session.CreateInteractive(session.AgentSessionConfig{
+	r, err := runner.New(cfg.Agents.Prole.Runner)
+	if err != nil {
+		return fmt.Errorf("prole %s: %w", name, err)
+	}
+
+	err = session.CreateInteractive(session.AgentSessionConfig{
 		Name:     sessionName,
 		WorkDir:  wtPath,
 		Model:    cfg.Agents.Prole.Model,
 		AgentDir: agentDir,
 		Prompt:   prompt,
+		Runner:   r,
 		EnvVars:  map[string]string{"CT_AGENT_NAME": name},
 	})
 	if err != nil {

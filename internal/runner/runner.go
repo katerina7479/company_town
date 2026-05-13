@@ -33,6 +33,37 @@ type Runner interface {
 // Default returns the default Runner (ClaudeRunner).
 func Default() Runner { return ClaudeRunner{} }
 
+// New returns the Runner implementation for the given name.
+// "" or "claude" → ClaudeRunner. "codex" → CodexRunner.
+// Any other value returns an error naming the unsupported value.
+func New(name string) (Runner, error) {
+	switch name {
+	case "", "claude":
+		return ClaudeRunner{}, nil
+	case "codex":
+		return CodexRunner{}, nil
+	default:
+		return nil, fmt.Errorf("unsupported runner %q (supported: claude, codex)", name)
+	}
+}
+
+// CodexRunner drives the codex CLI. Stub until nc-310 lands the real implementation.
+// Returning errors here surfaces a clear "not yet implemented" signal rather than
+// silently launching a malformed claude command.
+type CodexRunner struct{}
+
+func (CodexRunner) Command(model, sessionName, settingsPath, prompt string) string {
+	return ""
+}
+
+func (CodexRunner) ProvisionSettings(agentDir string) error {
+	return fmt.Errorf("CodexRunner not yet implemented (nc-310)")
+}
+
+func (CodexRunner) SettingsPath(agentDir string) string {
+	return ""
+}
+
 // BaseBashAllowList returns the Bash tool permissions that every agent session
 // receives regardless of language. Callers may append language-specific entries.
 func BaseBashAllowList() []string {

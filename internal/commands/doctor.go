@@ -33,6 +33,7 @@ type doctorDeps struct {
 	loadConfig    func(root string) (*config.Config, error)
 	findRoot      func() (string, error)
 	sessionExists func(name string) bool
+	lookPath      func(string) (string, error)
 }
 
 func defaultDoctorDeps() doctorDeps {
@@ -46,6 +47,7 @@ func defaultDoctorDeps() doctorDeps {
 		},
 		findRoot:      db.FindProjectRoot,
 		sessionExists: session.Exists,
+		lookPath:      exec.LookPath,
 	}
 }
 
@@ -289,6 +291,45 @@ func checkDaemon(deps doctorDeps) checkResult {
 	return checkResult{Name: "daemon", Status: "ok", Detail: "running"}
 }
 
+// checkRunners verifies that each agent's configured runner CLI is on PATH.
+func checkRunners(deps doctorDeps, cfg *config.Config) []checkResult {
+	type namedAgent struct {
+		name string
+		cfg  config.AgentConfig
+	}
+	agents := []namedAgent{
+		{"mayor", cfg.Agents.Mayor},
+		{"architect", cfg.Agents.Architect},
+		{"reviewer", cfg.Agents.Reviewer},
+		{"prole", cfg.Agents.Prole},
+	}
+	for specialty, ac := range cfg.Agents.Artisan {
+		agents = append(agents, namedAgent{"artisan-" + specialty, ac})
+	}
+
+	var results []checkResult
+	for _, a := range agents {
+		runnerName := a.cfg.Runner
+		if runnerName == "" {
+			runnerName = "claude"
+		}
+		if _, err := deps.lookPath(runnerName); err != nil {
+			results = append(results, checkResult{
+				Name:   "runner:" + a.name,
+				Status: "fail",
+				Detail: fmt.Sprintf("runner=%s — %s not on PATH", runnerName, runnerName),
+			})
+		} else {
+			results = append(results, checkResult{
+				Name:   "runner:" + a.name,
+				Status: "ok",
+				Detail: fmt.Sprintf("runner=%s — %s found", runnerName, runnerName),
+			})
+		}
+	}
+	return results
+}
+
 func runDoctor(deps doctorDeps) ([]checkResult, bool) {
 	results := []checkResult{
 		checkDolt(deps),
@@ -305,12 +346,13 @@ func runDoctor(deps doctorDeps) ([]checkResult, bool) {
 	results = append(results, checkVCSCLI(deps, platform))
 	results = append(results, cfgResult)
 
-	// Only check daemon if we're inside a project.
+	// Only check daemon and runners if we're inside a project.
 	if cfg != nil {
 		if cfg.SessionPrefix != "" {
 			session.SessionPrefix = cfg.SessionPrefix
 		}
 		results = append(results, checkDaemon(deps))
+		results = append(results, checkRunners(deps, cfg)...)
 	}
 
 	anyFail := false
