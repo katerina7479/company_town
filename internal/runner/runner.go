@@ -1,6 +1,6 @@
 // Package runner defines the Runner interface and built-in implementations for
 // agent CLI runtimes. Company Town currently ships ClaudeRunner (the claude CLI);
-// additional runners (e.g. Codex) will be added in follow-up tickets under nc-230.
+// additional runners (e.g. Codex) will be added in follow-up tickets under nc-308.
 package runner
 
 import (
@@ -53,7 +53,7 @@ func New(name string) (Runner, error) {
 type CodexRunner struct{}
 
 func (CodexRunner) Command(model, sessionName, settingsPath, prompt string) string {
-	return ""
+	return "echo 'CodexRunner not yet implemented (nc-310)' && exit 1"
 }
 
 func (CodexRunner) ProvisionSettings(agentDir string) error {
