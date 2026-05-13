@@ -179,3 +179,70 @@ func TestRunMigrations_upgradePathAppliesNewMigrations(t *testing.T) {
 		t.Fatalf("rows error after querying ci_running_entered_at: %v", err)
 	}
 }
+
+// TestMigrations_collapseUnderReview verifies that migration 013 converts any
+// existing 'under_review' rows to 'in_review'. This covers the nc-318 data
+// migration for projects that had historical under_review tickets.
+func TestMigrations_collapseUnderReview(t *testing.T) {
+	conn, err := NewTestDB()
+	if err != nil {
+		t.Fatalf("NewTestDB: %v", err)
+	}
+	defer conn.Close()
+
+	// Pre-mark all migrations before 013 as already applied so that
+	// RunMigrations only executes 013 (the UPDATE statement is SQLite-safe;
+	// the earlier DDL migrations are MySQL-dialect and would fail on SQLite).
+	priorMigrations := []string{
+		"001_create_issues.sql",
+		"002_create_agents.sql",
+		"003_create_issue_dependencies.sql",
+		"004_add_agent_status_changed_at.sql",
+		"005_create_quality_metrics.sql",
+		"006_add_priority_to_issues.sql",
+		"007_retired_priority_remap.sql",
+		"008_add_repair_cycle_count.sql",
+		"009_add_repair_reason.sql",
+		"010_ci_running_entered_at.sql",
+		"011_backfill_ci_running_entered_at.sql",
+		"012_add_ideating_status.sql",
+	}
+	for _, m := range priorMigrations {
+		if _, err := conn.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, m); err != nil {
+			t.Fatalf("pre-marking %s: %v", m, err)
+		}
+	}
+
+	// Insert a ticket with status = 'under_review' directly so we can verify
+	// the migration converts it.
+	result, err := conn.Exec(
+		`INSERT INTO issues (title, issue_type, status) VALUES (?, ?, ?)`,
+		"legacy ticket", "task", "under_review",
+	)
+	if err != nil {
+		t.Fatalf("inserting under_review ticket: %v", err)
+	}
+	id, _ := result.LastInsertId()
+
+	// Run migrations — only 013 should fire.
+	if err := RunMigrations(conn); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var status string
+	if err := conn.QueryRow(`SELECT status FROM issues WHERE id = ?`, id).Scan(&status); err != nil {
+		t.Fatalf("querying status after migration: %v", err)
+	}
+	if status != "in_review" {
+		t.Errorf("after migration 013: status = %q, want in_review", status)
+	}
+
+	// Confirm the migration was recorded.
+	var count int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE name = ?`, "013_collapse_under_review.sql").Scan(&count); err != nil {
+		t.Fatalf("querying schema_migrations: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("migration 013_collapse_under_review.sql not found in schema_migrations")
+	}
+}

@@ -20,7 +20,7 @@ func TestIsTerminalStatus(t *testing.T) {
 		}
 	}
 	nonTerminal := []string{StatusDraft, StatusOpen, StatusInProgress, StatusCIRunning,
-		StatusInReview, StatusUnderReview, StatusPROpen,
+		StatusInReview, StatusPROpen,
 		StatusRepairing, StatusOnHold, StatusMergeConflict}
 	for _, s := range nonTerminal {
 		if IsTerminalStatus(s) {
@@ -706,7 +706,7 @@ func TestIssueRepo_ClearAssignee(t *testing.T) {
 	repo := setupTestRepo(t)
 
 	id, _ := repo.Create("Claimed ticket", "task", nil, nil, nil)
-	repo.UpdateStatus(id, "under_review")
+	repo.UpdateStatus(id, "in_review")
 	repo.SetAssignee(id, "reviewer")
 
 	if err := repo.ClearAssignee(id); err != nil {
@@ -717,7 +717,7 @@ func TestIssueRepo_ClearAssignee(t *testing.T) {
 	if issue.Assignee.Valid {
 		t.Errorf("expected assignee to be NULL after ClearAssignee, got %q", issue.Assignee.String)
 	}
-	if issue.Status != "under_review" {
+	if issue.Status != "in_review" {
 		t.Errorf("ClearAssignee must not change status: got %q", issue.Status)
 	}
 }
@@ -1522,7 +1522,6 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 	}{
 		{"ruby", "ci_running"},
 		{"tin", "in_review"},
-		{"lead", "under_review"},
 		{"brass", "pr_open"},
 		{"gold", "merge_conflict"},
 	} {
@@ -1548,7 +1547,7 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 		}
 	}
 	// Handoff and closed statuses must NOT be in the busy set.
-	for _, name := range []string{"ruby", "tin", "lead", "brass", "gold", "silver"} {
+	for _, name := range []string{"ruby", "tin", "brass", "gold", "silver"} {
 		if busy[name] {
 			t.Errorf("expected %s (handoff/closed status) NOT in busy set, got %v", name, busy)
 		}
@@ -1567,7 +1566,6 @@ func TestIssueRepo_BusyAssignees_handoffStatusesExcluded(t *testing.T) {
 	}{
 		{"ruby", "ci_running"},
 		{"tin", "in_review"},
-		{"lead", "under_review"},
 		{"brass", "pr_open"},
 		{"gold", "merge_conflict"},
 	} {

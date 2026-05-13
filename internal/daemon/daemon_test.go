@@ -2860,8 +2860,8 @@ func TestHandlePREvents_unknownIsNoop(t *testing.T) {
 
 // TestHandlePRConflicting_skipsNonPROpenStatus verifies that the conflict handler
 // only fires when the ticket is in pr_open or ci_running. The non-obvious case is
-// under_review: the reviewer still owns the ticket in that state and the daemon
-// must not grab it even if the branch is dirty — the reviewer decides what to do.
+// in_review: the reviewer owns the ticket in that state and the daemon must not
+// grab it even if the branch is dirty — the reviewer decides what to do.
 func TestHandlePRConflicting_skipsNonPROpenStatus(t *testing.T) {
 	statuses := []struct {
 		status  string
@@ -2870,8 +2870,7 @@ func TestHandlePRConflicting_skipsNonPROpenStatus(t *testing.T) {
 		{"draft", ""},
 		{"open", ""},
 		{"in_progress", ""},
-		{"in_review", ""},
-		{"under_review", "reviewer owns this ticket — daemon must not touch it"},
+		{"in_review", "reviewer owns this ticket — daemon must not touch it"},
 		{"repairing", ""},
 		{"closed", ""},
 	}

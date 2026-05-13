@@ -36,7 +36,7 @@ var ValidPriorities = []string{"P0", "P1", "P2", "P3", "P4", "P5"}
 var ValidStatuses = []string{
 	StatusIdeating, StatusDraft, StatusOpen, StatusInProgress,
 	StatusCIRunning,
-	StatusInReview, StatusUnderReview, StatusPROpen,
+	StatusInReview, StatusPROpen,
 	StatusRepairing, StatusOnHold, StatusMergeConflict, StatusClosed, StatusCancelled,
 }
 
@@ -191,7 +191,7 @@ func (r *IssueRepo) UpdateStatus(id int, status string) error {
 		// Human unblock: reset repair_cycle_count so the ticket gets a fresh
 		// slate. Also clear repair_reason in case it was on_hold.
 		b.expr("repair_cycle_count = 0").expr("repair_reason = NULL")
-	case StatusIdeating, StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusUnderReview, StatusPROpen, StatusClosed, StatusCancelled, StatusOnHold:
+	case StatusIdeating, StatusDraft, StatusInProgress, StatusCIRunning, StatusInReview, StatusPROpen, StatusClosed, StatusCancelled, StatusOnHold:
 		// Transitioning out of a repair-ish state — clear stale repair_reason.
 		// "draft" is included because a human may manually reopen a ticket from
 		// on_hold or repairing back to draft, and the old reason must not leak.

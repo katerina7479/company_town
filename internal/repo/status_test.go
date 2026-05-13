@@ -14,7 +14,6 @@ func TestValidStatusesMatchConsts(t *testing.T) {
 		StatusInProgress:    true,
 		StatusCIRunning:     true,
 		StatusInReview:      true,
-		StatusUnderReview:   true,
 		StatusPROpen:        true,
 		StatusRepairing:     true,
 		StatusMergeConflict: true,

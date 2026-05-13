@@ -492,8 +492,8 @@ func ticketReview(issues *repo.IssueRepo, args []string) error {
 	if err != nil {
 		return err
 	}
-	if issue.Status != repo.StatusUnderReview {
-		return fmt.Errorf("ticket %d is in %q, %w — cannot submit review verdict", id, issue.Status, ErrNotUnderReview)
+	if issue.Status != repo.StatusInReview {
+		return fmt.Errorf("ticket %d is in %q, %w — cannot submit review verdict", id, issue.Status, ErrNotInReview)
 	}
 
 	var newStatus string
