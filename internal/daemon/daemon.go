@@ -1697,7 +1697,7 @@ func (d *Daemon) handlePREvents() {
 // change ticket status, so a merge_conflict ticket never flips back until GitHub
 // explicitly confirms MERGEABLE.
 //
-// under_review is a no-op for conflict detection: the reviewer owns the ticket
+// in_review is a no-op for conflict detection: the reviewer owns the ticket
 // in that state and the daemon must not grab it even if the branch is dirty.
 //
 // Assignee retention policy: assignee is intentionally kept through ci_running
@@ -1903,7 +1903,7 @@ func (d *Daemon) handlePRConflictResolved(issue *repo.Issue, prNum int, checks s
 }
 
 func (d *Daemon) checkForHumanComments(issue *repo.Issue, prNum int) {
-	// Only act when the ticket is in pr_open. During under_review the AI reviewer
+	// Only act when the ticket is in pr_open. During in_review the AI reviewer
 	// owns the ticket — any review posted in that window is its own work.
 	if issue.Status != repo.StatusPROpen {
 		return
