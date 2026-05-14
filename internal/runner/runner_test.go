@@ -135,12 +135,80 @@ func TestNew_unsupported(t *testing.T) {
 	}
 }
 
-func TestCodexRunner_stubProvisionErrors(t *testing.T) {
-	err := CodexRunner{}.ProvisionSettings(t.TempDir())
-	if err == nil {
-		t.Fatal("expected stub error pending nc-310")
+func TestCodexRunner_Command_includesRequiredFlags(t *testing.T) {
+	cmd := CodexRunner{}.Command("o3-mini", "ct-reviewer", "/path/to/.codex/config.json", "do the thing")
+	for _, want := range []string{
+		"codex",
+		"--approval-policy",
+		"full-auto",
+		"--model",
+		"o3-mini",
+		"do the thing",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("expected %q in command %q", want, cmd)
+		}
 	}
-	if !strings.Contains(err.Error(), "nc-310") {
-		t.Errorf("stub error should reference nc-310, got %v", err)
+}
+
+func TestCodexRunner_Command_omitsPromptWhenEmpty(t *testing.T) {
+	cmd := CodexRunner{}.Command("o3-mini", "ct-reviewer", "", "")
+	if !strings.Contains(cmd, "codex") {
+		t.Errorf("expected 'codex' in command: %q", cmd)
+	}
+	parts := strings.Fields(cmd)
+	last := parts[len(parts)-1]
+	if last == "''" {
+		t.Errorf("empty prompt left a bare '' at end of command: %q", cmd)
+	}
+}
+
+func TestCodexRunner_SettingsPath(t *testing.T) {
+	got := CodexRunner{}.SettingsPath("/some/agent/dir")
+	want := filepath.Join("/some/agent/dir", ".codex", "config.json")
+	if got != want {
+		t.Errorf("SettingsPath = %q, want %q", got, want)
+	}
+}
+
+func TestCodexRunner_ProvisionSettings_writesJSON(t *testing.T) {
+	dir := t.TempDir()
+	r := CodexRunner{}
+	if err := r.ProvisionSettings(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".codex", "config.json"))
+	if err != nil {
+		t.Fatalf("config.json not created: %v", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("config.json is not valid JSON: %v", err)
+	}
+	if _, ok := m["approvalPolicy"]; !ok {
+		t.Error("config.json missing 'approvalPolicy' key")
+	}
+}
+
+func TestCodexRunner_ProvisionSettings_idempotent(t *testing.T) {
+	dir := t.TempDir()
+	r := CodexRunner{}
+	if err := r.ProvisionSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, ".codex", "config.json")
+	custom := []byte(`{"custom":true}`)
+	if err := os.WriteFile(configPath, custom, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ProvisionSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(custom) {
+		t.Errorf("ProvisionSettings overwrote existing config; got %q", string(data))
 	}
 }

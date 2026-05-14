@@ -47,21 +47,59 @@ func New(name string) (Runner, error) {
 	}
 }
 
-// CodexRunner drives the codex CLI. Stub until nc-310 lands the real implementation.
-// Returning errors here surfaces a clear "not yet implemented" signal rather than
-// silently launching a malformed claude command.
+// CodexRunner drives the codex CLI (OpenAI Codex).
+//
+// CLI invocation: codex --approval-policy full-auto --model <model> [prompt]
+// Config: .codex/config.json in the agent's working directory, read automatically
+// by the codex binary (no explicit --config flag needed). settingsPath in Command
+// is the path ProvisionSettings wrote; Codex finds it via CWD convention so the
+// flag is omitted from the command string.
 type CodexRunner struct{}
 
+// Command builds the codex command string for tmux.
+// settingsPath is written to agentDir/.codex/config.json and picked up by Codex
+// automatically from CWD; no explicit flag is required.
 func (CodexRunner) Command(model, sessionName, settingsPath, prompt string) string {
-	return "echo 'CodexRunner not yet implemented (nc-310)' && exit 1"
+	parts := []string{
+		"codex",
+		"--approval-policy", "full-auto",
+		"--model", shellQuote(model),
+	}
+	if prompt != "" {
+		parts = append(parts, shellQuote(prompt))
+	}
+	return strings.Join(parts, " ")
 }
 
+// ProvisionSettings creates .codex/config.json in agentDir if it does not
+// already exist. Codex reads this file automatically from its working directory.
 func (CodexRunner) ProvisionSettings(agentDir string) error {
-	return fmt.Errorf("CodexRunner not yet implemented (nc-310)")
+	codexDir := filepath.Join(agentDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0750); err != nil {
+		return fmt.Errorf("creating .codex dir %s: %w", codexDir, err)
+	}
+
+	configPath := filepath.Join(codexDir, "config.json")
+	if _, err := os.Stat(configPath); err == nil {
+		return nil // already exists — do not overwrite
+	}
+
+	cfg := map[string]interface{}{
+		"approvalPolicy": "full-auto",
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshalling codex config: %w", err)
+	}
+	if err := os.WriteFile(configPath, data, 0644); err != nil { //nolint:gosec // configPath is derived from agentDir, not user input
+		return fmt.Errorf("writing codex config to %s: %w", configPath, err)
+	}
+	return nil
 }
 
+// SettingsPath returns the .codex/config.json path for agentDir.
 func (CodexRunner) SettingsPath(agentDir string) string {
-	return ""
+	return filepath.Join(agentDir, ".codex", "config.json")
 }
 
 // BaseBashAllowList returns the Bash tool permissions that every agent session
