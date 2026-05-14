@@ -101,3 +101,7 @@ glab mr diff <mr_iid>
 ```
 
 Then write your verdict with `/verdict`.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

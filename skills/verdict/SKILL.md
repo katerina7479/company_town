@@ -137,3 +137,7 @@ gt agent status reviewer idle
 ```
 
 **Key ordering invariant:** File follow-ups → write body → post comment → verify comment → submit verdict → verify ticket → clean up → idle. Never go idle before the ticket status is confirmed. Never leave a `working` reviewer status behind.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.
