@@ -472,6 +472,33 @@ Each entry in `quality.checks` supports:
 - **Human PR comments are the only signal that triggers `repairing`.** Reviewer comments are filtered by a sentinel prefix so they don't loop.
 - **Dolt gives you history.** Use `dolt log issues` when state transitions look wrong.
 
+## Using Codex (or another runner) for an agent
+
+Each agent in `.company_town/config.json` under `agents.<role>` accepts a `runner` field.
+The default is `"claude"` (uses the `claude` CLI). Set it to `"codex"` to run that agent
+with OpenAI's Codex CLI instead.
+
+For example, to run only the reviewer on Codex while keeping mayor and architect on Claude:
+
+```json
+{
+  "agents": {
+    "reviewer": {
+      "model": "<codex-model-id>",
+      "runner": "codex"
+    }
+  }
+}
+```
+
+After editing `config.json`, verify the setup with `ct doctor` — the runners section
+must show the configured runner's CLI is on PATH and authenticated.
+
+**How it works:** when `runner` is `"codex"`, Company Town launches the agent with the
+`codex` CLI and deploys `AGENTS.md` (Codex's instruction file) instead of `CLAUDE.md`.
+All other lifecycle mechanics — worktree isolation, ticket transitions, `gt` commands —
+are identical regardless of runner.
+
 ## Releasing a new version
 
 For maintainers cutting a release: tag and push — GitHub Actions runs goreleaser automatically.
