@@ -288,12 +288,16 @@ func TestExecute_repairWorktreeSwitched(t *testing.T) {
 
 	// Stub WorktreeSwitcher to capture calls.
 	var switcherCalls []struct{ wtPath, barePath, branch string }
-	orig := WorktreeSwitcher
-	t.Cleanup(func() { WorktreeSwitcher = orig })
+	origSwitcher := WorktreeSwitcher
+	t.Cleanup(func() { WorktreeSwitcher = origSwitcher })
 	WorktreeSwitcher = func(wtPath, barePath, branch string) error {
 		switcherCalls = append(switcherCalls, struct{ wtPath, barePath, branch string }{wtPath, barePath, branch})
 		return nil
 	}
+
+	origRefresher := WorktreeRefresher
+	t.Cleanup(func() { WorktreeRefresher = origRefresher })
+	WorktreeRefresher = func(wtPath, barePath string) error { return nil }
 
 	// Second assignment: iron picks up the repair.
 	if err := Execute(cfg, issues, agents, ticketID, "iron"); err != nil {
@@ -322,7 +326,8 @@ func TestExecute_repairWorktreeSwitched(t *testing.T) {
 }
 
 func TestExecute_freshTicketNoWorktreeSwitch(t *testing.T) {
-	// A brand-new ticket (no existing branch) must NOT trigger WorktreeSwitcher.
+	// A brand-new ticket (no existing branch) must NOT trigger WorktreeSwitcher,
+	// but MUST trigger WorktreeRefresher when the prole has a worktree.
 	issues, agents := setupRepos(t)
 
 	if err := agents.Register("copper", "prole", nil); err != nil {
@@ -338,12 +343,16 @@ func TestExecute_freshTicketNoWorktreeSwitch(t *testing.T) {
 	}
 
 	var switcherCalled bool
-	orig := WorktreeSwitcher
-	t.Cleanup(func() { WorktreeSwitcher = orig })
+	origSwitcher := WorktreeSwitcher
+	t.Cleanup(func() { WorktreeSwitcher = origSwitcher })
 	WorktreeSwitcher = func(wtPath, barePath, branch string) error {
 		switcherCalled = true
 		return nil
 	}
+
+	origRefresher := WorktreeRefresher
+	t.Cleanup(func() { WorktreeRefresher = origRefresher })
+	WorktreeRefresher = func(wtPath, barePath string) error { return nil }
 
 	cfg := &config.Config{TicketPrefix: "nc"}
 	if err := Execute(cfg, issues, agents, ticketID, "copper"); err != nil {
@@ -352,6 +361,97 @@ func TestExecute_freshTicketNoWorktreeSwitch(t *testing.T) {
 
 	if switcherCalled {
 		t.Error("WorktreeSwitcher must not be called for fresh tickets with no existing branch")
+	}
+}
+
+func TestExecute_freshTicketRefreshesWorktree(t *testing.T) {
+	// A fresh ticket with a prole that has a worktree must trigger WorktreeRefresher
+	// so the prole branches from current origin/main, not a cached snapshot.
+	issues, agents := setupRepos(t)
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("registering copper: %v", err)
+	}
+	if err := agents.SetWorktree("copper", "/fake/worktree/copper"); err != nil {
+		t.Fatalf("SetWorktree copper: %v", err)
+	}
+
+	ticketID, err := issues.Create("fresh ticket", "task", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+
+	var refreshCalls []struct{ wtPath, barePath string }
+	origRefresher := WorktreeRefresher
+	t.Cleanup(func() { WorktreeRefresher = origRefresher })
+	WorktreeRefresher = func(wtPath, barePath string) error {
+		refreshCalls = append(refreshCalls, struct{ wtPath, barePath string }{wtPath, barePath})
+		return nil
+	}
+
+	origSwitcher := WorktreeSwitcher
+	t.Cleanup(func() { WorktreeSwitcher = origSwitcher })
+	WorktreeSwitcher = func(wtPath, barePath, branch string) error { return nil }
+
+	cfg := &config.Config{TicketPrefix: "nc"}
+	if err := Execute(cfg, issues, agents, ticketID, "copper"); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(refreshCalls) != 1 {
+		t.Fatalf("expected WorktreeRefresher called once, got %d", len(refreshCalls))
+	}
+	if refreshCalls[0].wtPath != "/fake/worktree/copper" {
+		t.Errorf("WorktreeRefresher called with wtPath=%q, want /fake/worktree/copper", refreshCalls[0].wtPath)
+	}
+}
+
+func TestExecute_repairSkipsRefresh(t *testing.T) {
+	// A repair ticket (hasExistingBranch=true) must NOT trigger WorktreeRefresher.
+	issues, agents := setupRepos(t)
+
+	if err := agents.Register("copper", "prole", nil); err != nil {
+		t.Fatalf("registering copper: %v", err)
+	}
+	if err := agents.Register("iron", "prole", nil); err != nil {
+		t.Fatalf("registering iron: %v", err)
+	}
+	if err := agents.SetWorktree("iron", "/fake/worktree/iron"); err != nil {
+		t.Fatalf("SetWorktree iron: %v", err)
+	}
+
+	ticketID, err := issues.Create("repair ticket", "bug", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("creating issue: %v", err)
+	}
+
+	// First assignment establishes the branch.
+	cfg := &config.Config{TicketPrefix: "nc"}
+	origRefresher := WorktreeRefresher
+	t.Cleanup(func() { WorktreeRefresher = origRefresher })
+	WorktreeRefresher = func(wtPath, barePath string) error { return nil }
+
+	origSwitcher := WorktreeSwitcher
+	t.Cleanup(func() { WorktreeSwitcher = origSwitcher })
+	WorktreeSwitcher = func(wtPath, barePath, branch string) error { return nil }
+
+	if err := Execute(cfg, issues, agents, ticketID, "copper"); err != nil {
+		t.Fatalf("first Execute (copper): %v", err)
+	}
+
+	// Now re-assign to iron (repair scenario). Stub WorktreeRefresher to detect calls.
+	var refreshCalled bool
+	WorktreeRefresher = func(wtPath, barePath string) error {
+		refreshCalled = true
+		return nil
+	}
+
+	if err := Execute(cfg, issues, agents, ticketID, "iron"); err != nil {
+		t.Fatalf("second Execute (iron): %v", err)
+	}
+
+	if refreshCalled {
+		t.Error("WorktreeRefresher must not be called for repair tickets with an existing branch")
 	}
 }
 

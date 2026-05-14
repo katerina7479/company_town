@@ -17,6 +17,7 @@
 package prole
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -567,6 +568,28 @@ func SwitchToBranch(wtPath, barePath, branch string) error {
 	checkoutCmd.Dir = wtPath
 	if err := checkoutCmd.Run(); err != nil {
 		return fmt.Errorf("checking out %s in worktree %s: %w", branch, wtPath, err)
+	}
+	return nil
+}
+
+// FetchAndResetToMain fetches the latest main from origin into the bare repo
+// and hard-resets the worktree to origin/main. Called by assign.Execute before
+// a fresh feature-branch cut so the prole always branches from current main,
+// not a cached snapshot that may be several commits behind.
+func FetchAndResetToMain(wtPath, barePath string) error {
+	var fetchStderr bytes.Buffer
+	fetchCmd := exec.Command("git", "fetch", "origin", "main")
+	fetchCmd.Dir = barePath
+	fetchCmd.Stderr = &fetchStderr
+	if err := fetchCmd.Run(); err != nil {
+		return fmt.Errorf("fetching origin main: %w: %s", err, bytes.TrimSpace(fetchStderr.Bytes()))
+	}
+	var resetStderr bytes.Buffer
+	resetCmd := exec.Command("git", "reset", "--hard", "origin/main")
+	resetCmd.Dir = wtPath
+	resetCmd.Stderr = &resetStderr
+	if err := resetCmd.Run(); err != nil {
+		return fmt.Errorf("resetting worktree to origin/main: %w: %s", err, bytes.TrimSpace(resetStderr.Bytes()))
 	}
 	return nil
 }
