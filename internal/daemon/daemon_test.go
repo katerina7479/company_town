@@ -15,6 +15,7 @@ import (
 	"github.com/katerina7479/company_town/internal/config"
 	"github.com/katerina7479/company_town/internal/db"
 	"github.com/katerina7479/company_town/internal/repo"
+	"github.com/katerina7479/company_town/internal/runner"
 	"github.com/katerina7479/company_town/internal/vcs"
 )
 
@@ -3930,7 +3931,7 @@ func TestHandleWorkingOpenTickets_multipleAgents(t *testing.T) {
 
 func TestDetectBlockingPrompt_MatchesYN(t *testing.T) {
 	pane := "some output\nDo you want to proceed? (y/n)"
-	got := detectBlockingPrompt(pane)
+	got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns())
 	if got == "" {
 		t.Error("expected a match for (y/n) prompt, got empty string")
 	}
@@ -3938,7 +3939,7 @@ func TestDetectBlockingPrompt_MatchesYN(t *testing.T) {
 
 func TestDetectBlockingPrompt_MatchesAllowPrompt(t *testing.T) {
 	pane := "running tool\nAllow access to /tmp/foo? [Y/n]"
-	got := detectBlockingPrompt(pane)
+	got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns())
 	if got == "" {
 		t.Error("expected a match for Allow prompt, got empty string")
 	}
@@ -3946,7 +3947,7 @@ func TestDetectBlockingPrompt_MatchesAllowPrompt(t *testing.T) {
 
 func TestDetectBlockingPrompt_NoPrompt(t *testing.T) {
 	pane := "--- PASS: TestFoo (0.00s)\ncoverage: 82.3% of statements\nok  github.com/x/y\n"
-	got := detectBlockingPrompt(pane)
+	got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns())
 	if got != "" {
 		t.Errorf("expected no match for clean test output, got %q", got)
 	}
@@ -3960,7 +3961,7 @@ func TestDetectBlockingPrompt_PromptInHistory(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("compilation output line %d", i))
 	}
 	pane := strings.Join(lines, "\n")
-	got := detectBlockingPrompt(pane)
+	got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns())
 	if got != "" {
 		t.Errorf("expected no match when prompt is outside last 20 lines, got %q", got)
 	}
@@ -4055,6 +4056,69 @@ func TestHandleStuckPrompts_RespectsCooldown(t *testing.T) {
 
 	if len(*sent) != 1 {
 		t.Errorf("expected exactly 1 escalation despite two calls, got %d", len(*sent))
+	}
+}
+
+func TestHandleStuckPrompts_dispatchesPerRunner(t *testing.T) {
+	// When the prole runner is "codex", handleStuckPrompts must use Codex's
+	// pattern set, not Claude's. "Apply these changes" is a Codex-specific
+	// pattern that Claude's set does not include.
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-zinc"})
+	d.cfg.Agents.Prole.Runner = "codex"
+
+	if err := agents.Register("zinc", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("zinc", "working"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := agents.SetTmuxSession("zinc", "ct-zinc"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+
+	d.capturePane = func(string) (string, error) {
+		return "Apply these changes to the repository? (y/n)", nil
+	}
+
+	d.handleStuckPrompts()
+
+	if len(*sent) != 1 {
+		t.Fatalf("expected 1 escalation for Codex-pattern prompt, got %d", len(*sent))
+	}
+	if !strings.Contains((*sent)[0].msg, "zinc") {
+		t.Errorf("expected agent name in escalation message, got: %q", (*sent)[0].msg)
+	}
+	if !strings.Contains((*sent)[0].msg, "STUCK PROMPT") {
+		t.Errorf("expected STUCK PROMPT in message, got: %q", (*sent)[0].msg)
+	}
+}
+
+func TestHandleStuckPrompts_claudePatternNotMatchCodex(t *testing.T) {
+	// Claude-pattern text ("Allow Claude to use Bash?") must NOT trigger
+	// escalation for a Codex-configured prole, since Codex's pattern set
+	// does not include the "allow " anchored pattern.
+	d, _, agents, sent := newTestDaemonWithSessions(t, []string{"ct-mayor", "ct-zinc"})
+	d.cfg.Agents.Prole.Runner = "codex"
+
+	if err := agents.Register("zinc", "prole", nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := agents.UpdateStatus("zinc", "working"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	if err := agents.SetTmuxSession("zinc", "ct-zinc"); err != nil {
+		t.Fatalf("SetTmuxSession: %v", err)
+	}
+
+	d.capturePane = func(string) (string, error) {
+		// Claude-specific pattern; should NOT fire for a Codex-runner prole.
+		return "Allow Claude to edit this file?", nil
+	}
+
+	d.handleStuckPrompts()
+
+	if len(*sent) != 0 {
+		t.Errorf("Claude-pattern should not escalate for Codex-runner prole, got %d messages", len(*sent))
 	}
 }
 
@@ -4510,14 +4574,14 @@ func TestHandleCancelledTickets_IdempotentAlreadyCleaned(t *testing.T) {
 
 func TestDetectBlockingPrompt_realPermissionPrompt(t *testing.T) {
 	pane := "Allow Claude to use Bash? (y/n)"
-	if got := detectBlockingPrompt(pane); got == "" {
+	if got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns()); got == "" {
 		t.Error("expected detection of a real permission prompt, got empty string")
 	}
 }
 
 func TestDetectBlockingPrompt_ynSuffix(t *testing.T) {
 	pane := "Do you want to proceed? (y/n)"
-	if got := detectBlockingPrompt(pane); got == "" {
+	if got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns()); got == "" {
 		t.Errorf("expected detection via (y/n), got %q", got)
 	}
 }
@@ -4527,27 +4591,27 @@ func TestDetectBlockingPrompt_ynSuffix(t *testing.T) {
 func TestDetectBlockingPrompt_allowCodeDiff(t *testing.T) {
 	// Exact line observed in copper's pane during nc-251 that caused a false positive.
 	pane := `510      allow = append(allow, "Bash(python:*)", "Bash(pytest:*)",`
-	if got := detectBlockingPrompt(pane); got != "" {
+	if got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns()); got != "" {
 		t.Errorf("false positive: code diff line should not be detected as a prompt, got %q", got)
 	}
 }
 
 func TestDetectBlockingPrompt_allowMidLine(t *testing.T) {
 	pane := `permissions.allow = []string{"Bash(gt:*)"}`
-	if got := detectBlockingPrompt(pane); got != "" {
+	if got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns()); got != "" {
 		t.Errorf("false positive: 'allow' mid-line should not be detected, got %q", got)
 	}
 }
 
 func TestDetectBlockingPrompt_doYouWantToInComment(t *testing.T) {
 	pane := "// Do you want to refactor this function?"
-	if got := detectBlockingPrompt(pane); got != "" {
+	if got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns()); got != "" {
 		t.Errorf("false positive: comment containing 'do you want to' should not be detected, got %q", got)
 	}
 }
 
 func TestDetectBlockingPrompt_empty(t *testing.T) {
-	if got := detectBlockingPrompt(""); got != "" {
+	if got := detectBlockingPrompt("", runner.ClaudeRunner{}.StuckPromptPatterns()); got != "" {
 		t.Errorf("expected empty string for empty pane, got %q", got)
 	}
 }
@@ -4560,7 +4624,7 @@ func TestDetectBlockingPrompt_onlyInLast20Lines(t *testing.T) {
 		lines = append(lines, "normal output line")
 	}
 	pane := strings.Join(lines, "\n")
-	if got := detectBlockingPrompt(pane); got != "" {
+	if got := detectBlockingPrompt(pane, runner.ClaudeRunner{}.StuckPromptPatterns()); got != "" {
 		t.Errorf("prompt outside last-20-line window should not be detected, got %q", got)
 	}
 }

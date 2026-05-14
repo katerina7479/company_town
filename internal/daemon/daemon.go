@@ -258,6 +258,8 @@ func agentRunner(agentType string, cfg *config.Config) string {
 		return cfg.Agents.Architect.Runner
 	case "reviewer":
 		return cfg.Agents.Reviewer.Runner
+	case "prole":
+		return cfg.Agents.Prole.Runner
 	default:
 		return ""
 	}
@@ -947,33 +949,10 @@ func (d *Daemon) handleStuckCIRunning() {
 	}
 }
 
-// promptPattern describes a single stuck-prompt heuristic.
-// When anchored is true the pattern must appear at the start of the trimmed,
-// lowercased line; when false it may appear anywhere. Anchoring is used for
-// patterns whose words are common in source code (e.g. "allow", "do you want
-// to") to prevent false positives on Edit diffs or code comments.
-type promptPattern struct {
-	text     string
-	anchored bool
-}
-
-// stuckPromptPatterns are the heuristics that indicate a prole's pane is
-// showing a blocking prompt requiring human input. Matched case-insensitively
-// against the last 20 lines of the captured pane.
-var stuckPromptPatterns = []promptPattern{
-	{text: "do you want to", anchored: true}, // common in comments; anchor to start
-	{text: "allow ", anchored: true},         // "allow" is a Go identifier; anchor to start
-	{text: "(y/n)", anchored: false},
-	{text: "[y/n]", anchored: false},
-	{text: "press enter to continue", anchored: false},
-	{text: "are you sure", anchored: true}, // can appear in comments
-	{text: "confirm?", anchored: false},
-}
-
 // detectBlockingPrompt checks the last 20 lines of a captured tmux pane for
-// known blocking-prompt patterns. Returns the matched line (trimmed) or "" if
-// no prompt is detected.
-func detectBlockingPrompt(paneContent string) string {
+// blocking-prompt patterns from the given runner. Returns the matched line
+// (trimmed) or "" if no prompt is detected.
+func detectBlockingPrompt(paneContent string, patterns []runner.Pattern) string {
 	lines := strings.Split(paneContent, "\n")
 	start := len(lines) - 20
 	if start < 0 {
@@ -985,12 +964,12 @@ func detectBlockingPrompt(paneContent string) string {
 			continue
 		}
 		lower := strings.ToLower(trimmed)
-		for _, p := range stuckPromptPatterns {
+		for _, p := range patterns {
 			var matched bool
-			if p.anchored {
-				matched = strings.HasPrefix(lower, p.text)
+			if p.Anchored {
+				matched = strings.HasPrefix(lower, p.Text)
 			} else {
-				matched = strings.Contains(lower, p.text)
+				matched = strings.Contains(lower, p.Text)
 			}
 			if matched {
 				return trimmed
@@ -1040,7 +1019,12 @@ func (d *Daemon) handleStuckPrompts() {
 			continue
 		}
 
-		prompt := detectBlockingPrompt(content)
+		r, err := runner.New(agentRunner(agent.Type, d.cfg))
+		if err != nil {
+			d.logger.Printf("stuck-prompt: unknown runner for agent %s — skipping", agent.Name)
+			continue
+		}
+		prompt := detectBlockingPrompt(content, r.StuckPromptPatterns())
 		if prompt == "" {
 			continue
 		}

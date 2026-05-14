@@ -212,3 +212,70 @@ func TestCodexRunner_ProvisionSettings_idempotent(t *testing.T) {
 		t.Errorf("ProvisionSettings overwrote existing config; got %q", string(data))
 	}
 }
+
+func TestClaudeRunner_StuckPromptPatterns_includesPermissionPrompt(t *testing.T) {
+	patterns := ClaudeRunner{}.StuckPromptPatterns()
+	if len(patterns) == 0 {
+		t.Fatal("expected non-empty pattern set from ClaudeRunner")
+	}
+	// Must include the canonical Claude permission-prompt substring "allow ".
+	var found bool
+	for _, p := range patterns {
+		if strings.EqualFold(p.Text, "allow ") {
+			found = true
+			if !p.Anchored {
+				t.Error("'allow ' pattern should be anchored to prevent false positives on code diffs")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("ClaudeRunner.StuckPromptPatterns() must include 'allow ' (anchored)")
+	}
+}
+
+func TestClaudeRunner_StuckPromptPatterns_includesYN(t *testing.T) {
+	patterns := ClaudeRunner{}.StuckPromptPatterns()
+	var found bool
+	for _, p := range patterns {
+		if strings.Contains(p.Text, "y/n") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("ClaudeRunner.StuckPromptPatterns() must include a (y/n) pattern")
+	}
+}
+
+func TestCodexRunner_StuckPromptPatterns_nonEmpty(t *testing.T) {
+	patterns := CodexRunner{}.StuckPromptPatterns()
+	if len(patterns) == 0 {
+		t.Fatal("expected non-empty pattern set from CodexRunner")
+	}
+}
+
+func TestCodexRunner_StuckPromptPatterns_includesCodexApprovalPrompt(t *testing.T) {
+	patterns := CodexRunner{}.StuckPromptPatterns()
+	var found bool
+	for _, p := range patterns {
+		if strings.Contains(strings.ToLower(p.Text), "apply these changes") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("CodexRunner.StuckPromptPatterns() must include 'apply these changes' (Codex approval prompt)")
+	}
+}
+
+func TestCodexRunner_StuckPromptPatterns_doesNotIncludeClaudeAllowPattern(t *testing.T) {
+	// Codex's pattern set must not include the Claude-specific "allow " anchored
+	// pattern, since Codex agents would produce different pane content.
+	patterns := CodexRunner{}.StuckPromptPatterns()
+	for _, p := range patterns {
+		if strings.EqualFold(p.Text, "allow ") && p.Anchored {
+			t.Error("CodexRunner should not include Claude's anchored 'allow ' pattern")
+		}
+	}
+}
