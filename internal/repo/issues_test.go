@@ -1522,6 +1522,7 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 	}{
 		{"ruby", "ci_running"},
 		{"tin", "in_review"},
+		{"lead", "under_review"},
 		{"brass", "pr_open"},
 		{"gold", "merge_conflict"},
 	} {
@@ -1547,7 +1548,7 @@ func TestIssueRepo_BusyAssignees_mixedStatuses(t *testing.T) {
 		}
 	}
 	// Handoff and closed statuses must NOT be in the busy set.
-	for _, name := range []string{"ruby", "tin", "brass", "gold", "silver"} {
+	for _, name := range []string{"ruby", "tin", "lead", "brass", "gold", "silver"} {
 		if busy[name] {
 			t.Errorf("expected %s (handoff/closed status) NOT in busy set, got %v", name, busy)
 		}
@@ -1566,6 +1567,7 @@ func TestIssueRepo_BusyAssignees_handoffStatusesExcluded(t *testing.T) {
 	}{
 		{"ruby", "ci_running"},
 		{"tin", "in_review"},
+		{"lead", "under_review"},
 		{"brass", "pr_open"},
 		{"gold", "merge_conflict"},
 	} {
