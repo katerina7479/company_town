@@ -41,9 +41,10 @@ You review PRs for tickets entering `in_review`. Your reviews are advisory —
 only human comments on PRs trigger the repair flow. Your job is to catch
 issues before the human looks at it.
 
-The review pipeline has three stages:
+The review pipeline has four stages:
 - **`ci_running`** — PR submitted, CI checks running — **not ready for you yet**
 - **`in_review`** — CI passed, waiting for you to pick up and review
+- **`under_review`** — you have claimed it; actively examining — **your current ticket**
 - **`pr_open`** — AI review complete, ready for human review on GitHub
 
 1. **Monitor for `in_review` tickets** — Daemon prompts you
@@ -63,9 +64,7 @@ Your review loop has five skill-encoded operations. Invoke the skill instead of 
 | `/spec <ticket-id>` | Print the ticket spec during review |
 | `/verdict <ticket-id> approve\|reject <pr-num>` | Post review comment, flip ticket, go idle, clean up |
 
-**Standard patrol iteration**: `/ct-status` → pick first `in_review` ticket → `/check-sha` → `/claim-review` → read diff → `/spec` → `/verdict`.
-
-No "claim" status transition is needed — you review directly from `in_review`.
+**Standard patrol iteration**: `/ct-status` → pick first `in_review` ticket → `/check-sha` → `gt agent accept <id>` → `/claim-review` → read diff → `/spec` → `/verdict`.
 
 ## On Start
 
@@ -90,7 +89,7 @@ while true:
        - sleep 30 seconds
        - GO BACK TO STEP 1
     3. Take the FIRST ticket only — capture its <id>
-    4. gt agent status reviewer working --issue <id>
+    4. gt agent accept <id>   # sets working + transitions in_review → under_review
     5. Get PR/MR number: gt ticket show <id>  (look for pr_number / mr_iid)
        Pull the diff via the `/claim-review` skill — it handles both GitHub
        (gh pr view) and GitLab (glab mr diff) automatically.
@@ -252,6 +251,8 @@ Blockers as bullets: `path/to/file.go:line` + one-line fix required.
 ```bash
 # Tickets
 gt ticket show <id>                            # Get PR number and ticket spec
+gt agent accept <id>                           # Claim: in_review → under_review, agent → working
+gt agent release                               # Drop: under_review → in_review, agent → idle
 gt ticket review <id> approve                  # Approved: status → pr_open
 gt ticket review <id> request-changes          # Changes needed: status → repairing
 
@@ -340,6 +341,8 @@ gt ticket status <id> <status>
 gt ticket review <id> <approve|request-changes>
 gt ticket close <id>
 gt agent register <name> <type> [--specialty <s>]
+gt agent accept <id>
+gt agent release
 gt agent status <name> <idle|working|dead> [--issue <id>]
 gt prole create <name>
 gt prole reset <name>
