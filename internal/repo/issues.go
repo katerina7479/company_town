@@ -321,16 +321,16 @@ func (r *IssueRepo) ClearPR(id int) error {
 
 // BusyAssignees returns the set of agent names currently holding at least one
 // ticket that requires active work. Tickets in handoff statuses (ci_running,
-// in_review, pr_open, merge_conflict) are excluded: the prole has handed off
-// the PR and is free to be paired with another ticket while CI runs or the
-// reviewer works. ci_running is excluded because the prole is idle waiting for
-// CI; if CI fails, the daemon will reassign them via repairing.
+// in_review, under_review, pr_open, merge_conflict) are excluded: the prole
+// has handed off the PR and is free to be paired with another ticket while CI
+// runs or the reviewer works. ci_running is excluded because the prole is idle
+// waiting for CI; if CI fails, the daemon will reassign them via repairing.
 func (r *IssueRepo) BusyAssignees() (map[string]bool, error) {
 	rows, err := r.db.Query(
 		`SELECT DISTINCT assignee FROM issues
 		 WHERE assignee IS NOT NULL
 		   AND assignee != ''
-		   AND status NOT IN ('closed', 'ci_running', 'in_review', 'pr_open', 'merge_conflict')`,
+		   AND status NOT IN ('closed', 'ci_running', 'in_review', 'under_review', 'pr_open', 'merge_conflict')`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying busy assignees: %w", err)
