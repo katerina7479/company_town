@@ -70,7 +70,8 @@ func DefaultTheme() StyleTheme {
 			repo.StatusOpen:          lipgloss.NewStyle().Foreground(lipgloss.Color("4")),   // blue
 			repo.StatusInProgress:    lipgloss.NewStyle().Foreground(lipgloss.Color("6")),   // cyan
 			repo.StatusCIRunning:     lipgloss.NewStyle().Foreground(lipgloss.Color("12")),  // bright blue — CI gating
-			repo.StatusInReview:      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta
+			repo.StatusInReview:      lipgloss.NewStyle().Foreground(lipgloss.Color("5")),   // magenta — queued for review
+			repo.StatusUnderReview:   lipgloss.NewStyle().Foreground(lipgloss.Color("13")),  // bright magenta — reviewer actively working
 			repo.StatusPROpen:        lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // bright green
 			repo.StatusRepairing:     lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // bright red
 			repo.StatusOnHold:        lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange

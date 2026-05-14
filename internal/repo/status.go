@@ -10,6 +10,7 @@ const (
 	StatusInProgress    = "in_progress"
 	StatusCIRunning     = "ci_running"
 	StatusInReview      = "in_review"
+	StatusUnderReview   = "under_review"
 	StatusPROpen        = "pr_open"
 	StatusRepairing     = "repairing"
 	StatusMergeConflict = "merge_conflict"
@@ -42,7 +43,7 @@ var ValidAgentStatuses = []string{StatusIdle, StatusWorking, StatusDead, StatusS
 var DisplayStatusOrder = []string{
 	StatusIdeating, StatusDraft, StatusOpen, StatusInProgress,
 	StatusCIRunning,
-	StatusInReview, StatusPROpen,
+	StatusInReview, StatusUnderReview, StatusPROpen,
 	StatusRepairing, StatusOnHold, StatusMergeConflict,
 }
 

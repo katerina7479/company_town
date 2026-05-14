@@ -772,7 +772,7 @@ func (m dashboardModel) View() string {
 		case "create_ticket":
 			label = "new ticket title"
 		case "status":
-			label = fmt.Sprintf("status %s-%s  [ideating/draft/open/in_progress/in_review/pr_open/repairing/closed]", m.ticketPrefix, m.inputTarget)
+			label = fmt.Sprintf("status %s-%s  [ideating/draft/open/in_progress/in_review/under_review/pr_open/repairing/closed]", m.ticketPrefix, m.inputTarget)
 		case "repair_reason":
 			label = fmt.Sprintf("repair_reason %s-%s", m.ticketPrefix, m.inputTarget)
 		case "unassign_confirm":
