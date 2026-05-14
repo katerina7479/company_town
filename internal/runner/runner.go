@@ -11,6 +11,15 @@ import (
 	"strings"
 )
 
+// Pattern describes a single stuck-prompt detection heuristic.
+// When Anchored is true the pattern must appear at the start of the trimmed,
+// lowercased line; when false it may appear anywhere. Anchoring prevents false
+// positives on code lines where the pattern text is a valid identifier or comment.
+type Pattern struct {
+	Text     string // substring to match (case-insensitive)
+	Anchored bool   // if true, must appear at start of trimmed line
+}
+
 // Runner abstracts the agent CLI that Company Town launches inside tmux.
 // Each Runner knows how to build its own launch command and provision any
 // runner-specific config files that must exist before the session starts.
@@ -28,6 +37,11 @@ type Runner interface {
 	// SettingsPath returns the path to the runner-specific settings file inside
 	// agentDir, or an empty string if the runner uses no settings file.
 	SettingsPath(agentDir string) string
+
+	// StuckPromptPatterns returns substrings that, when found in the tmux pane
+	// text, indicate the agent is blocked on user input and should be escalated
+	// to the mayor. Matched case-insensitively against the last 20 lines.
+	StuckPromptPatterns() []Pattern
 }
 
 // Default returns the default Runner (ClaudeRunner).
@@ -102,6 +116,21 @@ func (CodexRunner) SettingsPath(agentDir string) string {
 	return filepath.Join(agentDir, ".codex", "config.json")
 }
 
+// StuckPromptPatterns returns heuristics for detecting when a Codex agent is
+// blocked on a prompt. Codex runs with --approval-policy full-auto so interactive
+// prompts are rare; these cover the cases that still surface in unexpected states
+// (e.g. ambiguous instructions or network errors triggering a confirmation).
+func (CodexRunner) StuckPromptPatterns() []Pattern {
+	return []Pattern{
+		{Text: "apply these changes", Anchored: true}, // Codex non-auto approval prompt
+		{Text: "what would you like", Anchored: true}, // clarification request
+		{Text: "(y/n)", Anchored: false},
+		{Text: "[y/n]", Anchored: false},
+		{Text: "press enter to continue", Anchored: false},
+		{Text: "confirm?", Anchored: false},
+	}
+}
+
 // BaseBashAllowList returns the Bash tool permissions that every agent session
 // receives regardless of language. Callers may append language-specific entries.
 func BaseBashAllowList() []string {
@@ -164,6 +193,21 @@ func (ClaudeRunner) ProvisionSettings(agentDir string) error {
 // SettingsPath returns the .claude/settings.json path for agentDir.
 func (ClaudeRunner) SettingsPath(agentDir string) string {
 	return filepath.Join(agentDir, ".claude", "settings.json")
+}
+
+// StuckPromptPatterns returns heuristics for detecting when a Claude Code agent
+// is blocked on a permission prompt. Anchoring prevents false positives on Go
+// source diffs that contain "allow" as an identifier or comments with "do you want to".
+func (ClaudeRunner) StuckPromptPatterns() []Pattern {
+	return []Pattern{
+		{Text: "do you want to", Anchored: true}, // common in comments; anchor to start
+		{Text: "allow ", Anchored: true},         // "allow" is a Go identifier; anchor to start
+		{Text: "(y/n)", Anchored: false},
+		{Text: "[y/n]", Anchored: false},
+		{Text: "press enter to continue", Anchored: false},
+		{Text: "are you sure", Anchored: true}, // can appear in comments
+		{Text: "confirm?", Anchored: false},
+	}
 }
 
 func shellQuote(s string) string {
