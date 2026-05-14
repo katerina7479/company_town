@@ -65,3 +65,7 @@ Output must exactly match the branch name from Step 1. If it does not, stop and 
 One sentence describing what you are about to implement, so the pane reader can follow along. Example: "Implementing the `/submit` skill — creating SKILL.md and updating prole template."
 
 **Key ordering invariant:** Read → accept → in_progress → verify → branch → verify branch → announce. Never write code before step 6 passes.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

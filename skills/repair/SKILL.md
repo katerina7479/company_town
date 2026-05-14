@@ -105,3 +105,7 @@ glab mr view <mr_iid>
 Confirm your new commits appear in the PR/MR.
 
 **Key ordering invariant:** Read feedback → understand CI failures → rebase → fix → pre-flight → push → re-review. Each step depends on the previous one. Skipping steps is how repairs turn into second repairs.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

@@ -61,3 +61,7 @@ Then notify the Mayor via `gt ticket create` or a direct status note.
 ## When to run this skill
 
 Run `/check-sha` at the start of every patrol iteration, before `/claim-review`. It adds ~30 seconds and prevents a full re-review of unchanged code — which cost multiple round trips in the nc-129 session.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

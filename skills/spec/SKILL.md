@@ -37,3 +37,7 @@ fi
 - During `/claim-review`, to cross-reference the diff against what was asked for
 - When a prole's PR summary mentions features not in the ticket — verify whether they were in-scope
 - When writing a `/verdict` that cites the spec: `NC-XX §Section`
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

@@ -100,3 +100,7 @@ If warnings persist after applying the fix, the root cause is in a daemon reconc
 
 - Do not write to Dolt directly with raw SQL to fix drift. If a fix requires SQL that has no `gt` equivalent, that is a gap in the CLI — file a ticket for the missing command and work around it through the available `gt agent status` / `gt ticket status` commands.
 - Do not delete agent rows from the database to "reset" them. Use `gt agent status <name> dead` and let the daemon handle restart.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

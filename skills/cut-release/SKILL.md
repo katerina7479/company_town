@@ -92,3 +92,7 @@ git push origin :refs/tags/vX.Y.Z
 3. Cut a new patch release (`vX.Y.(Z+1)`) following this skill from Step 1.
 
 Re-tagging an existing tag produces confusing git history; always increment the version instead.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

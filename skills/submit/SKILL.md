@@ -78,3 +78,7 @@ gt agent status <your-name> idle
 ```
 
 **Key ordering invariant:** Steps 1 → 2 → 3 → 4 → 5 → 6 → 7. Never flip to `ci_running` before the PR exists. Never create the PR before the push is verified.
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

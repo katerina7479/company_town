@@ -135,3 +135,7 @@ Good specs to pattern-match on (read one before writing a new spec if unsure):
 - `.company_town/ticket_specs/nc-130.md` — schema migration + handler changes + template updates + precedence rules
 - `.company_town/ticket_specs/nc-128.md` — worktree guardrails (infrastructure change)
 - `.company_town/ticket_specs/nc-133.md` — this skill's own spec (meta)
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.

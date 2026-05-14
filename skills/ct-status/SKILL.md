@@ -38,3 +38,7 @@ This puts it back in the queue for a fresh review.
 - At the start of each patrol cycle, before checking for `in_review` tickets
 - After waking from a sleep interval, to get a fast situational read before deciding next action
 - Before writing a handoff, to capture the current queue state
+
+## Runner compatibility: Claude Code only
+
+This skill uses Claude Code's `/skill` invocation mechanism. Codex agents do not use skills — follow the inline step-by-step instructions in your `AGENTS.md` instead.
