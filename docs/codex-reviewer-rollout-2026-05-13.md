@@ -28,10 +28,15 @@ the configured runner's CLI is on PATH via the runner check added in nc-309.
 
 **Status: ✓ implemented (nc-310)**
 
-`internal/runner/codex.go` implements `CodexRunner` mirroring `ClaudeRunner`. The
-`Command()` method constructs the `codex` invocation with `--model`, `--no-project-doc`,
-`--full-auto`, and the session name. `ProvisionSettings()` writes `~/.codex/config.yaml`
-(Codex's per-agent config location).
+Both `ClaudeRunner` and `CodexRunner` live in `internal/runner/runner.go`. `CodexRunner`
+mirrors `ClaudeRunner`'s three-method shape (`Command`, `ProvisionSettings`, `SettingsPath`).
+
+- **`Command()`** builds: `codex --approval-policy full-auto --model '<model>' [prompt]`.
+  No session-name arg (Codex has no equivalent of `--name`); no `--no-project-doc` flag.
+- **`ProvisionSettings()`** creates `<agentDir>/.codex/config.json` (JSON, not YAML;
+  in the agent's working directory, not the operator's home). Content: `{"approvalPolicy": "full-auto"}`.
+  Codex picks this up automatically from CWD — no explicit `--config` flag is needed.
+- **`SettingsPath()`** returns `<agentDir>/.codex/config.json`.
 
 ### 3. Agent spawn: reviewer launched with CodexRunner
 

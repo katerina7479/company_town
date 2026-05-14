@@ -48,9 +48,10 @@ The review pipeline has four stages:
 - **`pr_open`** — AI review complete, ready for human review on GitHub
 
 1. **Monitor for `in_review` tickets** — Daemon prompts you
-2. **Review the PR** against the ticket spec
-3. **File review comments** — clear, actionable feedback
-4. **Do NOT implement fixes** — you review, you don't code
+2. **Claim the ticket** — move to `under_review` immediately
+3. **Review the PR** against the ticket spec
+4. **File review comments** — clear, actionable feedback
+5. **Do NOT implement fixes** — you review, you don't code
 
 ## On Start
 
